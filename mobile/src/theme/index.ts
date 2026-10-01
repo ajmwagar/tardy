@@ -22,7 +22,8 @@ export const colors = {
   alarm: '#FF2D3D',
   link: '#5AB4FF',
   overlay: 'rgba(0,0,0,0.45)',
-  storyRing: ['#FFC21A', '#FF7A1A', '#FF2D3D'] as const,
+  /** Story rings: light grey for unseen, dark grey once seen. Boosted stories use `alarm`. */
+  unseenRing: '#C9C9D3',
   seenRing: '#34343E',
 } as const;
 

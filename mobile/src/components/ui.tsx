@@ -1,5 +1,4 @@
 import { Image } from 'expo-image';
-import { LinearGradient } from 'expo-linear-gradient';
 import { SymbolView, type SFSymbol } from 'expo-symbols';
 import { memo, type ReactNode } from 'react';
 import * as Haptics from 'expo-haptics';
@@ -23,9 +22,19 @@ export const Icon = memo(function Icon({
   return <SymbolView name={name} size={size} tintColor={color} weight={weight} style={{ width: size, height: size }} />;
 });
 
-type RingState = 'none' | 'unseen' | 'seen';
+/**
+ * Story ring around an avatar: `unseen` light grey, `seen` dark grey, `boosted` alarm red
+ * (a paid boost, shown regardless of seen state).
+ */
+export type RingState = 'none' | 'unseen' | 'seen' | 'boosted';
 
-/** Circular avatar with an optional story ring (gradient when unseen, grey when seen). */
+const ringColor: Record<Exclude<RingState, 'none'>, string> = {
+  unseen: colors.unseenRing,
+  seen: colors.seenRing,
+  boosted: colors.alarm,
+};
+
+/** Circular avatar with an optional story ring (see `RingState`). */
 export const Avatar = memo(function Avatar({
   account,
   size = 32,
@@ -58,13 +67,7 @@ export const Avatar = memo(function Avatar({
   const gap = (
     <View style={{ padding: pad, borderRadius: radius, backgroundColor: colors.bg }}>{inner}</View>
   );
-  return ring === 'unseen' ? (
-    <LinearGradient colors={colors.storyRing} start={{ x: 0, y: 1 }} end={{ x: 1, y: 0 }} style={{ padding: pad, borderRadius: radius }}>
-      {gap}
-    </LinearGradient>
-  ) : (
-    <View style={{ padding: pad, borderRadius: radius, backgroundColor: colors.seenRing }}>{gap}</View>
-  );
+  return <View style={{ padding: pad, borderRadius: radius, backgroundColor: ringColor[ring] }}>{gap}</View>;
 });
 
 /** Paid verification seal, in Tardy yellow. */
