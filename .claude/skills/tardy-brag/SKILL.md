@@ -102,6 +102,8 @@ logos, or music. Build the stand-ins in the composition; it's HTML, so you can.
 brag's defaults make a good launch video. tardy reels compete with TikTok, so every reel takes at
 least **two** of these, named in `brag-plan.md` under `## Limits pushed`:
 
+- **Study real ads first.** `/tardy-ad-refs` looks up reference ads (Apple, ChatGPT, Claude,
+  Cursor, ...) in `~/Developer/tardy-ad-bank`; cite 1-3 in `brag-plan.md` under `## References`.
 - **Search before building.** `npx hyperframes catalog --query "<the beat in plain words>"`, then
   `npx hyperframes add <name>`. Known-good: `caption-pill-karaoke`, `beat-pulse-background`,
   `device-frame-stage`, `comparison-split`, `grain-overlay`, `glitch`, `cinematic-zoom`,
