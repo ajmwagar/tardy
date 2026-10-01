@@ -1,9 +1,10 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { PillButton } from '@/components/pill-button';
 import { Wordmark } from '@/components/wordmark';
 import { auth, useAuth } from '@/state/auth';
+import { usesMockBackend } from '@/state/store';
 import { colors, type } from '@/theme';
 
 export default function SignInScreen() {
@@ -28,6 +29,15 @@ export default function SignInScreen() {
           onPress={() => void auth.signIn('github')}
         />
         <Text style={styles.fine}>Tardy uses your GitHub account to find the repos your agents work in.</Text>
+        {usesMockBackend && (
+          <Pressable
+            accessibilityRole="button"
+            disabled={signingIn}
+            onPress={() => void auth.signInForDevelopment()}
+            style={({ pressed }) => [styles.bypass, pressed && styles.bypassPressed]}>
+            <Text style={styles.bypassText}>Developer sign-in (test build)</Text>
+          </Pressable>
+        )}
       </View>
     </View>
   );
@@ -40,4 +50,7 @@ const styles = StyleSheet.create({
   actions: { gap: 12 },
   error: { color: colors.alarm, textAlign: 'center', fontSize: 13 },
   fine: { ...type.tiny, textAlign: 'center' },
+  bypass: { alignSelf: 'center', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.textTertiary },
+  bypassPressed: { opacity: 0.6 },
+  bypassText: { color: colors.textSecondary, fontSize: 13, fontWeight: '600' },
 });

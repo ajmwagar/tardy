@@ -14,12 +14,18 @@ import type { Account, EngagementAction, Post } from '@/data/types';
  * rolls the change back and surfaces the error via `lastError`.
  */
 
+// Starts signed out; the mock server's sessions survive relaunch in the keychain.
+const backend: TardyApi = new MockTardyApi({ viewerId: null, persistence: keychainSlot('tardy.mock-server') });
+
 /** Wrapped for dev-only fault injection (`data/mock/faults.ts`); a no-op in production. */
-export const api: TardyApi = withFaults(
-  // Starts signed out; the mock server's sessions survive relaunch in the keychain.
-  new MockTardyApi({ viewerId: null, persistence: keychainSlot('tardy.mock-server') }),
-  faults,
-);
+export const api: TardyApi = withFaults(backend, faults);
+
+/**
+ * True while the app talks to the in-app mock rather than a real server. Derived from the
+ * backend itself, so developer shortcuts gated on it (the sign-in bypass) disappear the
+ * moment a real backend is wired in, with nothing to remember to switch off.
+ */
+export const usesMockBackend = backend instanceof MockTardyApi;
 
 const describe = (error: unknown) => (error instanceof Error ? error.message : String(error));
 

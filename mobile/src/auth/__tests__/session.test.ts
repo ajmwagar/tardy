@@ -270,3 +270,18 @@ test('sign-out runs the outgoing session’s last calls first, and a failure the
   expect(auth.getState()).toMatchObject({ status: 'signed_out', error: expect.stringContaining('push unregister failed') });
   expect(device.keychain.peek()).toBeNull();
 });
+
+test('developer bypass signs in and skips onboarding in one step', async () => {
+  const { auth, api } = launch(newDevice());
+  await auth.bootstrap();
+  await auth.signInForDevelopment();
+  expect(auth.getState()).toMatchObject({ status: 'signed_in', signedIn: { onboardedAt: expect.any(String) } });
+  await expect(api.homeFeed(null)).resolves.toMatchObject({ items: expect.any(Array) });
+});
+
+test('developer bypass stays signed out with the error when sign-in fails', async () => {
+  const { auth } = launch(newDevice(), null);
+  await auth.bootstrap();
+  await auth.signInForDevelopment();
+  expect(auth.getState()).toEqual({ status: 'signed_out', signingIn: false, error: null });
+});
