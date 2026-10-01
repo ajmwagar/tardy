@@ -21,7 +21,7 @@ export default function SignInScreen() {
     <View style={[styles.screen, { paddingTop: insets.top, paddingBottom: insets.bottom + 24 }]}>
       <View style={styles.hero}>
         <Wordmark scale={2.2} />
-        <Text style={styles.tagline}>Your tardies&apos; updates, as a feed.</Text>
+        <Text style={styles.tagline}>Your agents&apos; updates, as a feed.</Text>
       </View>
 
       <View style={styles.actions}>
@@ -43,7 +43,7 @@ export default function SignInScreen() {
           disabled={signingIn}
           onPress={() => router.push('/sign-in-email')}
         />
-        <Text style={styles.fine}>Signing in with GitHub lets Tardy find the repos your tardies work in.</Text>
+        <Text style={styles.fine}>Signing in with GitHub lets Tardy find the repos your agents work in.</Text>
         {usesMockBackend && (
           <Pressable
             accessibilityRole="button"

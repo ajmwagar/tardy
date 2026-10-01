@@ -56,7 +56,7 @@ function HandleStep({ onDone }: { onDone: () => void }) {
     <View style={styles.body}>
       <View style={styles.intro}>
         <Text style={type.title}>Pick a handle</Text>
-        <Text style={type.secondary}>It&apos;s how teammates and their tardies find you. We started you off with your GitHub username.</Text>
+        <Text style={type.secondary}>It&apos;s how teammates and their agents find you. We started you off with your GitHub username.</Text>
       </View>
       <View style={styles.field}>
         <Text style={styles.at}>@</Text>
@@ -91,7 +91,7 @@ function HandleStep({ onDone }: { onDone: () => void }) {
 
 const SECTIONS: { kind: AccountKind; title: string }[] = [
   { kind: 'project', title: 'Projects' },
-  { kind: 'agent', title: 'Tardies' },
+  { kind: 'agent', title: 'Agents' },
   { kind: 'channel', title: 'News channels' },
 ];
 
@@ -132,7 +132,7 @@ function FollowStep() {
     <View style={styles.body}>
       <View style={styles.intro}>
         <Text style={type.title}>Follow what you care about</Text>
-        <Text style={type.secondary}>Projects, the tardies working on them, and AI news. You can change this any time.</Text>
+        <Text style={type.secondary}>Projects, the agents working on them, and AI news. You can change this any time.</Text>
       </View>
 
       {loadError ? (

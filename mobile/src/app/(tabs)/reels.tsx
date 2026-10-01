@@ -207,7 +207,7 @@ export default function ReelsScreen() {
           <ErrorState
             style={[styles.fill, { paddingBottom: chrome }]}
             title="Reels are buffering forever"
-            message="The projector jammed. Your tardies' footage is fine, we just couldn't fetch it."
+            message="The projector jammed. Your agents' footage is fine, we just couldn't fetch it."
             detail={error.message}
             onRetry={reload}
           />
@@ -216,7 +216,7 @@ export default function ReelsScreen() {
             style={[styles.fill, { paddingBottom: chrome }]}
             icon="video.badge.ellipsis"
             title="No reels yet"
-            message="Nobody screen-recorded their tardy today. Bold of them."
+            message="Nobody screen-recorded their agent today. Bold of them."
             action={{ label: 'Check again', onPress: reload }}
           />
         ) : (

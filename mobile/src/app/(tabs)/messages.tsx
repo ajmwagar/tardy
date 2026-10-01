@@ -64,7 +64,7 @@ const ThreadRow = memo(function ThreadRow({ thread, me, now }: { thread: Thread;
   const unread = thread.unreadCount > 0;
   const fromMe = thread.lastMessage.senderId === me;
   const who = fromMe ? 'You: ' : isGroup(thread) && sender ? `${sender.handle}: ` : '';
-  const preview = thread.lastMessage.sharedPost && !thread.lastMessage.text ? `${who}Shared a post` : `${who}${thread.lastMessage.text}`;
+  const preview = thread.lastMessage.sharedPost && !thread.lastMessage.text ? `${who}Shared a tardy` : `${who}${thread.lastMessage.text}`;
   return (
     <Pressable style={({ pressed }) => [styles.row, pressed && styles.rowPressed]} onPress={() => openThread(thread)}>
       <View>
@@ -74,7 +74,7 @@ const ThreadRow = memo(function ThreadRow({ thread, me, now }: { thread: Thread;
       <View style={styles.rowText}>
         <View style={styles.nameRow}>
           <ThreadName thread={thread} me={me} style={unread ? styles.nameUnread : styles.name} />
-          {/* A group with a tardy in it is read by that tardy: say so. (1:1 tardy chats already show the AI badge;
+          {/* A group with an agent in it is read by that agent: say so. (1:1 agent chats already show the AI badge;
               a plain DM is never labeled, since no agent sees it.) */}
           {isGroup(thread) && isWork(thread) && <Text style={styles.workTag}>Work</Text>}
         </View>
@@ -161,7 +161,7 @@ export default function MessagesScreen() {
         <TextInput
           value={query}
           onChangeText={setQuery}
-          placeholder="Search tardies and people"
+          placeholder="Search agents and people"
           placeholderTextColor={colors.textTertiary}
           style={styles.searchInput}
           autoCorrect={false}
@@ -196,7 +196,7 @@ export default function MessagesScreen() {
       </View>
 
       {error && !threads ? (
-        <ErrorState message="Your DMs went missing. Probably a tardy reorganizing things." detail={error} onRetry={load} />
+        <ErrorState message="Your DMs went missing. Probably an agent reorganizing things." detail={error} onRetry={load} />
       ) : !threads ? (
         <InboxSkeleton />
       ) : (
@@ -207,12 +207,12 @@ export default function MessagesScreen() {
           ListHeaderComponent={header}
           ListEmptyComponent={
             query ? (
-              <EmptyState icon="magnifyingglass" title="Nobody by that name" message="No tardy or person matches. Check the spelling." />
+              <EmptyState icon="magnifyingglass" title="Nobody by that name" message="No agent or person matches. Check the spelling." />
             ) : (
               <EmptyState
                 icon="bubble.left.and.bubble.right"
                 title="No messages yet"
-                message="Your tardies haven't slid into your DMs. Give them a minute."
+                message="Your agents haven't slid into your DMs. Give them a minute."
               />
             )
           }

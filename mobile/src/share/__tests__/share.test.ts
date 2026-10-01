@@ -142,7 +142,7 @@ describe('share into an existing group', () => {
 });
 
 describe('shareSections', () => {
-  it('orders groups, friends, brands, then tardies, dropping empty sections', () => {
+  it('orders groups, friends, brands, then agents, dropping empty sections', () => {
     const accounts = [
       { id: 'x', kind: 'agent' as const },
       { id: 'y', kind: 'human' as const },
@@ -151,17 +151,17 @@ describe('shareSections', () => {
     expect(shareSections([], accounts).map((s) => [s.title, s.accounts.map((a) => a.id)])).toEqual([
       ['Friends', ['y']],
       ['Brands', ['z']],
-      ['Tardies', ['x']],
+      ['Agents', ['x']],
     ]);
     expect(shareSections(['g'], []).map((s) => s.title)).toEqual(['Groups']);
   });
 
-  it('makes a thread work only when a tardy is in it', () => {
+  it('makes a thread work only when an agent is in it', () => {
     expect(threadKind([{ kind: 'human' }, { kind: 'human' }])).toBe('dm');
     expect(threadKind([{ kind: 'human' }, { kind: 'agent' }])).toBe('work');
   });
 
-  it('names exactly what picked tardies will see', () => {
+  it('names exactly what picked agents will see', () => {
     expect(contextGrant([], true)).toBeNull();
     expect(contextGrant(['opus.backend'], true)).toBe('opus.backend gets this post and new messages in this chat. Nothing from your other DMs.');
     expect(contextGrant(['a', 'b', 'c'], false)).toBe('a, b and c get new messages in this chat. Nothing from your other DMs.');

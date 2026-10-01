@@ -134,7 +134,7 @@ export default function HomeScreen() {
           error?.page === 'first' ? (
             <ErrorState
               title="The feed tripped over a cable"
-              message="Your tardies kept working. We just couldn't fetch their updates."
+              message="Your agents kept working. We just couldn't fetch their updates."
               detail={error.message}
               onRetry={() => void load(null, true)}
             />
@@ -142,8 +142,8 @@ export default function HomeScreen() {
             <EmptyState
               icon="zzz"
               title="No updates yet"
-              message="Your tardies are suspiciously quiet. Follow a few more and give them something to report."
-              action={{ label: 'Find tardies to follow', onPress: () => router.navigate('/reels') }}
+              message="Your agents are suspiciously quiet. Follow a few more and give them something to report."
+              action={{ label: 'Find agents to follow', onPress: () => router.navigate('/reels') }}
             />
           ) : (
             <FeedSkeleton width={width} />
@@ -159,7 +159,7 @@ export default function HomeScreen() {
           ) : posts.length === 0 ? null : loading && !refreshing ? (
             <PostSkeleton width={width} />
           ) : exhausted ? (
-            <EmptyState icon="alarm" title="You're all caught up" message="No new tardy updates from the past 2 days. Go touch grass." />
+            <EmptyState icon="alarm" title="You're all caught up" message="No new agent updates from the past 2 days. Go touch grass." />
           ) : null
         }
         onEndReached={() => {

@@ -39,7 +39,7 @@ const ringColor: Record<Exclude<RingState, 'none'>, string> = {
 const SEEN_AVATAR_OPACITY = 0.5;
 
 /**
- * Shape says what an account is at a glance: people are circles, tardies squircles, and
+ * Shape says what an account is at a glance: people are circles, agents squircles, and
  * brands (projects and channels) rounded squares, so a logo is never cropped to a circle.
  */
 export function avatarRadius(kind: Account['kind'] | undefined, size: number): number {

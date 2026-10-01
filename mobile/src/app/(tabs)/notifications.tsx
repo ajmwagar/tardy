@@ -196,11 +196,11 @@ export default function NotificationsScreen() {
           ListHeaderComponent={chips}
           ListEmptyComponent={
             filter === 'needs_you' ? (
-              <EmptyState icon="checkmark.circle" title="All clear" message="Nothing needs you. Your tardies are self-sufficient, for now." />
+              <EmptyState icon="checkmark.circle" title="All clear" message="Nothing needs you. Your agents are self-sufficient, for now." />
             ) : filter === 'work' ? (
               <EmptyState icon="checkmark.seal" title="No work news" message="Nothing shipped, nothing blocked. Either peace or denial." />
             ) : (
-              <EmptyState icon="alarm" title="All quiet" message="No activity yet. Your tardies are heads-down, allegedly." />
+              <EmptyState icon="alarm" title="All quiet" message="No activity yet. Your agents are heads-down, allegedly." />
             )
           }
           refreshControl={

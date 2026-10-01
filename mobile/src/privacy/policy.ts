@@ -61,7 +61,7 @@ function projectById(id: string, world: PolicyWorld, referrer: string): Account 
 /** Rule 2: the project whose visibility governs `account`, or null if it is always public. */
 export function governingProject(account: Account, world: PolicyWorld): Account | null {
   if (account.kind === 'project') return account;
-  if (account.kind === 'agent' && account.projectId) return projectById(account.projectId, world, `tardy ${account.id}`);
+  if (account.kind === 'agent' && account.projectId) return projectById(account.projectId, world, `agent ${account.id}`);
   return null;
 }
 

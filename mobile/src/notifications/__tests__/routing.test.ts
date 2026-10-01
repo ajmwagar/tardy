@@ -43,7 +43,7 @@ describe('routeForPayload: every kind lands where it should', () => {
 describe('routeForPayload: targets that are gone', () => {
   it('a deleted post lands on the notifications list with a notice', async () => {
     const route = await routeForPayload({ notificationId: 'x', kind: 'blocked', actorId: 'a-bom', postId: 'post-deleted' }, mock());
-    expect(route).toEqual({ href: NOTIFICATIONS_HREF, notice: 'That post was deleted.' });
+    expect(route).toEqual({ href: NOTIFICATIONS_HREF, notice: 'That tardy was deleted.' });
   });
 
   it('a post-kind push missing its post id lands on the list', async () => {
@@ -58,7 +58,7 @@ describe('routeForPayload: targets that are gone', () => {
     const owner = new MockTardyApi({ latencyMs: 0, viewerId: 'avery' });
     await expect(routeForPayload(fixture('n10'), owner)).resolves.toMatchObject({ href: { pathname: '/post/[postId]' } });
     const route = await routeForPayload(fixture('n10'), mock());
-    expect(route).toEqual({ href: NOTIFICATIONS_HREF, notice: 'You no longer have access to that post.' });
+    expect(route).toEqual({ href: NOTIFICATIONS_HREF, notice: 'You no longer have access to that tardy.' });
   });
 
   it('a follower who has since vanished lands on the list', async () => {
@@ -72,7 +72,7 @@ describe('routeForPayload: targets that are gone', () => {
       account: () => Promise.reject(new TardyApiError('not_found', 'x')),
     };
     const route = await routeForPayload(fixture('n1'), down);
-    expect(route).toEqual({ href: NOTIFICATIONS_HREF, notice: "Couldn't open that post: offline" });
+    expect(route).toEqual({ href: NOTIFICATIONS_HREF, notice: "Couldn't open that tardy: offline" });
   });
 });
 

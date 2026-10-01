@@ -108,7 +108,7 @@ export default function EditProfileScreen() {
             value={bio}
             onChangeText={setBio}
             style={[styles.input, styles.bio]}
-            placeholder="What are your tardies up to?"
+            placeholder="What are your agents up to?"
             placeholderTextColor={colors.textTertiary}
             multiline
             maxLength={PROFILE_LIMITS.bio + 20}

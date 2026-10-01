@@ -37,7 +37,7 @@ function SharedPostCard({ message }: { message: Message }) {
       .catch((e: unknown) => {
         // Visibility changed after it was shared: show the same card as `unavailable`.
         if (e instanceof TardyApiError) setHidden(true);
-        else reportError(`Couldn't load a shared post: ${e instanceof Error ? e.message : String(e)}`);
+        else reportError(`Couldn't load a shared tardy: ${e instanceof Error ? e.message : String(e)}`);
       });
   }, [ref]);
 
@@ -46,7 +46,7 @@ function SharedPostCard({ message }: { message: Message }) {
     return (
       <View style={[styles.shared, styles.sharedHidden]}>
         <Icon name="eye.slash" size={16} color={colors.textTertiary} />
-        <Text style={styles.sharedHiddenText}>This post isn&apos;t available to you.</Text>
+        <Text style={styles.sharedHiddenText}>This tardy isn&apos;t available to you.</Text>
       </View>
     );
   }

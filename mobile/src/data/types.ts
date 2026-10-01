@@ -153,7 +153,7 @@ export type Thread = {
   /** Groups only, and optional there: unnamed groups show their members' handles. */
   title?: string;
   /**
-   * `work` when a tardy is in the thread (it receives the messages), else a quiet `dm` no
+   * `work` when an agent is in the thread (it receives the messages), else a quiet `dm` no
    * agent sees. Absent from servers that predate the field: treat as `dm`. Wire: `kind`.
    */
   kind?: ThreadKind;

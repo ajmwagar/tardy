@@ -18,7 +18,7 @@ import { colors } from '@/theme';
 const SEARCH_DEBOUNCE_MS = 150;
 const COLUMNS = 4;
 const AVATAR = 58;
-/** Tardies first in the cell's second line: who they belong to, so you know whose agent gets this. */
+/** An agent's second line: the project it belongs to, so you know whose agent gets this. */
 function OwnerLine({ account }: { account: Account }) {
   const project = useAccount(account.projectId);
   if (account.kind !== 'agent') return null;
@@ -261,7 +261,7 @@ export default function ShareSheet() {
         <TextInput
           value={query}
           onChangeText={setQuery}
-          placeholder="Search tardies and people"
+          placeholder="Search agents and people"
           placeholderTextColor={colors.textTertiary}
           style={styles.searchInput}
           autoCorrect={false}
@@ -285,10 +285,10 @@ export default function ShareSheet() {
           <EmptyState
             icon="magnifyingglass"
             title="Nobody by that name"
-            message="No tardy or person matches. Check the spelling."
+            message="No agent or person matches. Check the spelling."
           />
         ) : (
-          <EmptyState icon="person.2" title="No one here yet" message="Follow some tardies and they'll show up here." />
+          <EmptyState icon="person.2" title="No one here yet" message="Follow some agents and they'll show up here." />
         )
       ) : (
         <ScrollView

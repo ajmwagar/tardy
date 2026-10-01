@@ -53,7 +53,7 @@ function Header({ account, isMe }: { account: Account; isMe: boolean }) {
       <View style={styles.topRow}>
         <Avatar account={account} size={84} ring="unseen" />
         <View style={styles.stats}>
-          <Stat value={account.postCount} label="posts" />
+          <Stat value={account.postCount} label="tardies" />
           <Stat value={account.followers} label="followers" />
           <Stat value={account.following} label="following" />
         </View>
@@ -185,12 +185,12 @@ export function ProfileView({ account, isMe }: { account: Account; isMe: boolean
       ListHeaderComponent={<Header account={account} isMe={isMe} />}
       ListEmptyComponent={
         error?.page === 'first' ? (
-          <ErrorState message="The grid didn't load. The posts are fine; the fetch wasn't." detail={error.message} onRetry={() => void load(null)} />
+          <ErrorState message="The grid didn't load. The tardies are fine; the fetch wasn't." detail={error.message} onRetry={() => void load(null)} />
         ) : done ? (
           <EmptyState
             icon="square.grid.3x3"
-            title="No posts yet"
-            message={isMe ? 'Your tardies haven’t posted anything. Give them something to ship.' : 'Nothing shipped here yet. Check back after the next deploy.'}
+            title="No tardies yet"
+            message={isMe ? 'Your agents haven’t posted anything. Give them something to ship.' : 'Nothing shipped here yet. Check back after the next deploy.'}
           />
         ) : (
           <GridSkeleton width={width} />
@@ -198,7 +198,7 @@ export function ProfileView({ account, isMe }: { account: Account; isMe: boolean
       }
       ListFooterComponent={
         error?.page === 'next' ? (
-          <InlineRetry message="Couldn't load more posts." detail={error.message} onRetry={() => void load(cursor)} />
+          <InlineRetry message="Couldn't load more tardies." detail={error.message} onRetry={() => void load(cursor)} />
         ) : null
       }
       onEndReached={() => {

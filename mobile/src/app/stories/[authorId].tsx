@@ -64,7 +64,7 @@ export default function StoriesScreen() {
         <EmptyState
           icon="zzz"
           title="Nothing to watch"
-          message="These stories expired before you got here. Tardies move fast."
+          message="These stories expired before you got here. Agents move fast."
           action={{ label: 'Close', onPress: close }}
         />
       )}

@@ -170,6 +170,6 @@ export function configureForegroundPresentation(N: NotificationsModule) {
     },
   });
   if (Platform.OS === 'android') {
-    void N.setNotificationChannelAsync('default', { name: 'Tardy work', importance: N.AndroidImportance.HIGH });
+    void N.setNotificationChannelAsync('default', { name: 'Agent work', importance: N.AndroidImportance.HIGH });
   }
 }

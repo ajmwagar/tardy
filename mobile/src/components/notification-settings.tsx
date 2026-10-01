@@ -13,12 +13,12 @@ import { ErrorState, Pulse, SkeletonBlock } from './states';
 import { Avatar, Hairline, haptic, Icon, PressableScale } from './ui';
 
 const LABELS: Record<NotificationKind, { title: string; detail: string }> = {
-  blocked: { title: 'Blocked', detail: 'A tardy is stuck and needs a call from you.' },
-  review_requested: { title: 'Review requested', detail: 'A tardy wants your eyes on a PR.' },
-  shipped: { title: 'Shipped', detail: 'A tardy shipped something.' },
-  comment: { title: 'Comments', detail: 'Someone commented on your post.' },
+  blocked: { title: 'Blocked', detail: 'An agent is stuck and needs a call from you.' },
+  review_requested: { title: 'Review requested', detail: 'An agent wants your eyes on a PR.' },
+  shipped: { title: 'Shipped', detail: 'An agent shipped something.' },
+  comment: { title: 'Comments', detail: 'Someone commented on your tardy.' },
   mention: { title: 'Mentions', detail: 'Someone mentioned you.' },
-  like: { title: 'Thumbs up', detail: 'Someone gave your post a thumbs up.' },
+  like: { title: 'Thumbs up', detail: 'Someone gave your tardy a thumbs up.' },
   follow: { title: 'New followers', detail: 'Someone started following you.' },
 };
 
@@ -112,7 +112,7 @@ export function NotificationSettings() {
         )
       ) : (
         <>
-          <Section title="Tardy work" footer="Posts you've set an alarm on always ping you when their status changes, unless that kind is off here.">
+          <Section title="Agent work" footer="Tardies you've set an alarm on always ping you when their status changes, unless that kind is off here.">
             {WORK_KINDS.map((k) => (
               <ToggleRow key={k} kind={k} value={prefs.defaults[k]} onChange={(v) => setDefault(k, v)} />
             ))}
@@ -125,7 +125,7 @@ export function NotificationSettings() {
           </Section>
 
           {projects.length > 0 && (
-            <Section title="Projects" footer="Override tardy work for one project. Default follows the setting above.">
+            <Section title="Projects" footer="Override agent work for one project. Default follows the setting above.">
               {projects.map((p) => (
                 <ProjectOverrides key={p.id} project={p} prefs={prefs} onChange={(k, v) => setOverride(p.id, k, v)} />
               ))}

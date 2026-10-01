@@ -52,7 +52,7 @@ export const DEFAULT_PREFERENCES: NotificationPreferences = {
 /** What the decision needs to know about one event, as derived facts. */
 export type PushEvent = {
   kind: NotificationKind;
-  /** The project the event is about (the post's project, else the tardy's), if any. */
+  /** The project the event is about (the post's project, else the agent's), if any. */
   projectId?: string;
   /** The recipient has an alarm set on the post. */
   alarmed: boolean;

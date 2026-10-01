@@ -6,7 +6,7 @@
  *                   (shapes match PostCard / a reel; for other lists, compose <SkeletonBlock>
  *                   inside <Pulse>).
  *   Nothing there   <EmptyState icon="zzz" title="No updates yet" message="Your agents are
- *                   suspiciously quiet." action={{ label: 'Find tardies', onPress }} />
+ *                   suspiciously quiet." action={{ label: 'Find agents', onPress }} />
  *   Load failed     <ErrorState message="..." detail={error} onRetry={reload} />  (whole screen)
  *   Next page       <InlineRetry message="..." detail={error} onRetry={loadMore} />  as the list
  *   failed          footer; keep the items you already have, and stop onEndReached from
@@ -233,7 +233,7 @@ export function InlineRetry({ message, detail, onRetry }: { message: string; det
 
 /** Overlay for media (video, image) that failed to load. Sits on top of the poster. */
 export function MediaError({
-  message = 'This one didn’t render. Its tardy is probably “on it.”',
+  message = 'This one didn’t render. Its agent is probably “on it.”',
   detail,
   onRetry,
 }: {
