@@ -200,6 +200,10 @@ export class HttpTardyApi implements TardyApi {
     return this.adopt(await this.request('POST', '/v1/sessions', { body: snakeKeys(credential), decode: W.signedIn, auth: 'none' }));
   }
 
+  async developmentSession(): Promise<SignedIn> {
+    return this.adopt(await this.request('POST', '/v1/dev/session', { decode: W.signedIn, auth: 'none' }));
+  }
+
   async requestEmailCode(email: string): Promise<void> {
     await this.request('POST', '/v1/sessions/email-codes', { body: { email }, auth: 'none' });
   }

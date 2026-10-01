@@ -38,7 +38,7 @@ export type IdentityProvider = {
 };
 
 export type AuthDeps = {
-  api: Pick<TardyApi, 'signIn' | 'resumeSession' | 'signOut' | 'completeOnboarding'>;
+  api: Pick<TardyApi, 'signIn' | 'developmentSession' | 'resumeSession' | 'signOut' | 'completeOnboarding'>;
   storage: TokenStorage;
   identity: IdentityProvider;
   /** Loads per-viewer client state (account, follows). Runs before any gated screen shows. */
@@ -147,9 +147,19 @@ export function createAuth(deps: AuthDeps) {
      * special case, so it only works where `signIn` itself succeeds without a real provider
      * (the mock backend); callers decide whether to offer it.
      */
-    async signInForDevelopment(provider: AuthProvider = 'github'): Promise<void> {
-      await this.signIn(provider);
-      if (state.status === 'onboarding') await this.completeOnboarding();
+    async signInForDevelopment(): Promise<void> {
+      if (state.status !== 'signed_out' || state.signingIn) return;
+      set({ status: 'signed_out', signingIn: true, error: null });
+      try {
+        await enter(await deps.api.developmentSession());
+        if ((state as AuthState).status === 'onboarding') await this.completeOnboarding();
+      } catch (error) {
+        try {
+          await deps.storage.clear();
+        } finally {
+          set(signedOut(`Preview sign-in failed: ${describe(error)}`));
+        }
+      }
     },
 
     /** Finishes onboarding. Rejects (staying in onboarding) if the server refuses. */

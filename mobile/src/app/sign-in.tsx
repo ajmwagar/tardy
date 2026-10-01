@@ -1,3 +1,4 @@
+import { isRunningInExpoGo } from 'expo';
 import { router } from 'expo-router';
 import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -15,6 +16,7 @@ export default function SignInScreen() {
   const state = useAuth();
   const signingIn = state.status === 'signed_out' && state.signingIn;
   const error = state.status === 'signed_out' ? state.error : null;
+  const expoPreview = isRunningInExpoGo();
   const order = usesMockBackend ? (['github', ...ONE_TAP_PROVIDERS.filter((p) => p !== 'github')] as const) : (['apple'] as const);
 
   return (
@@ -54,13 +56,13 @@ export default function SignInScreen() {
           <Text style={styles.legalLink} onPress={() => void Linking.openURL('https://tardy.news/eula.html')}>EULA</Text>, and{' '}
           <Text style={styles.legalLink} onPress={() => void Linking.openURL('https://tardy.news/privacy.html')}>Privacy Policy</Text>.
         </Text>
-        {usesMockBackend && (
+        {expoPreview && (
           <Pressable
             accessibilityRole="button"
             disabled={signingIn}
             onPress={() => void auth.signInForDevelopment()}
             style={({ pressed }) => [styles.bypass, pressed && styles.bypassPressed]}>
-            <Text style={styles.bypassText}>Developer sign-in (test build)</Text>
+            <Text style={styles.bypassText}>Preview the app</Text>
           </Pressable>
         )}
       </View>

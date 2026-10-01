@@ -181,6 +181,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/llms.txt", get(llms_txt))
         .route("/mcp", post(crate::mcp::endpoint))
         .route("/v1/sessions", post(create_session))
+        .route("/v1/dev/session", post(development_session))
         .route("/v1/session", get(current_session).delete(delete_session))
         .route("/v1/profile", get(current_profile))
         .route("/v1/profile/following", get(current_following))
@@ -293,7 +294,7 @@ pub(crate) struct SessionView {
     token: String,
     account_id: Uuid,
     provider: String,
-    expires_at_ms: u64,
+    expires_at: u64,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -314,7 +315,7 @@ pub(crate) struct AccountView {
 pub(crate) struct SignedInView {
     session: SessionView,
     account: AccountView,
-    onboarded_at_ms: Option<u64>,
+    onboarded_at: Option<u64>,
 }
 
 async fn create_session(
@@ -353,6 +354,21 @@ async fn create_session(
                 .await?
         }
     };
+    Ok((StatusCode::CREATED, Json(signed_in_view(session))))
+}
+
+async fn development_session(
+    State(state): State<Arc<AppState>>,
+) -> Result<(StatusCode, Json<SignedInView>), ApiError> {
+    if std::env::var("TARDY_ENABLE_DEV_AUTH").as_deref() != Ok("yes") {
+        return Err(ApiError::not_found("not found"));
+    }
+    let session = state
+        .pg_accounts
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("PostgreSQL accounts are not configured"))?
+        .development_session("orangej20@gmail.com", now_ms()?)
+        .await?;
     Ok((StatusCode::CREATED, Json(signed_in_view(session))))
 }
 
@@ -444,16 +460,16 @@ async fn list_profiles(
 }
 
 fn signed_in_view(value: HumanSession) -> SignedInView {
-    let onboarded_at_ms = value.profile.onboarded_at_ms;
+    let onboarded_at = value.profile.onboarded_at_ms;
     SignedInView {
         session: SessionView {
             token: value.token,
             account_id: value.profile.profile_id,
             provider: value.provider,
-            expires_at_ms: value.expires_at_ms,
+            expires_at: value.expires_at_ms,
         },
         account: account_view(value.profile),
-        onboarded_at_ms,
+        onboarded_at,
     }
 }
 

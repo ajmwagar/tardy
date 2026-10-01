@@ -274,6 +274,46 @@ impl PgAccountStore {
         })
     }
 
+    pub async fn development_session(
+        &self,
+        email: &str,
+        now_ms: u64,
+    ) -> Result<HumanSession, PgAccountError> {
+        let now = timestamp(now_ms)?;
+        let expires_at_ms = now_ms
+            .checked_add(24 * 60 * 60 * 1_000)
+            .ok_or(PgAccountError::InvalidClaim)?;
+        let expires = timestamp(expires_at_ms)?;
+        let mut tx = self.pool.begin().await?;
+        let account_id: Uuid = sqlx::query_scalar(
+            "SELECT id FROM durable_accounts WHERE email=$1 AND kind='human' AND NOT temporary",
+        )
+        .bind(email)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(PgAccountError::InvalidClaim)?;
+        let mut profile =
+            ensure_human_profile(&mut tx, account_id, "dev-preview", "James", now).await?;
+        sqlx::query(
+            "UPDATE human_profiles SET onboarded_at=COALESCE(onboarded_at,$2) WHERE account_id=$1",
+        )
+        .bind(account_id)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+        profile.onboarded_at_ms = Some(now_ms);
+        let token = new_token();
+        sqlx::query("INSERT INTO auth_sessions (id,account_id,provider,token_hash,expires_at,created_at,last_used_at) VALUES ($1,$2,'email',$3,$4,$5,$5)")
+            .bind(Uuid::new_v4()).bind(account_id).bind(hash(&token)).bind(expires).bind(now).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(HumanSession {
+            token,
+            provider: "email".into(),
+            expires_at_ms,
+            profile,
+        })
+    }
+
     pub async fn revoke_human_session(
         &self,
         token: &str,
