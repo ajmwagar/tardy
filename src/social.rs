@@ -152,6 +152,14 @@ pub struct ConversationMessage {
     pub shared_link_id: Option<Uuid>,
     #[schema(value_type = String, format = DateTime)]
     pub created_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reactions: Vec<ReactionSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ReactionSummary {
+    pub kind: String,
+    pub account_ids: Vec<Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -603,18 +611,24 @@ impl PgSocialStore {
                     last_message.id AS last_id,last_message.sequence AS last_sequence,
                     last_message.sender_profile_id AS last_sender_profile_id,
                     last_message.body AS last_body,last_message.shared_link_id AS last_shared_link_id,
-                    last_message.created_at AS last_created_at,
+                    last_message.created_at AS last_created_at,last_message.reactions AS last_reactions,
                     count(DISTINCT unread.id) FILTER (WHERE unread.sender_profile_id<>$1) AS unread_count
              FROM conversations c JOIN conversation_participants mine ON mine.conversation_id=c.id AND mine.profile_id=$1
              JOIN conversation_participants p ON p.conversation_id=c.id
              LEFT JOIN LATERAL (
-                 SELECT m.id,m.sequence,m.sender_profile_id,m.body,m.shared_link_id,m.created_at
+                 SELECT m.id,m.sequence,m.sender_profile_id,m.body,m.shared_link_id,m.created_at,
+                        (SELECT COALESCE(jsonb_agg(jsonb_build_object('kind',r.kind,'account_ids',r.account_ids)
+                             ORDER BY r.sort), '[]'::jsonb)
+                         FROM (SELECT kind,array_agg(reactor_profile_id ORDER BY reactor_profile_id) account_ids,
+                                      min(CASE kind WHEN 'like' THEN 1 WHEN 'love' THEN 2 WHEN 'laugh' THEN 3 WHEN 'emphasize' THEN 4 WHEN 'question' THEN 5 WHEN 'seen' THEN 6 ELSE 7 END) sort
+                               FROM conversation_message_reactions WHERE message_id=m.id GROUP BY kind) r) AS reactions
                  FROM conversation_messages m WHERE m.conversation_id=c.id
                  ORDER BY m.sequence DESC LIMIT 1
              ) last_message ON true
              LEFT JOIN conversation_messages unread ON unread.conversation_id=c.id AND unread.sequence>mine.last_read_sequence
              GROUP BY c.id,c.mode,c.created_at,mine.last_read_sequence,last_message.id,last_message.sequence,
-                      last_message.sender_profile_id,last_message.body,last_message.shared_link_id,last_message.created_at
+                      last_message.sender_profile_id,last_message.body,last_message.shared_link_id,last_message.created_at,
+                      last_message.reactions
              ORDER BY COALESCE(last_message.created_at,c.created_at) DESC,c.id",
         )
         .bind(actor)
@@ -640,6 +654,11 @@ impl PgSocialStore {
                         created_at: row
                             .try_get("last_created_at")
                             .expect("selected with last id"),
+                        reactions: serde_json::from_value(
+                            row.try_get("last_reactions")
+                                .expect("selected with last id"),
+                        )
+                        .expect("reaction rows have a stable shape"),
                     });
                 Ok(ConversationSummary {
                     id,
@@ -691,7 +710,12 @@ impl PgSocialStore {
         if !allowed {
             return Err(SocialError::Forbidden);
         }
-        let rows = sqlx::query("SELECT id,conversation_id,sequence,sender_profile_id,body,shared_link_id,created_at FROM conversation_messages WHERE conversation_id=$1 AND sequence>$2 ORDER BY sequence LIMIT $3")
+        let rows = sqlx::query("SELECT m.id,m.conversation_id,m.sequence,m.sender_profile_id,m.body,m.shared_link_id,m.created_at,
+                    (SELECT COALESCE(jsonb_agg(jsonb_build_object('kind',r.kind,'account_ids',r.account_ids) ORDER BY r.sort), '[]'::jsonb)
+                     FROM (SELECT kind,array_agg(reactor_profile_id ORDER BY reactor_profile_id) account_ids,
+                                  min(CASE kind WHEN 'like' THEN 1 WHEN 'love' THEN 2 WHEN 'laugh' THEN 3 WHEN 'emphasize' THEN 4 WHEN 'question' THEN 5 WHEN 'seen' THEN 6 ELSE 7 END) sort
+                           FROM conversation_message_reactions WHERE message_id=m.id GROUP BY kind) r) AS reactions
+             FROM conversation_messages m WHERE m.conversation_id=$1 AND m.sequence>$2 ORDER BY m.sequence LIMIT $3")
             .bind(conversation_id).bind(after).bind(limit).fetch_all(&self.pool).await?;
         rows.into_iter().map(|row| message_from_row(&row)).collect()
     }
@@ -788,9 +812,69 @@ impl PgSocialStore {
             body: body.into(),
             shared_link_id,
             created_at: row.try_get("created_at")?,
+            reactions: Vec::new(),
         };
         tx.commit().await?;
         Ok(message)
+    }
+
+    pub async fn react_to_message(
+        &self,
+        actor: Uuid,
+        conversation_id: Uuid,
+        message_id: Uuid,
+        kind: &str,
+    ) -> Result<ConversationMessage, SocialError> {
+        if !matches!(
+            kind,
+            "like" | "love" | "laugh" | "emphasize" | "question" | "seen" | "done"
+        ) {
+            return Err(SocialError::Invalid("invalid reaction kind"));
+        }
+        let mut tx = self.pool.begin().await?;
+        require_participant(&mut tx, conversation_id, actor).await?;
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE id=$1 AND conversation_id=$2)",
+        )
+        .bind(message_id)
+        .bind(conversation_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if !exists {
+            return Err(SocialError::NotFound);
+        }
+        sqlx::query("INSERT INTO conversation_message_reactions (message_id,reactor_profile_id,kind) VALUES ($1,$2,$3)
+                     ON CONFLICT (message_id,reactor_profile_id) DO UPDATE SET kind=excluded.kind,updated_at=now()")
+            .bind(message_id).bind(actor).bind(kind).execute(&mut *tx).await?;
+        tx.commit().await?;
+        self.message(actor, conversation_id, message_id).await
+    }
+
+    pub async fn clear_message_reaction(
+        &self,
+        actor: Uuid,
+        conversation_id: Uuid,
+        message_id: Uuid,
+    ) -> Result<ConversationMessage, SocialError> {
+        let mut tx = self.pool.begin().await?;
+        require_participant(&mut tx, conversation_id, actor).await?;
+        sqlx::query("DELETE FROM conversation_message_reactions WHERE message_id=$1 AND reactor_profile_id=$2")
+            .bind(message_id).bind(actor).execute(&mut *tx).await?;
+        tx.commit().await?;
+        self.message(actor, conversation_id, message_id).await
+    }
+
+    async fn message(
+        &self,
+        actor: Uuid,
+        conversation_id: Uuid,
+        message_id: Uuid,
+    ) -> Result<ConversationMessage, SocialError> {
+        self.messages(actor, conversation_id, 0, 100)
+            .await?
+            .into_iter()
+            .find(|message| message.id == message_id)
+            .ok_or(SocialError::NotFound)
     }
 
     pub async fn publish_post(
@@ -1075,6 +1159,8 @@ fn message_from_row(row: &sqlx::postgres::PgRow) -> Result<ConversationMessage, 
         body: row.try_get("body")?,
         shared_link_id: row.try_get("shared_link_id")?,
         created_at: row.try_get("created_at")?,
+        reactions: serde_json::from_value(row.try_get("reactions")?)
+            .map_err(|_| SocialError::Invalid("persisted reactions"))?,
     })
 }
 fn map_foreign_key(

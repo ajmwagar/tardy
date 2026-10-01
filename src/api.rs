@@ -246,6 +246,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             post(send_social_message).get(list_social_messages),
         )
         .route(
+            "/v1/social/conversations/{id}/messages/{message_id}/reaction",
+            put(set_social_message_reaction).delete(clear_social_message_reaction),
+        )
+        .route(
             "/v1/social/conversations/{id}/read",
             post(mark_social_conversation_read),
         )
@@ -1025,6 +1029,41 @@ async fn mark_social_conversation_read(
 pub(crate) struct SendSocialMessage {
     body: String,
     shared_link_id: Option<Uuid>,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct SetMessageReaction {
+    kind: String,
+}
+
+async fn set_social_message_reaction(
+    State(state): State<Arc<AppState>>,
+    Path((id, message_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    Json(body): Json<SetMessageReaction>,
+) -> Result<Json<ConversationMessage>, ApiError> {
+    Ok(Json(
+        social_store(&state)?
+            .react_to_message(
+                authenticated_actor(&state, &headers).await?,
+                id,
+                message_id,
+                &body.kind,
+            )
+            .await?,
+    ))
+}
+
+async fn clear_social_message_reaction(
+    State(state): State<Arc<AppState>>,
+    Path((id, message_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+) -> Result<Json<ConversationMessage>, ApiError> {
+    Ok(Json(
+        social_store(&state)?
+            .clear_message_reaction(authenticated_actor(&state, &headers).await?, id, message_id)
+            .await?,
+    ))
 }
 
 async fn send_social_message(

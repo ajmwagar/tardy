@@ -90,6 +90,18 @@ async fn dm_stays_quiet_until_an_owned_agent_is_summoned() {
         .unwrap();
     assert_eq!(messages.len(), 2);
     assert_eq!(messages[1].sequence, 2);
+    let acknowledged = store
+        .react_to_message(agent, conversation.id, messages[1].id, "seen")
+        .await
+        .unwrap();
+    assert_eq!(acknowledged.reactions.len(), 1);
+    assert_eq!(acknowledged.reactions[0].kind, "seen");
+    assert_eq!(acknowledged.reactions[0].account_ids, vec![agent]);
+    let reloaded = store
+        .messages(friend, conversation.id, 0, 50)
+        .await
+        .unwrap();
+    assert_eq!(reloaded[1].reactions, acknowledged.reactions);
     store
         .mark_read(friend, conversation.id, messages[1].id)
         .await
