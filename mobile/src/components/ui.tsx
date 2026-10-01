@@ -6,7 +6,7 @@ import { Pressable, StyleSheet, Text, View, type PressableProps, type StyleProp,
 import Animated, { useAnimatedStyle, useSharedValue, withSequence, withSpring } from 'react-native-reanimated';
 
 import type { Account, WorkStatus } from '@/data/types';
-import { colors, compact, countLabel, status as statusStyles, type as typeStyles } from '@/theme';
+import { colors, compact, countLabel, IMAGE_TRANSITION_MS, status as statusStyles, type as typeStyles } from '@/theme';
 
 export const Icon = memo(function Icon({
   name,
@@ -53,7 +53,7 @@ export const Avatar = memo(function Avatar({
       source={account?.avatarUrl}
       recyclingKey={account?.avatarUrl}
       cachePolicy="memory-disk"
-      transition={120}
+      transition={IMAGE_TRANSITION_MS}
       style={{
         width: size,
         height: size,

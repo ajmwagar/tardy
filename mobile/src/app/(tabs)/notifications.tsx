@@ -13,7 +13,7 @@ import { payloadFor } from '@/notifications/payload';
 import { routeForPayload } from '@/notifications/routing';
 import { groupNotifications, readThrough, type TrayFilter } from '@/notifications/tray';
 import { api, ensureAccounts, refreshUnread, toggleFollowing, useAccount, useIsFollowing } from '@/state/store';
-import { colors, radius, status as statusStyles, timeAgo, type } from '@/theme';
+import { colors, IMAGE_TRANSITION_MS, radius, status as statusStyles, timeAgo, type } from '@/theme';
 
 /** The small badge on the actor's avatar: what kind of thing happened, at a glance. */
 const KIND_BADGE: Record<NotificationKind, { symbol: SFSymbol; color: string }> = {
@@ -44,7 +44,7 @@ function Thumb({ postId }: { postId: string }) {
   const media = post?.media[0];
   const uri = media?.type === 'video' ? media.posterUrl : media?.url;
   if (!uri) return <View style={styles.thumb} />;
-  return <Image source={uri} style={styles.thumb} contentFit="cover" cachePolicy="memory-disk" />;
+  return <Image source={uri} recyclingKey={uri} style={styles.thumb} contentFit="cover" cachePolicy="memory-disk" transition={IMAGE_TRANSITION_MS} />;
 }
 
 function FollowBack({ accountId }: { accountId: string }) {

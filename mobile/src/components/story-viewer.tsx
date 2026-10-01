@@ -11,7 +11,7 @@ import type { Story, StoryGroup } from '@/data/types';
 import { markStoriesSeen, useAccount } from '@/state/store';
 import { BOOSTED_LABEL, isGroupBoosted } from '@/stories/boost';
 import { nextPosition, previousPosition, storyDurationMs, tapAction, type StoryPosition } from '@/stories/playback';
-import { colors, radius, timeAgo } from '@/theme';
+import { colors, IMAGE_TRANSITION_MS, radius, timeAgo } from '@/theme';
 
 import { MediaError } from './states';
 import { Avatar, Icon, NameLine, PressableScale } from './ui';
@@ -168,7 +168,7 @@ function StoryMedia({ story, active, onReady }: { story: Story; active: boolean;
         style={styles.fill}
         contentFit="cover"
         cachePolicy="memory-disk"
-        transition={120}
+        transition={IMAGE_TRANSITION_MS}
         onLoad={onReady}
         onError={(e) => setFailure(e.error)}
       />

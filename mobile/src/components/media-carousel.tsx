@@ -4,7 +4,7 @@ import { FlatList, StyleSheet, Text, View, type NativeScrollEvent, type NativeSy
 
 import type { MediaItem } from '@/data/types';
 import { logEngagement, toggleMuted, useStore } from '@/state/store';
-import { colors, layout } from '@/theme';
+import { colors, IMAGE_TRANSITION_MS, layout } from '@/theme';
 
 import { DoubleTapLike } from './double-tap-like';
 import { Icon } from './ui';
@@ -54,7 +54,7 @@ export const MediaCarousel = memo(function MediaCarousel({
             style={StyleSheet.absoluteFill}
             contentFit="cover"
             cachePolicy="memory-disk"
-            transition={150}
+            transition={IMAGE_TRANSITION_MS}
             priority={i === 0 ? 'high' : 'normal'}
           />
         ) : (

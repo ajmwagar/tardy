@@ -9,7 +9,7 @@ import { Avatar, Icon, NameLine, PressableScale, StatusPill } from '@/components
 import { TardyApiError } from '@/data/api';
 import type { Message, Post, Thread } from '@/data/types';
 import { api, ensureAccounts, refreshUnread, reportError, useAccount, useStore } from '@/state/store';
-import { colors, radius, timeAgo } from '@/theme';
+import { colors, IMAGE_TRANSITION_MS, radius, timeAgo } from '@/theme';
 
 /** Bounded polling while the thread is open (server push for DMs comes later). */
 const POLL_MS = 3000;
@@ -58,7 +58,7 @@ function SharedPostCard({ message }: { message: Message }) {
         <Avatar account={author} size={22} />
         <NameLine account={author} />
       </View>
-      <Image source={uri} style={styles.sharedMedia} contentFit="cover" cachePolicy="memory-disk" />
+      <Image source={uri} recyclingKey={uri} style={styles.sharedMedia} contentFit="cover" cachePolicy="memory-disk" transition={IMAGE_TRANSITION_MS} />
       <View style={styles.sharedBody}>
         {post.status && <StatusPill value={post.status} compact />}
         <Text style={styles.sharedCaption} numberOfLines={2}>

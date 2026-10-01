@@ -9,6 +9,7 @@ import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-cont
 import { TardyVideoView } from '../../modules/tardy-video';
 import type { MediaItem } from '@/data/types';
 import { logEngagement, useStore } from '@/state/store';
+import { IMAGE_TRANSITION_MS } from '@/theme';
 
 import { MediaError } from './states';
 
@@ -100,7 +101,7 @@ export function VideoSurface({
         video
       )}
       {status !== 'readyToPlay' && (
-        <Image source={media.posterUrl} style={StyleSheet.absoluteFill} contentFit="cover" cachePolicy="memory-disk" />
+        <Image source={media.posterUrl} style={StyleSheet.absoluteFill} contentFit="cover" cachePolicy="memory-disk" transition={IMAGE_TRANSITION_MS} />
       )}
       {status === 'error' && (
         <MediaError
