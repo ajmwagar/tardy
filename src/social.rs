@@ -54,6 +54,70 @@ pub enum PostVisibility {
     Public,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AppEngagementKind {
+    Favorite,
+    Unfavorite,
+    Reply,
+    Share,
+    ShareViaDm,
+    ShareViaCopyLink,
+    PhotoExpand,
+    VideoOpen,
+    OpenLink,
+    ProfileClick,
+    Dwell,
+    Vqv,
+    NotInterested,
+    Alarm,
+    Unalarm,
+    Repost,
+    Unrepost,
+    FollowAuthor,
+    UnfollowAuthor,
+}
+
+impl AppEngagementKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Favorite => "favorite",
+            Self::Unfavorite => "unfavorite",
+            Self::Reply => "reply",
+            Self::Share => "share",
+            Self::ShareViaDm => "share_via_dm",
+            Self::ShareViaCopyLink => "share_via_copy_link",
+            Self::PhotoExpand => "photo_expand",
+            Self::VideoOpen => "video_open",
+            Self::OpenLink => "open_link",
+            Self::ProfileClick => "profile_click",
+            Self::Dwell => "dwell",
+            Self::Vqv => "vqv",
+            Self::NotInterested => "not_interested",
+            Self::Alarm => "alarm",
+            Self::Unalarm => "unalarm",
+            Self::Repost => "repost",
+            Self::Unrepost => "unrepost",
+            Self::FollowAuthor => "follow_author",
+            Self::UnfollowAuthor => "unfollow_author",
+        }
+    }
+
+    fn targets_author(self) -> bool {
+        matches!(self, Self::FollowAuthor | Self::UnfollowAuthor)
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+pub struct AppEngagementAction {
+    #[serde(rename = "type")]
+    pub kind: AppEngagementKind,
+    pub post_id: Option<Uuid>,
+    pub author_id: Option<Uuid>,
+    pub ms: Option<u64>,
+    pub watched_ms: Option<u64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SocialIdentity {
     pub profile_id: Uuid,
@@ -67,6 +131,15 @@ pub struct Conversation {
     pub id: Uuid,
     pub mode: ConversationMode,
     pub participants: Vec<Uuid>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ConversationSummary {
+    pub id: Uuid,
+    pub mode: ConversationMode,
+    pub participants: Vec<Uuid>,
+    pub last_message: Option<ConversationMessage>,
+    pub unread_count: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -100,6 +173,40 @@ pub struct TardyPost {
     pub created_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct AppFeedPost {
+    pub id: Uuid,
+    pub author_id: Uuid,
+    pub format: &'static str,
+    pub media: Vec<serde_json::Value>,
+    pub caption: String,
+    pub links: Vec<serde_json::Value>,
+    pub created_at_ms: i64,
+    pub like_count: i64,
+    pub comment_count: i64,
+    pub share_count: i64,
+    pub alarm_count: i64,
+    pub repost_count: i64,
+    pub viewer_has_liked: bool,
+    pub viewer_has_alarm: bool,
+    pub viewer_has_reposted: bool,
+    pub viewer_has_saved: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AppAccount {
+    pub id: Uuid,
+    pub kind: IdentityKind,
+    pub handle: String,
+    pub display_name: String,
+    pub avatar_url: String,
+    pub bio: String,
+    pub verified: bool,
+    pub followers: i64,
+    pub following: i64,
+    pub post_count: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Comment {
     pub id: Uuid,
@@ -119,6 +226,206 @@ pub struct PgSocialStore {
 impl PgSocialStore {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
+    }
+
+    pub async fn record_engagements(
+        &self,
+        viewer: Uuid,
+        actions: &[AppEngagementAction],
+    ) -> Result<(), SocialError> {
+        let mut tx = self.pool.begin().await?;
+        for action in actions {
+            let (post_id, author_id) = if action.kind.targets_author() {
+                if action.post_id.is_some() || action.author_id.is_none() {
+                    return Err(SocialError::Invalid("author engagement target"));
+                }
+                (None, action.author_id)
+            } else {
+                if action.author_id.is_some() || action.post_id.is_none() {
+                    return Err(SocialError::Invalid("post engagement target"));
+                }
+                (action.post_id, None)
+            };
+            let duration = match action.kind {
+                AppEngagementKind::Dwell => action.ms,
+                AppEngagementKind::Vqv => action.watched_ms,
+                _ if action.ms.is_some() || action.watched_ms.is_some() => {
+                    return Err(SocialError::Invalid("unexpected engagement duration"));
+                }
+                _ => None,
+            };
+            if matches!(
+                action.kind,
+                AppEngagementKind::Dwell | AppEngagementKind::Vqv
+            ) && duration.is_none()
+            {
+                return Err(SocialError::Invalid("missing engagement duration"));
+            }
+
+            if let Some(post_id) = post_id {
+                let visible: bool = sqlx::query_scalar(
+                    "SELECT EXISTS(SELECT 1 FROM tardy_posts p WHERE p.id=$1 AND
+                     (p.visibility='public' OR p.author_profile_id=$2 OR
+                      (p.visibility='followers' AND EXISTS(SELECT 1 FROM profile_follows f
+                       WHERE f.follower_profile_id=$2 AND f.followed_profile_id=p.author_profile_id))))",
+                )
+                .bind(post_id)
+                .bind(viewer)
+                .fetch_one(&mut *tx)
+                .await?;
+                if !visible {
+                    continue;
+                }
+            }
+            if let Some(author_id) = author_id {
+                let exists: bool = sqlx::query_scalar(
+                    "SELECT EXISTS(SELECT 1 FROM social_identities WHERE profile_id=$1)",
+                )
+                .bind(author_id)
+                .fetch_one(&mut *tx)
+                .await?;
+                if !exists {
+                    continue;
+                }
+            }
+
+            let duration = duration
+                .map(i64::try_from)
+                .transpose()
+                .map_err(|_| SocialError::Invalid("engagement duration is too large"))?;
+
+            sqlx::query(
+                "INSERT INTO engagement_events
+                 (id,viewer_profile_id,kind,post_id,author_id,duration_ms)
+                 VALUES ($1,$2,$3,$4,$5,$6)",
+            )
+            .bind(Uuid::new_v4())
+            .bind(viewer)
+            .bind(action.kind.as_str())
+            .bind(post_id)
+            .bind(author_id)
+            .bind(duration)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn app_feed(
+        &self,
+        viewer: Option<Uuid>,
+        limit: i64,
+    ) -> Result<Vec<AppFeedPost>, SocialError> {
+        let rows = sqlx::query(
+            "SELECT p.id,p.author_profile_id,p.caption,p.created_at,l.canonical_url,
+                    (SELECT count(*) FROM post_comments c WHERE c.post_id=p.id)::bigint AS comment_count
+             FROM tardy_posts p
+             LEFT JOIN shared_links l ON l.id=p.shared_link_id
+             WHERE p.visibility='public'
+                OR p.author_profile_id=$1
+                OR (p.visibility='followers' AND EXISTS (
+                    SELECT 1 FROM profile_follows f
+                    WHERE f.follower_profile_id=$1 AND f.followed_profile_id=p.author_profile_id))
+             ORDER BY p.created_at DESC,p.id DESC LIMIT $2",
+        )
+        .bind(viewer)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|row| {
+                let link: Option<String> = row.try_get("canonical_url")?;
+                Ok(AppFeedPost {
+                    id: row.try_get("id")?,
+                    author_id: row.try_get("author_profile_id")?,
+                    format: "photo",
+                    media: Vec::new(),
+                    caption: row.try_get("caption")?,
+                    links: link
+                        .map(|url| {
+                            vec![serde_json::json!({"kind":"other","label":"Open link","url":url})]
+                        })
+                        .unwrap_or_default(),
+                    created_at_ms: row
+                        .try_get::<DateTime<Utc>, _>("created_at")?
+                        .timestamp_millis(),
+                    like_count: 0,
+                    comment_count: row.try_get("comment_count")?,
+                    share_count: 0,
+                    alarm_count: 0,
+                    repost_count: 0,
+                    viewer_has_liked: false,
+                    viewer_has_alarm: false,
+                    viewer_has_reposted: false,
+                    viewer_has_saved: false,
+                })
+            })
+            .collect()
+    }
+
+    /// Posts visible to `viewer`, optionally restricted to one author. The app's first
+    /// feed contract deliberately uses a bounded, non-opaque page: callers return a null
+    /// cursor until keyset pagination is added rather than pretending an offset is stable.
+    pub async fn app_posts(
+        &self,
+        viewer: Option<Uuid>,
+        author: Option<Uuid>,
+        limit: i64,
+    ) -> Result<Vec<AppFeedPost>, SocialError> {
+        let rows = sqlx::query(
+            "SELECT p.id,p.author_profile_id,p.caption,p.created_at,l.canonical_url,
+                    (SELECT count(*) FROM post_comments c WHERE c.post_id=p.id)::bigint AS comment_count
+             FROM tardy_posts p
+             LEFT JOIN shared_links l ON l.id=p.shared_link_id
+             WHERE ($2::uuid IS NULL OR p.author_profile_id=$2)
+               AND (p.visibility='public'
+                    OR p.author_profile_id=$1
+                    OR (p.visibility='followers' AND EXISTS (
+                        SELECT 1 FROM profile_follows f
+                        WHERE f.follower_profile_id=$1 AND f.followed_profile_id=p.author_profile_id)))
+             ORDER BY p.created_at DESC,p.id DESC LIMIT $3",
+        )
+        .bind(viewer)
+        .bind(author)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(app_post_from_row).collect()
+    }
+
+    pub async fn app_accounts(&self, ids: &[Uuid]) -> Result<Vec<AppAccount>, SocialError> {
+        let rows = sqlx::query(
+            "SELECT i.profile_id,i.kind,i.handle,
+                    COALESCE(h.display_name,i.handle) AS display_name,
+                    COALESCE(NULLIF(h.avatar_url,''),'https://tardy.news/favicon.svg') AS avatar_url,
+                    COALESCE(h.bio,'') AS bio,
+                    (SELECT count(*) FROM profile_follows f WHERE f.followed_profile_id=i.profile_id)::bigint AS followers,
+                    (SELECT count(*) FROM profile_follows f WHERE f.follower_profile_id=i.profile_id)::bigint AS following,
+                    (SELECT count(*) FROM tardy_posts p WHERE p.author_profile_id=i.profile_id)::bigint AS post_count
+             FROM social_identities i
+             LEFT JOIN human_profiles h ON h.profile_id=i.profile_id
+             WHERE i.profile_id=ANY($1)",
+        )
+        .bind(ids)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(app_account_from_row).collect()
+    }
+
+    pub async fn app_account_by_id(&self, id: Uuid) -> Result<AppAccount, SocialError> {
+        let accounts = self.app_accounts(&[id]).await?;
+        accounts.into_iter().next().ok_or(SocialError::NotFound)
+    }
+
+    pub async fn app_account_by_handle(&self, handle: &str) -> Result<AppAccount, SocialError> {
+        let handle = normalize_handle(handle)?;
+        let id = sqlx::query_scalar("SELECT profile_id FROM social_identities WHERE handle=$1")
+            .bind(handle)
+            .fetch_optional(&self.pool)
+            .await?
+            .ok_or(SocialError::NotFound)?;
+        self.app_account_by_id(id).await
     }
 
     pub async fn register_identity(
@@ -244,12 +551,29 @@ impl PgSocialStore {
         })
     }
 
-    pub async fn conversations(&self, actor: Uuid) -> Result<Vec<Conversation>, SocialError> {
+    pub async fn conversations(
+        &self,
+        actor: Uuid,
+    ) -> Result<Vec<ConversationSummary>, SocialError> {
         let rows = sqlx::query(
-            "SELECT c.id,c.mode,array_agg(p.profile_id ORDER BY p.joined_at,p.profile_id) AS participants
+            "SELECT c.id,c.mode,array_agg(DISTINCT p.profile_id ORDER BY p.profile_id) AS participants,
+                    mine.last_read_sequence,
+                    last_message.id AS last_id,last_message.sequence AS last_sequence,
+                    last_message.sender_profile_id AS last_sender_profile_id,
+                    last_message.body AS last_body,last_message.shared_link_id AS last_shared_link_id,
+                    last_message.created_at AS last_created_at,
+                    count(DISTINCT unread.id) FILTER (WHERE unread.sender_profile_id<>$1) AS unread_count
              FROM conversations c JOIN conversation_participants mine ON mine.conversation_id=c.id AND mine.profile_id=$1
              JOIN conversation_participants p ON p.conversation_id=c.id
-             GROUP BY c.id,c.mode,c.created_at ORDER BY c.created_at DESC,c.id",
+             LEFT JOIN LATERAL (
+                 SELECT m.id,m.sequence,m.sender_profile_id,m.body,m.shared_link_id,m.created_at
+                 FROM conversation_messages m WHERE m.conversation_id=c.id
+                 ORDER BY m.sequence DESC LIMIT 1
+             ) last_message ON true
+             LEFT JOIN conversation_messages unread ON unread.conversation_id=c.id AND unread.sequence>mine.last_read_sequence
+             GROUP BY c.id,c.mode,c.created_at,mine.last_read_sequence,last_message.id,last_message.sequence,
+                      last_message.sender_profile_id,last_message.body,last_message.shared_link_id,last_message.created_at
+             ORDER BY COALESCE(last_message.created_at,c.created_at) DESC,c.id",
         )
         .bind(actor)
         .fetch_all(&self.pool)
@@ -257,13 +581,57 @@ impl PgSocialStore {
         rows.into_iter()
             .map(|row| {
                 let mode: String = row.try_get("mode")?;
-                Ok(Conversation {
-                    id: row.try_get("id")?,
+                let id = row.try_get("id")?;
+                let last_message = row
+                    .try_get::<Option<Uuid>, _>("last_id")?
+                    .map(|message_id| ConversationMessage {
+                        id: message_id,
+                        conversation_id: id,
+                        sequence: row.try_get("last_sequence").expect("selected with last id"),
+                        sender_profile_id: row
+                            .try_get("last_sender_profile_id")
+                            .expect("selected with last id"),
+                        body: row.try_get("last_body").expect("selected with last id"),
+                        shared_link_id: row
+                            .try_get("last_shared_link_id")
+                            .expect("selected with last id"),
+                        created_at: row
+                            .try_get("last_created_at")
+                            .expect("selected with last id"),
+                    });
+                Ok(ConversationSummary {
+                    id,
                     mode: parse_mode(&mode)?,
                     participants: row.try_get("participants")?,
+                    last_message,
+                    unread_count: row.try_get("unread_count")?,
                 })
             })
             .collect()
+    }
+
+    pub async fn mark_read(
+        &self,
+        actor: Uuid,
+        conversation_id: Uuid,
+        through_message_id: Uuid,
+    ) -> Result<(), SocialError> {
+        let updated = sqlx::query(
+            "UPDATE conversation_participants p SET last_read_sequence=GREATEST(p.last_read_sequence,m.sequence)
+             FROM conversation_messages m
+             WHERE p.conversation_id=$1 AND p.profile_id=$2
+               AND m.id=$3 AND m.conversation_id=p.conversation_id",
+        )
+        .bind(conversation_id)
+        .bind(actor)
+        .bind(through_message_id)
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+        if updated == 0 {
+            return Err(SocialError::NotFound);
+        }
+        Ok(())
     }
 
     pub async fn messages(
@@ -591,6 +959,45 @@ fn parse_visibility(value: &str) -> Result<PostVisibility, SocialError> {
         "public" => Ok(PostVisibility::Public),
         _ => Err(SocialError::Invalid("persisted visibility")),
     }
+}
+fn app_account_from_row(row: sqlx::postgres::PgRow) -> Result<AppAccount, SocialError> {
+    Ok(AppAccount {
+        id: row.try_get("profile_id")?,
+        kind: parse_kind(&row.try_get::<String, _>("kind")?)?,
+        handle: row.try_get("handle")?,
+        display_name: row.try_get("display_name")?,
+        avatar_url: row.try_get("avatar_url")?,
+        bio: row.try_get("bio")?,
+        verified: false,
+        followers: row.try_get("followers")?,
+        following: row.try_get("following")?,
+        post_count: row.try_get("post_count")?,
+    })
+}
+fn app_post_from_row(row: sqlx::postgres::PgRow) -> Result<AppFeedPost, SocialError> {
+    let link: Option<String> = row.try_get("canonical_url")?;
+    Ok(AppFeedPost {
+        id: row.try_get("id")?,
+        author_id: row.try_get("author_profile_id")?,
+        format: "photo",
+        media: Vec::new(),
+        caption: row.try_get("caption")?,
+        links: link
+            .map(|url| vec![serde_json::json!({"kind":"other","label":"Open link","url":url})])
+            .unwrap_or_default(),
+        created_at_ms: row
+            .try_get::<DateTime<Utc>, _>("created_at")?
+            .timestamp_millis(),
+        like_count: 0,
+        comment_count: row.try_get("comment_count")?,
+        share_count: 0,
+        alarm_count: 0,
+        repost_count: 0,
+        viewer_has_liked: false,
+        viewer_has_alarm: false,
+        viewer_has_reposted: false,
+        viewer_has_saved: false,
+    })
 }
 fn post_from_row(row: &sqlx::postgres::PgRow) -> Result<TardyPost, SocialError> {
     Ok(TardyPost {

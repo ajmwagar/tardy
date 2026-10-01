@@ -14,7 +14,7 @@ provider "fpl" {
 }
 
 resource "fpl_fab_site" "landing" {
-  id                      = "tardy-news"
+  id                      = "tardy"
   project                 = var.project
   github_repo             = "ajmwagar/tardy"
   git_url                 = "https://github.com/ajmwagar/tardy.git"
@@ -22,9 +22,11 @@ resource "fpl_fab_site" "landing" {
   domain                  = "tardy.news"
   path                    = "/"
   auto_promote_production = true
-  build_command           = "cp agent/llms.txt web/public/llms.txt && cp skills/tardy/SKILL.md web/public/SKILL.md"
-  publish_dir             = "web/public"
+  install_command         = "true"
+  build_command           = "mkdir -p dist && cp -R web/public/. dist/ && cp agent/llms.txt dist/llms.txt && cp skills/tardy/SKILL.md dist/SKILL.md"
+  publish_dir             = "dist"
   framework               = "static"
+  env                     = {}
 }
 
 resource "fpl_storage_bucket" "media" {

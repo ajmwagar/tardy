@@ -246,6 +246,16 @@ describe('HttpTardyApi: decoding', () => {
     expect(posts.map((p) => p.id)).toEqual(['p1']);
   });
 
+  it('decodes durable notification rows and their read state', async () => {
+    const { api } = await signedInClient({
+      status: 200,
+      body: [{ id: 'n1', kind: 'mention', actor_id: 'a2', post_id: 'p1', text: 'mentioned you', created_at_ms: 1000, read: true }],
+    });
+    await expect(api.notifications()).resolves.toEqual([
+      { id: 'n1', kind: 'mention', actorId: 'a2', postId: 'p1', text: 'mentioned you', createdAt: '1970-01-01T00:00:01.000Z', read: true },
+    ]);
+  });
+
   const wireMessage = (sequence: number, body: string, extra: object = {}) => ({
     id: `m${sequence}`,
     conversation_id: 't1',

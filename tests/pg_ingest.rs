@@ -31,6 +31,11 @@ async fn polling_is_deduplicated_and_enqueues_exactly_once() {
         .sync_sources(std::slice::from_ref(&source))
         .await
         .unwrap();
+    sqlx::query("UPDATE source_channels SET next_poll_at=now() WHERE id=$1")
+        .bind(&source.id)
+        .execute(&pool)
+        .await
+        .unwrap();
     let claimed = store
         .claim_due_source("poller-a", 60)
         .await
@@ -107,20 +112,32 @@ async fn polling_is_deduplicated_and_enqueues_exactly_once() {
     .await
     .unwrap();
     let source_event_id = uuid::Uuid::new_v4();
+    let actor_id = uuid::Uuid::new_v4();
     let notification = NewNotification {
         source_event_id,
         account_id,
-        category: "hyper_tardy".into(),
+        category: "mention".into(),
         title: "Hyper-Tardy".into(),
         body: "A post is breaking.".into(),
         deep_link: Some("tardy://posts/post-1".into()),
-        data: serde_json::Map::new(),
+        data: serde_json::Map::from_iter([(
+            "actor_id".into(),
+            serde_json::Value::String(actor_id.to_string()),
+        )]),
     };
     assert_eq!(
         push.enqueue(notification.clone()).await.unwrap(),
         source_event_id
     );
     assert_eq!(push.enqueue(notification).await.unwrap(), source_event_id);
+    let notifications = push.notifications(account_id, 50).await.unwrap();
+    assert_eq!(notifications.len(), 1);
+    assert_eq!(notifications[0].actor_id, actor_id);
+    assert!(!notifications[0].read);
+    push.mark_notifications_read(account_id, Utc::now())
+        .await
+        .unwrap();
+    assert!(push.notifications(account_id, 50).await.unwrap()[0].read);
     let deliveries = push
         .claim_deliveries("push-a", ApnsEnvironment::Sandbox, "com.tardy.app", 10)
         .await
@@ -138,6 +155,8 @@ fn source() -> SourceDefinition {
         display_name: "Test Source".into(),
         enabled: true,
         limit: 10,
+        poll_interval_seconds: 300,
+        poll_jitter_seconds: 60,
         transport: Transport::Rss {
             url: "https://example.com/feed.xml".into(),
         },
@@ -173,5 +192,6 @@ fn plan() -> TransformPlan {
             slides: vec!["A durable event".into()],
         },
         llm: None,
+        capabilities: vec![],
     }
 }

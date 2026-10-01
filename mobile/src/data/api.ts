@@ -74,6 +74,8 @@ export interface TardyApi {
    * throws `unauthenticated`. New provider accounts get a Tardy account on first sign-in.
    */
   signIn(credential: AuthCredential): Promise<SignedIn>;
+  /** Local Expo Go only: asks a dev-enabled LAN server for a disposable preview session. */
+  developmentSession(): Promise<SignedIn>;
   /**
    * Emails a one-time 6-digit sign-in code (passwordless). Always resolves for a
    * well-formed address, whether or not an account exists, so it can't be used to probe

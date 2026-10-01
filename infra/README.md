@@ -4,6 +4,11 @@ This root is Tardy's complete infrastructure intent as an FPL customer. It must 
 
 `fpl_fab_site.landing` registers the static agent-first site from `web/public` at `tardy.news`. Fab owns build/promotion and `fab-sites` serves the immutable artifact; Palisade and the existing Cloudflare zone own verified ingress. `api.tardy.news` remains the separate Shroud service domain.
 
+The checked-in `.fab/pipelines.json` recipe and the site registration both use
+an explicit no-op install command because this dependency-free static site has
+no root Node lockfile. The recipe publishes `web/public`, `/llms.txt`, and
+`/SKILL.md` from an immutable `dist` artifact.
+
 ## Identity
 
 Humans keep using the existing `prod` CLI profile. A second `fpl profile` is unnecessary because profiles select an FPL environment/issuer, not a customer or project.
@@ -34,3 +39,37 @@ Applying is intentionally blocked until the hosted FPL API implements these two 
 Both APIs must authorize project membership and scopes, meter usage, preserve deletion protection, store provider credentials operator-side, and return only opaque `binding_ref` values plus non-secret metadata.
 
 The hosted service facade must also accept typed `bindings` on `PUT /v1/projects/{project}/services/{name}`, reject cross-project references, and expand them only inside the workload runtime. Tardy must not use the operator-only `fpl_shroud_deployment` resource as a shortcut.
+
+## Agora One development bridge
+
+The hosted tenant facade does not yet route `PUT /v1/fab/sites/{id}` or Fab's
+native `/v1/sites` API. Until it does, a developer may test only the Fab site
+resource through an SSH tunnel to Agora One. Build the current provider, open a
+local forward to `fabd`, and import the existing dev registration into a
+temporary state:
+
+```sh
+go -C ../fpl-opentofu build -o terraform-provider-shroud .
+ssh -N -L 127.0.0.1:17788:127.0.0.1:7788 agora-one
+
+FPL_ENDPOINT=http://127.0.0.1:17788 \
+FPL_PROJECT=tardy \
+tofu import \
+  -state=/tmp/tardy-dev.tfstate \
+  -var='project=tardy' \
+  -var='environment=dev' \
+  -var='api_image=registry.invalid/tardy@sha256:0000000000000000000000000000000000000000000000000000000000000000' \
+  fpl_fab_site.landing tardy
+```
+
+Use a CLI development override for `registry.fpl.dev/fpl/shroud` while the
+provider remains private. A targeted plan should report `No changes`. This is
+a temporary validation bridge, not a production state backend and not
+authorization to manage Agora One's platform containers.
+
+Agora One currently has `FABD_SHROUD_DISABLE_PERSISTENCE=true` and
+`FABD_ARTIFACT_STORE=local`. That combination lets the static build succeed but
+loses `/workspace/artifacts/site` when its Firecracker runner exits. Fab already
+has its R2 artifact secret bindings, so the platform-owned fix is to select the
+R2 artifact store (or restore Shroud persistence), restart `fabd`, and rerun the
+site build. Tardy must not patch that shared runtime configuration itself.

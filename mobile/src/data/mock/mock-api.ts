@@ -21,6 +21,7 @@ import { canonicalUrl, linkProvider, youtubeId } from '@/share/links';
 import { searchRanked } from '@/share/search';
 import { threadKind } from '@/share/sections';
 import { normalizeProfilePatch, profileProblem, type ProfilePatch } from '../profile';
+import { mockCredential } from './mock-auth';
 
 import { SEARCH_LIMIT, TardyApiError, type TardyApi } from '../api';
 import type {
@@ -327,6 +328,12 @@ export class MockTardyApi implements TardyApi {
   async signIn(credential: AuthCredential) {
     await this.loadAuth();
     await this.auth.signIn(credential);
+    return this.delay(this.signedIn());
+  }
+
+  async developmentSession() {
+    await this.loadAuth();
+    await this.auth.signIn(mockCredential.github('jamesmerrill'));
     return this.delay(this.signedIn());
   }
 

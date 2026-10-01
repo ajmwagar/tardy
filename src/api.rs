@@ -2,6 +2,7 @@ use crate::ads::{
     AdPaymentProcessor, AdsError, CampaignReport, FundingIntent, NewCampaign, PaymentRequired,
     PaymentRequirements, PgAdsStore, ResourceInfo, X402_VERSION,
 };
+use crate::apple_auth::{AppleAuthError, AppleAuthenticator};
 use crate::audio::{
     AttachPostAudio, AudioError, AudioRelease, AudioUsage, NewAudioRelease, NewOriginalTrack,
     PgAudioStore, TrendingAudio,
@@ -13,20 +14,23 @@ use crate::domain::{
 use crate::media::{MediaError, MediaService, UploadIntent};
 use crate::metrics::Metrics;
 use crate::onboarding::{AccountRegistry, OnboardingError, TemporaryTardyAccount};
-use crate::pg_accounts::{PgAccountError, PgAccountStore};
-use crate::push::{NotificationPreference, PgPushStore, PushDevice, PushError, RegisterPushDevice};
+use crate::pg_accounts::{HumanProfile, HumanSession, PgAccountError, PgAccountStore};
+use crate::push::{
+    AppNotification, NotificationPreference, PgPushStore, PushDevice, PushError, RegisterPushDevice,
+};
 use crate::ranking::FeedRanker;
 use crate::search::{SearchError, SearchService};
 use crate::social::{
-    Comment, Conversation, ConversationMessage, IdentityKind, PgSocialStore, PostVisibility,
-    SharedLink, SocialError, TardyPost,
+    AppAccount, AppEngagementAction, Comment, Conversation, ConversationMessage,
+    ConversationSummary, IdentityKind, PgSocialStore, PostVisibility, SharedLink, SocialError,
+    TardyPost,
 };
 use crate::store::{MemoryStore, NewLive, NewProfile, NewReel, Store, StoreError};
 use crate::subscriptions::{
     FeedEvent, NewSubscription, PgSubscriptionStore, Subscription, SubscriptionError,
 };
 use axum::extract::{Path, Query, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Json, Router, middleware};
@@ -50,6 +54,7 @@ pub struct AppState {
     pub subscriptions: Option<Arc<PgSubscriptionStore>>,
     pub social: Option<Arc<PgSocialStore>>,
     pub audio: Option<Arc<PgAudioStore>>,
+    pub apple_auth: Option<Arc<AppleAuthenticator>>,
 }
 
 pub struct AdsRuntime {
@@ -77,6 +82,7 @@ impl AppState {
             subscriptions: None,
             social: None,
             audio: None,
+            apple_auth: None,
         })
     }
 
@@ -98,6 +104,7 @@ impl AppState {
             subscriptions: None,
             social: None,
             audio: None,
+            apple_auth: None,
         })
     }
 
@@ -119,6 +126,7 @@ impl AppState {
             subscriptions: None,
             social: None,
             audio: None,
+            apple_auth: None,
         })
     }
 
@@ -152,6 +160,11 @@ impl AppState {
         self
     }
 
+    pub fn with_apple_auth(mut self, value: AppleAuthenticator) -> Self {
+        self.apple_auth = Some(Arc::new(value));
+        self
+    }
+
     pub async fn purge_expired_unclaimed_tardies(&self) -> Result<usize, ApiError> {
         let expired = purge_accounts(self, now_ms()?).await?;
         if !expired.is_empty() {
@@ -169,7 +182,15 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/metrics", get(metrics_endpoint))
         .route("/openapi.json", get(openapi_endpoint))
         .route("/llms.txt", get(llms_txt))
-        .route("/v1/profiles", post(create_profile))
+        .route("/mcp", post(crate::mcp::endpoint))
+        .route("/v1/sessions", post(create_session))
+        .route("/v1/dev/session", post(development_session))
+        .route("/v1/session", get(current_session).delete(delete_session))
+        .route("/v1/profile", get(current_profile))
+        .route("/v1/profile/following", get(current_following))
+        .route("/v1/profiles", post(create_profile).get(list_profiles))
+        .route("/v1/profiles/by-id/{id}", get(get_profile_by_id))
+        .route("/v1/profiles/by-id/{id}/posts", get(get_profile_posts))
         .route("/v1/profiles/{handle}", get(get_profile))
         .route(
             "/v1/profiles/{profile_id}/follow",
@@ -200,11 +221,15 @@ pub fn router(state: Arc<AppState>) -> Router {
             post(grant_search_consent).delete(revoke_search_consent),
         )
         .route("/v1/search", post(search_posts))
-        .route("/v1/explore", post(explore_posts))
+        .route("/v1/explore", get(explore_feed).post(explore_posts))
         .route("/v1/lives", post(start_live))
         .route("/v1/lives/{id}/events", post(append_event).get(list_events))
         .route("/v1/lives/{id}/end", post(end_live))
         .route("/v1/feed", get(feed))
+        .route("/v1/feed/reels", get(reels_feed))
+        .route("/v1/engagements", post(record_app_engagements))
+        .route("/v1/stories", get(stories))
+        .route("/v1/dev/blobs/{name}", get(local_blob))
         .route("/v1/feed/hyper-tardy", get(hyper_tardy_feed))
         .route("/v1/agent-handoffs", post(agent_handoff))
         .route("/v1/agent-shares", post(share_to_agent))
@@ -216,6 +241,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(
             "/v1/social/conversations/{id}/messages",
             post(send_social_message).get(list_social_messages),
+        )
+        .route(
+            "/v1/social/conversations/{id}/read",
+            post(mark_social_conversation_read),
         )
         .route(
             "/v1/social/conversations/{id}/agents",
@@ -234,6 +263,8 @@ pub fn router(state: Arc<AppState>) -> Router {
             axum::routing::delete(unregister_push_device),
         )
         .route("/v1/push/preferences", put(set_notification_preference))
+        .route("/v1/notifications", get(list_notifications))
+        .route("/v1/notifications/read", post(mark_notifications_read))
         .route("/v1/ad-campaigns", post(create_ad_campaign))
         .route(
             "/v1/ad-campaigns/{id}/funding-intents",
@@ -257,6 +288,245 @@ pub fn router(state: Arc<AppState>) -> Router {
         .layer(middleware::from_fn(move |request, next| {
             crate::metrics::track(metrics.clone(), request, next)
         }))
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub(crate) struct AppEngagementBatch {
+    actions: Vec<AppEngagementAction>,
+}
+
+async fn record_app_engagements(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<AppEngagementBatch>,
+) -> Result<StatusCode, ApiError> {
+    let viewer = authenticated_actor(&state, &headers).await?;
+    if body.actions.is_empty() || body.actions.len() > 500 {
+        return Err(ApiError::unprocessable(
+            "engagement batch must contain 1 to 500 actions",
+        ));
+    }
+    social_store(&state)?
+        .record_engagements(viewer, &body.actions)
+        .await
+        .map_err(|error| match error {
+            SocialError::Invalid(_) => ApiError::unprocessable(error.to_string()),
+            other => other.into(),
+        })?;
+    Ok(StatusCode::ACCEPTED)
+}
+
+/// Session restoration is an explicit route even before the provider exchange lands.
+/// This matters to clients carrying an old development token: they receive 401 and can
+/// clear the keychain instead of mistaking a missing route for a server outage.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(tag = "provider", rename_all = "snake_case")]
+pub(crate) enum SessionCredential {
+    Apple {
+        identity_token: String,
+        authorization_code: String,
+        nonce: String,
+        full_name: Option<String>,
+    },
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct SessionView {
+    token: String,
+    account_id: Uuid,
+    provider: String,
+    expires_at_ms: u64,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct AccountView {
+    id: Uuid,
+    kind: &'static str,
+    handle: String,
+    display_name: String,
+    avatar_url: String,
+    bio: String,
+    verified: bool,
+    followers: u64,
+    following: u64,
+    post_count: u64,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct SignedInView {
+    session: SessionView,
+    account: AccountView,
+    onboarded_at_ms: Option<u64>,
+}
+
+async fn create_session(
+    State(state): State<Arc<AppState>>,
+    Json(credential): Json<SessionCredential>,
+) -> Result<(StatusCode, Json<SignedInView>), ApiError> {
+    let accounts = state
+        .pg_accounts
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("PostgreSQL accounts are not configured"))?;
+    let session = match credential {
+        SessionCredential::Apple {
+            identity_token,
+            authorization_code,
+            nonce,
+            full_name,
+        } => {
+            if authorization_code.trim().is_empty() {
+                return Err(ApiError::bad_request(
+                    "Apple authorization code is required",
+                ));
+            }
+            let verifier = state.apple_auth.as_ref().ok_or_else(|| ApiError {
+                status: StatusCode::SERVICE_UNAVAILABLE,
+                message: "Sign in with Apple is not configured".into(),
+            })?;
+            let identity = verifier.verify(&identity_token, &nonce).await?;
+            accounts
+                .sign_in_apple(
+                    &identity.subject,
+                    identity.email.as_deref(),
+                    full_name.as_deref(),
+                    &identity.assertion_digest,
+                    now_ms()?,
+                )
+                .await?
+        }
+    };
+    Ok((StatusCode::CREATED, Json(signed_in_view(session))))
+}
+
+async fn development_session(
+    State(state): State<Arc<AppState>>,
+) -> Result<(StatusCode, Json<SignedInView>), ApiError> {
+    if std::env::var("TARDY_ENABLE_DEV_AUTH").as_deref() != Ok("yes") {
+        return Err(ApiError::not_found("not found"));
+    }
+    let session = state
+        .pg_accounts
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("PostgreSQL accounts are not configured"))?
+        .development_session("orangej20@gmail.com", now_ms()?)
+        .await?;
+    Ok((StatusCode::CREATED, Json(signed_in_view(session))))
+}
+
+async fn current_session(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<SignedInView>, ApiError> {
+    let token = bearer_token(&headers)?
+        .ok_or_else(|| ApiError::unauthorized("bearer token is required"))?;
+    let accounts = state
+        .pg_accounts
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("PostgreSQL accounts are not configured"))?;
+    let session = accounts
+        .resume_human_session(token, now_ms()?)
+        .await
+        .map_err(|_| ApiError::unauthorized("invalid bearer token"))?;
+    Ok(Json(signed_in_view(session)))
+}
+
+async fn delete_session(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    let token = bearer_token(&headers)?
+        .ok_or_else(|| ApiError::unauthorized("bearer token is required"))?;
+    state
+        .pg_accounts
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("PostgreSQL accounts are not configured"))?
+        .revoke_human_session(token, now_ms()?)
+        .await
+        .map_err(|_| ApiError::unauthorized("invalid bearer token"))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn current_profile(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<AccountView>, ApiError> {
+    let account = authenticated_account(&state, &headers).await?;
+    let profile = state
+        .pg_accounts
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("PostgreSQL accounts are not configured"))?
+        .human_profile_for_account(account)
+        .await?;
+    Ok(Json(account_view(profile)))
+}
+
+async fn current_following(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<Uuid>>, ApiError> {
+    let account = authenticated_account(&state, &headers).await?;
+    Ok(Json(
+        state
+            .pg_accounts
+            .as_ref()
+            .ok_or_else(|| ApiError::internal("PostgreSQL accounts are not configured"))?
+            .following_profile_ids(account)
+            .await?,
+    ))
+}
+
+#[derive(Deserialize)]
+struct ProfilesQuery {
+    ids: String,
+}
+
+async fn list_profiles(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<ProfilesQuery>,
+) -> Result<Json<Vec<AppAccount>>, ApiError> {
+    let _ = authenticated_account(&state, &headers).await?;
+    let ids = query
+        .ids
+        .split(',')
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            Uuid::parse_str(value).map_err(|_| ApiError::bad_request("invalid profile id"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if ids.len() > 100 {
+        return Err(ApiError::bad_request("at most 100 profile ids are allowed"));
+    }
+    Ok(Json(social_store(&state)?.app_accounts(&ids).await?))
+}
+
+fn signed_in_view(value: HumanSession) -> SignedInView {
+    let onboarded_at_ms = value.profile.onboarded_at_ms;
+    SignedInView {
+        session: SessionView {
+            token: value.token,
+            account_id: value.profile.profile_id,
+            provider: value.provider,
+            expires_at_ms: value.expires_at_ms,
+        },
+        account: account_view(value.profile),
+        onboarded_at_ms,
+    }
+}
+
+fn account_view(value: HumanProfile) -> AccountView {
+    AccountView {
+        id: value.profile_id,
+        kind: "human",
+        handle: value.handle,
+        display_name: value.display_name,
+        avatar_url: value.avatar_url,
+        bio: value.bio,
+        verified: false,
+        followers: 0,
+        following: 0,
+        post_count: 0,
+    }
 }
 
 async fn create_feed_subscription(
@@ -476,6 +746,35 @@ async fn set_notification_preference(
     ))
 }
 
+async fn list_notifications(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<AppNotification>>, ApiError> {
+    Ok(Json(
+        push_store(&state)?
+            .notifications(authenticated_account(&state, &headers).await?, 100)
+            .await?,
+    ))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct MarkNotificationsRead {
+    through_at_ms: i64,
+}
+
+async fn mark_notifications_read(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<MarkNotificationsRead>,
+) -> Result<StatusCode, ApiError> {
+    let through = chrono::DateTime::from_timestamp_millis(body.through_at_ms)
+        .ok_or_else(|| ApiError::bad_request("invalid notification timestamp"))?;
+    push_store(&state)?
+        .mark_notifications_read(authenticated_account(&state, &headers).await?, through)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 fn push_store(state: &AppState) -> Result<&PgPushStore, ApiError> {
     state.push.as_deref().ok_or_else(|| ApiError {
         status: StatusCode::SERVICE_UNAVAILABLE,
@@ -594,12 +893,33 @@ async fn create_social_conversation(
 async fn list_social_conversations(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-) -> Result<Json<Vec<Conversation>>, ApiError> {
+) -> Result<Json<Vec<ConversationSummary>>, ApiError> {
     Ok(Json(
         social_store(&state)?
             .conversations(authenticated_actor(&state, &headers).await?)
             .await?,
     ))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct MarkConversationRead {
+    through_message_id: Uuid,
+}
+
+async fn mark_social_conversation_read(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(body): Json<MarkConversationRead>,
+) -> Result<StatusCode, ApiError> {
+    social_store(&state)?
+        .mark_read(
+            authenticated_actor(&state, &headers).await?,
+            id,
+            body.through_message_id,
+        )
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -744,7 +1064,7 @@ async fn create_post_comment(
     ))
 }
 
-fn social_store(state: &AppState) -> Result<&PgSocialStore, ApiError> {
+pub(crate) fn social_store(state: &AppState) -> Result<&PgSocialStore, ApiError> {
     state.social.as_deref().ok_or_else(|| ApiError {
         status: StatusCode::SERVICE_UNAVAILABLE,
         message: "durable social features are not configured".into(),
@@ -1121,11 +1441,15 @@ async fn feed(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Query(query): Query<FeedQuery>,
-) -> Result<impl IntoResponse, ApiError> {
+) -> Result<Response, ApiError> {
     if !(1..=100).contains(&query.limit) {
         return Err(ApiError::bad_request("limit must be between 1 and 100"));
     }
     let viewer = optional_authenticated_actor(&state, &headers).await?;
+    if let Some(social) = &state.social {
+        let items = social.app_feed(viewer, query.limit as i64).await?;
+        return Ok(Json(serde_json::json!({"items":items,"next_cursor":null})).into_response());
+    }
     let candidates = state.store.feed_candidates(viewer)?;
     let now = now_ms()?;
     let mut items = match &state.ranker {
@@ -1143,7 +1467,130 @@ async fn feed(
         }
     };
     items.truncate(query.limit);
-    Ok(Json(items))
+    Ok(Json(items).into_response())
+}
+
+/// The first mobile reels surface uses the same privacy-filtered update stream as Home.
+/// Posts keep their truthful format; media ingestion can promote actual video posts to
+/// `reel` without this endpoint manufacturing video metadata that does not exist.
+async fn reels_feed(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<FeedQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if !(1..=100).contains(&query.limit) {
+        return Err(ApiError::bad_request("limit must be between 1 and 100"));
+    }
+    let viewer = Some(authenticated_actor(&state, &headers).await?);
+    let items = social_store(&state)?
+        .app_posts(viewer, None, query.limit as i64)
+        .await?;
+    Ok(Json(serde_json::json!({"items":items,"next_cursor":null})))
+}
+
+/// Development story tray backed by the same privacy-filtered PG posts as the feed.
+/// Media URLs use a narrow local blob boundary; production can replace those URLs with
+/// R2/CDN objects without changing the mobile Story contract.
+async fn stories(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<serde_json::Value>>, ApiError> {
+    let viewer = Some(authenticated_actor(&state, &headers).await?);
+    let Some(_) = std::env::var_os("TARDY_LOCAL_BLOB_DIR") else {
+        return Ok(Json(Vec::new()));
+    };
+    let posts = social_store(&state)?.app_posts(viewer, None, 50).await?;
+    let media = [
+        "news.jpg",
+        "podcast.jpg",
+        "launch.jpg",
+        "explainer.jpg",
+        "ugc.jpg",
+    ];
+    let mut groups: Vec<(Uuid, Vec<serde_json::Value>)> = Vec::new();
+    for post in posts {
+        let file = media[usize::from(post.id.as_bytes()[0]) % media.len()];
+        let story = serde_json::json!({
+            "id": post.id,
+            "author_id": post.author_id,
+            "media": {
+                "type": "image",
+                "url": format!("{}/v1/dev/blobs/{file}", state.public_base_url),
+                "width": 1080,
+                "height": 1920
+            },
+            "created_at_ms": post.created_at_ms,
+            "seen": false
+        });
+        if let Some((_, stories)) = groups.iter_mut().find(|(id, _)| *id == post.author_id) {
+            stories.push(story);
+        } else {
+            groups.push((post.author_id, vec![story]));
+        }
+    }
+    Ok(Json(
+        groups
+            .into_iter()
+            .map(|(author, stories)| serde_json::json!({"author_id":author,"stories":stories}))
+            .collect(),
+    ))
+}
+
+/// Public development-only blob transport. It deliberately accepts one filename rather
+/// than an arbitrary path, preventing traversal outside `TARDY_LOCAL_BLOB_DIR`.
+async fn local_blob(Path(name): Path<String>) -> Result<Response, ApiError> {
+    if name.is_empty()
+        || name.contains("..")
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'))
+    {
+        return Err(ApiError::bad_request("invalid blob name"));
+    }
+    let root = std::env::var_os("TARDY_LOCAL_BLOB_DIR")
+        .ok_or_else(|| ApiError::not_found("local blobs are disabled"))?;
+    let bytes = tokio::fs::read(std::path::Path::new(&root).join(&name))
+        .await
+        .map_err(|error| match error.kind() {
+            std::io::ErrorKind::NotFound => ApiError::not_found("blob not found"),
+            _ => ApiError::internal(format!("read local blob: {error}")),
+        })?;
+    let content_type = match std::path::Path::new(&name)
+        .extension()
+        .and_then(|value| value.to_str())
+    {
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("png") => "image/png",
+        Some("webp") => "image/webp",
+        Some("mp4") => "video/mp4",
+        Some("webm") => "video/webm",
+        _ => "application/octet-stream",
+    };
+    Ok((
+        [
+            (header::CONTENT_TYPE, content_type),
+            (header::CACHE_CONTROL, "public, max-age=3600"),
+        ],
+        bytes,
+    )
+        .into_response())
+}
+
+/// Discovery is intentionally deterministic until the consented reranker is available:
+/// public/followed content is returned newest-first and private posts never enter the set.
+async fn explore_feed(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<FeedQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if !(1..=100).contains(&query.limit) {
+        return Err(ApiError::bad_request("limit must be between 1 and 100"));
+    }
+    let viewer = Some(authenticated_actor(&state, &headers).await?);
+    let items = social_store(&state)?
+        .app_posts(viewer, None, query.limit as i64)
+        .await?;
+    Ok(Json(serde_json::json!({"items":items,"next_cursor":null})))
 }
 
 async fn hyper_tardy_feed(
@@ -1261,10 +1708,41 @@ async fn get_profile(
     Path(handle): Path<String>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, ApiError> {
+    if let Some(social) = &state.social {
+        let _ = authenticated_account(&state, &headers).await?;
+        return Ok(Json(social.app_account_by_handle(&handle).await?).into_response());
+    }
     Ok(Json(state.store.public_profile(
         &handle,
         optional_authenticated_actor(&state, &headers).await?,
-    )?))
+    )?)
+    .into_response())
+}
+
+async fn get_profile_by_id(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<AppAccount>, ApiError> {
+    let _ = authenticated_account(&state, &headers).await?;
+    Ok(Json(social_store(&state)?.app_account_by_id(id).await?))
+}
+
+async fn get_profile_posts(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Query(query): Query<FeedQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if !(1..=100).contains(&query.limit) {
+        return Err(ApiError::bad_request("limit must be between 1 and 100"));
+    }
+    let viewer = Some(authenticated_actor(&state, &headers).await?);
+    social_store(&state)?.app_account_by_id(id).await?;
+    let items = social_store(&state)?
+        .app_posts(viewer, Some(id), query.limit as i64)
+        .await?;
+    Ok(Json(serde_json::json!({"items":items,"next_cursor":null})))
 }
 
 async fn update_privacy(
@@ -1468,7 +1946,7 @@ async fn complete_upload(
     ))
 }
 
-fn selected_profile(headers: &HeaderMap) -> Result<Option<Uuid>, ApiError> {
+pub(crate) fn selected_profile(headers: &HeaderMap) -> Result<Option<Uuid>, ApiError> {
     headers
         .get("x-tardy-profile-id")
         .map(|value| {
@@ -1500,7 +1978,10 @@ fn bearer_token(headers: &HeaderMap) -> Result<Option<&str>, ApiError> {
         .transpose()
 }
 
-async fn authenticated_account(state: &AppState, headers: &HeaderMap) -> Result<Uuid, ApiError> {
+pub(crate) async fn authenticated_account(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<Uuid, ApiError> {
     let token =
         bearer_token(headers)?.ok_or_else(|| ApiError::unauthorized("bearer token is required"))?;
     if let Some(accounts) = &state.pg_accounts {
@@ -1515,7 +1996,10 @@ async fn authenticated_account(state: &AppState, headers: &HeaderMap) -> Result<
         .map_err(|_| ApiError::unauthorized("invalid bearer token"))
 }
 
-async fn authenticated_actor(state: &AppState, headers: &HeaderMap) -> Result<Uuid, ApiError> {
+pub(crate) async fn authenticated_actor(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<Uuid, ApiError> {
     let account = authenticated_account(state, headers).await?;
     let profile = selected_profile(headers)?
         .ok_or_else(|| ApiError::unauthorized("x-tardy-profile-id is required"))?;
@@ -1756,10 +2240,22 @@ pub struct ApiError {
     message: String,
 }
 
+impl std::fmt::Display for ApiError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
 impl ApiError {
     fn bad_request(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::BAD_REQUEST,
+            message: message.into(),
+        }
+    }
+    fn unprocessable(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
             message: message.into(),
         }
     }
@@ -1769,19 +2265,19 @@ impl ApiError {
             message: message.into(),
         }
     }
-    fn unauthorized(message: impl Into<String>) -> Self {
+    pub(crate) fn unauthorized(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::UNAUTHORIZED,
             message: message.into(),
         }
     }
-    fn forbidden(message: impl Into<String>) -> Self {
+    pub(crate) fn forbidden(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::FORBIDDEN,
             message: message.into(),
         }
     }
-    fn internal(message: impl Into<String>) -> Self {
+    pub(crate) fn internal(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             message: message.into(),
@@ -1856,9 +2352,24 @@ impl From<PgAccountError> for ApiError {
                 message: value.to_string(),
             },
             PgAccountError::InvalidEmail => Self::bad_request(value.to_string()),
+            PgAccountError::AssertionReplayed => Self::unauthorized(value.to_string()),
             PgAccountError::Database(_) | PgAccountError::Timestamp => {
                 Self::internal(value.to_string())
             }
+        }
+    }
+}
+
+impl From<AppleAuthError> for ApiError {
+    fn from(value: AppleAuthError) -> Self {
+        match value {
+            AppleAuthError::InvalidToken | AppleAuthError::InvalidNonce => {
+                Self::unauthorized(value.to_string())
+            }
+            AppleAuthError::Unavailable(_) => Self {
+                status: StatusCode::BAD_GATEWAY,
+                message: value.to_string(),
+            },
         }
     }
 }

@@ -1,5 +1,5 @@
 import { router } from 'expo-router';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ONE_TAP_PROVIDERS, PROVIDERS } from '@/auth/providers';
@@ -15,7 +15,8 @@ export default function SignInScreen() {
   const state = useAuth();
   const signingIn = state.status === 'signed_out' && state.signingIn;
   const error = state.status === 'signed_out' ? state.error : null;
-  const order = ['github', ...ONE_TAP_PROVIDERS.filter((p) => p !== 'github')] as const;
+  const expoPreview = __DEV__;
+  const order = usesMockBackend ? (['github', ...ONE_TAP_PROVIDERS.filter((p) => p !== 'github')] as const) : (['apple'] as const);
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top, paddingBottom: insets.bottom + 24 }]}>
@@ -31,26 +32,36 @@ export default function SignInScreen() {
             key={provider}
             label={`Continue with ${PROVIDERS[provider].name}`}
             icon={PROVIDERS[provider].symbol}
-            variant={i === 0 ? 'primary' : 'secondary'}
+            variant={provider === 'apple' && !usesMockBackend ? 'secondary' : i === 0 ? 'primary' : 'secondary'}
             busy={signingIn}
             onPress={() => void auth.signIn(provider)}
           />
         ))}
-        <PillButton
-          label="Continue with email"
-          icon={PROVIDERS.email.symbol}
-          variant="secondary"
-          disabled={signingIn}
-          onPress={() => router.push('/sign-in-email')}
-        />
-        <Text style={styles.fine}>Signing in with GitHub lets Tardy find the repos your agents work in.</Text>
         {usesMockBackend && (
+          <PillButton
+            label="Continue with email"
+            icon={PROVIDERS.email.symbol}
+            variant="secondary"
+            disabled={signingIn}
+            onPress={() => router.push('/sign-in-email')}
+          />
+        )}
+        <Text style={styles.fine}>
+          {usesMockBackend ? "Signing in with GitHub lets Tardy find the repos your agents work in." : 'Sign in privately with your Apple Account.'}
+        </Text>
+        <Text style={styles.legal}>
+          By continuing, you agree to the{' '}
+          <Text style={styles.legalLink} onPress={() => void Linking.openURL('https://tardy.news/terms.html')}>Terms</Text>,{' '}
+          <Text style={styles.legalLink} onPress={() => void Linking.openURL('https://tardy.news/eula.html')}>EULA</Text>, and{' '}
+          <Text style={styles.legalLink} onPress={() => void Linking.openURL('https://tardy.news/privacy.html')}>Privacy Policy</Text>.
+        </Text>
+        {expoPreview && (
           <Pressable
             accessibilityRole="button"
             disabled={signingIn}
             onPress={() => void auth.signInForDevelopment()}
             style={({ pressed }) => [styles.bypass, pressed && styles.bypassPressed]}>
-            <Text style={styles.bypassText}>Developer sign-in (test build)</Text>
+            <Text style={styles.bypassText}>Preview the app</Text>
           </Pressable>
         )}
       </View>
@@ -65,6 +76,8 @@ const styles = StyleSheet.create({
   actions: { gap: 10 },
   error: { color: colors.alarm, textAlign: 'center', fontSize: 13 },
   fine: { ...type.tiny, textAlign: 'center' },
+  legal: { ...type.tiny, textAlign: 'center', lineHeight: 17 },
+  legalLink: { color: colors.text, textDecorationLine: 'underline' },
   bypass: {
     alignSelf: 'center',
     paddingHorizontal: 14,

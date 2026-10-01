@@ -1,4 +1,4 @@
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -48,6 +48,18 @@ pub struct PushDevice {
 pub struct NotificationPreference {
     pub category: String,
     pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct AppNotification {
+    pub id: Uuid,
+    pub kind: String,
+    pub actor_id: Uuid,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_id: Option<Uuid>,
+    pub text: String,
+    pub created_at_ms: i64,
+    pub read: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -245,6 +257,66 @@ impl PgPushStore {
         .execute(&self.pool)
         .await?;
         Ok(preference)
+    }
+
+    pub async fn notifications(
+        &self,
+        account_id: Uuid,
+        limit: i64,
+    ) -> Result<Vec<AppNotification>, PushError> {
+        let rows = sqlx::query(
+            "SELECT id,category,body,created_at,read_at,
+                    data->>'actor_id' AS actor_id,data->>'post_id' AS post_id
+             FROM push_notifications
+             WHERE account_id=$1 AND data ? 'actor_id'
+             ORDER BY created_at DESC,id DESC LIMIT $2",
+        )
+        .bind(account_id)
+        .bind(limit.clamp(1, 100))
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|row| {
+                let actor_id = row
+                    .try_get::<String, _>("actor_id")?
+                    .parse()
+                    .map_err(|_| sqlx::Error::Decode("invalid notification actor_id".into()))?;
+                let post_id = row
+                    .try_get::<Option<String>, _>("post_id")?
+                    .map(|id| id.parse())
+                    .transpose()
+                    .map_err(|_| sqlx::Error::Decode("invalid notification post_id".into()))?;
+                Ok(AppNotification {
+                    id: row.try_get("id")?,
+                    kind: row.try_get("category")?,
+                    actor_id,
+                    post_id,
+                    text: row.try_get("body")?,
+                    created_at_ms: row
+                        .try_get::<DateTime<Utc>, _>("created_at")?
+                        .timestamp_millis(),
+                    read: row
+                        .try_get::<Option<DateTime<Utc>>, _>("read_at")?
+                        .is_some(),
+                })
+            })
+            .collect()
+    }
+
+    pub async fn mark_notifications_read(
+        &self,
+        account_id: Uuid,
+        through: DateTime<Utc>,
+    ) -> Result<u64, PushError> {
+        Ok(sqlx::query(
+            "UPDATE push_notifications SET read_at=COALESCE(read_at,now())
+             WHERE account_id=$1 AND created_at<=$2 AND read_at IS NULL",
+        )
+        .bind(account_id)
+        .bind(through)
+        .execute(&self.pool)
+        .await?
+        .rows_affected())
     }
 
     pub async fn enqueue(&self, notification: NewNotification) -> Result<Uuid, PushError> {

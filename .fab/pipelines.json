@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "pipelines": [
+    {
+      "id": "public-site",
+      "watchPaths": [
+        ".fab/",
+        "agent/llms.txt",
+        "web/public/"
+      ],
+      "pipeline": {
+        "type": "static_site",
+        "installCommand": "true",
+        "buildCommand": "mkdir -p dist && cp -R web/public/. dist/ && cp agent/llms.txt dist/llms.txt && cp skills/tardy/SKILL.md dist/SKILL.md",
+        "publishDir": "dist",
+        "framework": "static"
+      }
+    }
+  ]
+}

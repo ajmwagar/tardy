@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 const HUMAN_CLAIM_TTL_MS: u64 = 24 * 60 * 60 * 1_000;
 const TARDY_CLAIM_TTL_MS: u64 = 72 * 60 * 60 * 1_000;
+const HUMAN_SESSION_TTL_MS: u64 = 30 * 24 * 60 * 60 * 1_000;
 
 #[derive(Debug, thiserror::Error)]
 pub enum PgAccountError {
@@ -19,6 +20,27 @@ pub enum PgAccountError {
     InvalidEmail,
     #[error("timestamp is outside the supported range")]
     Timestamp,
+    #[error("identity assertion has already been used")]
+    AssertionReplayed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HumanProfile {
+    pub account_id: Uuid,
+    pub profile_id: Uuid,
+    pub handle: String,
+    pub display_name: String,
+    pub bio: String,
+    pub avatar_url: String,
+    pub onboarded_at_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HumanSession {
+    pub token: String,
+    pub provider: String,
+    pub expires_at_ms: u64,
+    pub profile: HumanProfile,
 }
 
 #[derive(Clone)]
@@ -144,8 +166,188 @@ impl PgAccountStore {
     }
 
     pub async fn authenticate(&self, token: &str, now_ms: u64) -> Result<Uuid, PgAccountError> {
+        let token_hash = hash(token);
+        let now = timestamp(now_ms)?;
+        if let Some(account) = sqlx::query_scalar("SELECT account_id FROM auth_sessions WHERE token_hash=$1 AND revoked_at IS NULL AND expires_at>$2")
+            .bind(&token_hash).bind(now).fetch_optional(&self.pool).await?
+        {
+            return Ok(account);
+        }
         sqlx::query_scalar("SELECT account_id FROM account_api_tokens WHERE token_hash=$1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>$2)")
-            .bind(hash(token)).bind(timestamp(now_ms)?).fetch_optional(&self.pool).await?.ok_or(PgAccountError::InvalidClaim)
+            .bind(token_hash).bind(now).fetch_optional(&self.pool).await?.ok_or(PgAccountError::InvalidClaim)
+    }
+
+    pub async fn sign_in_apple(
+        &self,
+        subject: &str,
+        email: Option<&str>,
+        display_name: Option<&str>,
+        assertion_digest: &[u8],
+        now_ms: u64,
+    ) -> Result<HumanSession, PgAccountError> {
+        let now = timestamp(now_ms)?;
+        let expires_at_ms = now_ms
+            .checked_add(HUMAN_SESSION_TTL_MS)
+            .ok_or(PgAccountError::Timestamp)?;
+        let expires = timestamp(expires_at_ms)?;
+        let email = email.map(normalize_email).transpose()?;
+        let mut tx = self.pool.begin().await?;
+        let inserted = sqlx::query("INSERT INTO auth_assertions (provider,assertion_hash,used_at) VALUES ('apple',$1,$2) ON CONFLICT DO NOTHING")
+            .bind(assertion_digest).bind(now).execute(&mut *tx).await?;
+        if inserted.rows_affected() != 1 {
+            return Err(PgAccountError::AssertionReplayed);
+        }
+
+        let existing: Option<Uuid> = sqlx::query_scalar(
+            "SELECT account_id FROM auth_identities WHERE provider='apple' AND subject=$1",
+        )
+        .bind(subject)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let account_id = if let Some(account_id) = existing {
+            sqlx::query("UPDATE auth_identities SET last_used_at=$1,email=COALESCE($2,email) WHERE provider='apple' AND subject=$3")
+                .bind(now).bind(&email).bind(subject).execute(&mut *tx).await?;
+            account_id
+        } else {
+            let matching_email: Option<Uuid> = if let Some(email) = &email {
+                sqlx::query_scalar("SELECT id FROM durable_accounts WHERE email=$1 AND kind='human' AND NOT temporary")
+                    .bind(email).fetch_optional(&mut *tx).await?
+            } else {
+                None
+            };
+            let account_id = matching_email.unwrap_or_else(Uuid::new_v4);
+            if matching_email.is_none() {
+                sqlx::query("INSERT INTO durable_accounts (id,email,kind,temporary,created_at) VALUES ($1,$2,'human',false,$3)")
+                    .bind(account_id).bind(&email).bind(now).execute(&mut *tx).await?;
+            }
+            sqlx::query("INSERT INTO auth_identities (provider,subject,account_id,email,created_at,last_used_at) VALUES ('apple',$1,$2,$3,$4,$4)")
+                .bind(subject).bind(account_id).bind(&email).bind(now).execute(&mut *tx).await?;
+            account_id
+        };
+
+        let profile = ensure_human_profile(
+            &mut tx,
+            account_id,
+            subject,
+            display_name.unwrap_or("Tardy User"),
+            now,
+        )
+        .await?;
+        let token = new_token();
+        sqlx::query("INSERT INTO auth_sessions (id,account_id,provider,token_hash,expires_at,created_at,last_used_at) VALUES ($1,$2,'apple',$3,$4,$5,$5)")
+            .bind(Uuid::new_v4()).bind(account_id).bind(hash(&token)).bind(expires).bind(now).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(HumanSession {
+            token,
+            provider: "apple".into(),
+            expires_at_ms,
+            profile,
+        })
+    }
+
+    pub async fn resume_human_session(
+        &self,
+        token: &str,
+        now_ms: u64,
+    ) -> Result<HumanSession, PgAccountError> {
+        let now = timestamp(now_ms)?;
+        let row = sqlx::query(
+            "SELECT s.provider,s.expires_at,p.account_id,p.profile_id,p.handle,p.display_name,p.bio,p.avatar_url,p.onboarded_at
+             FROM auth_sessions s JOIN human_profiles p ON p.account_id=s.account_id
+             WHERE s.token_hash=$1 AND s.revoked_at IS NULL AND s.expires_at>$2",
+        )
+        .bind(hash(token))
+        .bind(now)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or(PgAccountError::InvalidClaim)?;
+        sqlx::query("UPDATE auth_sessions SET last_used_at=$1 WHERE token_hash=$2")
+            .bind(now)
+            .bind(hash(token))
+            .execute(&self.pool)
+            .await?;
+        Ok(HumanSession {
+            token: token.into(),
+            provider: row.try_get("provider")?,
+            expires_at_ms: millis(row.try_get("expires_at")?)?,
+            profile: human_profile(&row)?,
+        })
+    }
+
+    pub async fn development_session(
+        &self,
+        email: &str,
+        now_ms: u64,
+    ) -> Result<HumanSession, PgAccountError> {
+        let now = timestamp(now_ms)?;
+        let expires_at_ms = now_ms
+            .checked_add(24 * 60 * 60 * 1_000)
+            .ok_or(PgAccountError::InvalidClaim)?;
+        let expires = timestamp(expires_at_ms)?;
+        let mut tx = self.pool.begin().await?;
+        let account_id: Uuid = sqlx::query_scalar(
+            "SELECT id FROM durable_accounts WHERE email=$1 AND kind='human' AND NOT temporary",
+        )
+        .bind(email)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(PgAccountError::InvalidClaim)?;
+        let mut profile =
+            ensure_human_profile(&mut tx, account_id, "dev-preview", "James", now).await?;
+        sqlx::query(
+            "UPDATE human_profiles SET onboarded_at=COALESCE(onboarded_at,$2) WHERE account_id=$1",
+        )
+        .bind(account_id)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+        profile.onboarded_at_ms = Some(now_ms);
+        let token = new_token();
+        sqlx::query("INSERT INTO auth_sessions (id,account_id,provider,token_hash,expires_at,created_at,last_used_at) VALUES ($1,$2,'email',$3,$4,$5,$5)")
+            .bind(Uuid::new_v4()).bind(account_id).bind(hash(&token)).bind(expires).bind(now).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(HumanSession {
+            token,
+            provider: "email".into(),
+            expires_at_ms,
+            profile,
+        })
+    }
+
+    pub async fn revoke_human_session(
+        &self,
+        token: &str,
+        now_ms: u64,
+    ) -> Result<(), PgAccountError> {
+        let changed = sqlx::query(
+            "UPDATE auth_sessions SET revoked_at=$1 WHERE token_hash=$2 AND revoked_at IS NULL",
+        )
+        .bind(timestamp(now_ms)?)
+        .bind(hash(token))
+        .execute(&self.pool)
+        .await?;
+        if changed.rows_affected() == 1 {
+            Ok(())
+        } else {
+            Err(PgAccountError::InvalidClaim)
+        }
+    }
+
+    pub async fn human_profile_for_account(
+        &self,
+        account_id: Uuid,
+    ) -> Result<HumanProfile, PgAccountError> {
+        let row = sqlx::query("SELECT account_id,profile_id,handle,display_name,bio,avatar_url,onboarded_at FROM human_profiles WHERE account_id=$1")
+            .bind(account_id).fetch_optional(&self.pool).await?.ok_or(PgAccountError::InvalidClaim)?;
+        human_profile(&row)
+    }
+
+    pub async fn following_profile_ids(
+        &self,
+        account_id: Uuid,
+    ) -> Result<Vec<Uuid>, PgAccountError> {
+        sqlx::query_scalar("SELECT f.followed_profile_id FROM profile_follows f JOIN human_profiles p ON p.profile_id=f.follower_profile_id WHERE p.account_id=$1 ORDER BY f.followed_profile_id")
+            .bind(account_id).fetch_all(&self.pool).await.map_err(Into::into)
     }
 
     pub async fn bind_profile(&self, account: Uuid, profile: Uuid) -> Result<(), PgAccountError> {
@@ -169,6 +371,15 @@ impl PgAccountStore {
     }
     pub async fn can_act(&self, account: Uuid, profile: Uuid) -> Result<bool, PgAccountError> {
         Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM profile_actors WHERE actor_account_id=$1 AND profile_id=$2)").bind(account).bind(profile).fetch_one(&self.pool).await?)
+    }
+
+    pub async fn actor_profiles(&self, account: Uuid) -> Result<Vec<Uuid>, PgAccountError> {
+        Ok(sqlx::query_scalar(
+            "SELECT profile_id FROM profile_actors WHERE actor_account_id=$1 ORDER BY profile_id LIMIT 2",
+        )
+        .bind(account)
+        .fetch_all(&self.pool)
+        .await?)
     }
     pub async fn is_temporary(&self, account: Uuid) -> Result<bool, PgAccountError> {
         sqlx::query_scalar("SELECT temporary FROM durable_accounts WHERE id=$1")
@@ -229,6 +440,86 @@ impl PgAccountStore {
 
 fn new_token() -> String {
     format!("tardy_{}", Uuid::new_v4().simple())
+}
+
+async fn ensure_human_profile(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    account_id: Uuid,
+    subject: &str,
+    display_name: &str,
+    now: DateTime<Utc>,
+) -> Result<HumanProfile, PgAccountError> {
+    if let Some(row) = sqlx::query("SELECT account_id,profile_id,handle,display_name,bio,avatar_url,onboarded_at FROM human_profiles WHERE account_id=$1")
+        .bind(account_id).fetch_optional(&mut **tx).await?
+    {
+        return human_profile(&row);
+    }
+    let profile_id = Uuid::new_v4();
+    let digest = Sha256::digest(subject.as_bytes());
+    let suffix: String = digest[..6]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let handle = format!("tardy_{suffix}");
+    let display_name: String = display_name
+        .trim()
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(80)
+        .collect();
+    let display_name = if display_name.is_empty() {
+        "Tardy User".to_owned()
+    } else {
+        display_name
+    };
+    sqlx::query("INSERT INTO human_profiles (account_id,profile_id,handle,display_name,onboarded_at,created_at) VALUES ($1,$2,$3,$4,$5,$5)")
+        .bind(account_id).bind(profile_id).bind(&handle).bind(&display_name).bind(now).execute(&mut **tx).await?;
+    sqlx::query(
+        "INSERT INTO profile_ownership (profile_id,owner_account_id,created_at) VALUES ($1,$2,$3)",
+    )
+    .bind(profile_id)
+    .bind(account_id)
+    .bind(now)
+    .execute(&mut **tx)
+    .await?;
+    sqlx::query(
+        "INSERT INTO profile_actors (profile_id,actor_account_id,created_at) VALUES ($1,$2,$3)",
+    )
+    .bind(profile_id)
+    .bind(account_id)
+    .bind(now)
+    .execute(&mut **tx)
+    .await?;
+    sqlx::query("INSERT INTO social_identities (profile_id,account_id,handle,kind,created_at) VALUES ($1,$2,$3,'human',$4)")
+        .bind(profile_id).bind(account_id).bind(&handle).bind(now).execute(&mut **tx).await?;
+    Ok(HumanProfile {
+        account_id,
+        profile_id,
+        handle,
+        display_name,
+        bio: String::new(),
+        avatar_url: String::new(),
+        onboarded_at_ms: Some(millis(now)?),
+    })
+}
+
+fn human_profile(row: &sqlx::postgres::PgRow) -> Result<HumanProfile, PgAccountError> {
+    Ok(HumanProfile {
+        account_id: row.try_get("account_id")?,
+        profile_id: row.try_get("profile_id")?,
+        handle: row.try_get("handle")?,
+        display_name: row.try_get("display_name")?,
+        bio: row.try_get("bio")?,
+        avatar_url: row.try_get("avatar_url")?,
+        onboarded_at_ms: row
+            .try_get::<Option<DateTime<Utc>>, _>("onboarded_at")?
+            .map(millis)
+            .transpose()?,
+    })
+}
+
+fn millis(value: DateTime<Utc>) -> Result<u64, PgAccountError> {
+    u64::try_from(value.timestamp_millis()).map_err(|_| PgAccountError::Timestamp)
 }
 fn hash(value: &str) -> Vec<u8> {
     Sha256::digest(value.as_bytes()).to_vec()

@@ -82,12 +82,22 @@ async fn dm_stays_quiet_until_an_owned_agent_is_summoned() {
     let listed = store.conversations(friend).await.unwrap();
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].mode, tardy::social::ConversationMode::Work);
+    assert_eq!(listed[0].unread_count, 1);
+    assert_eq!(listed[0].last_message.as_ref().unwrap().sequence, 2);
     let messages = store
         .messages(friend, conversation.id, 0, 50)
         .await
         .unwrap();
     assert_eq!(messages.len(), 2);
     assert_eq!(messages[1].sequence, 2);
+    store
+        .mark_read(friend, conversation.id, messages[1].id)
+        .await
+        .unwrap();
+    assert_eq!(
+        store.conversations(friend).await.unwrap()[0].unread_count,
+        0
+    );
     let events = subscriptions
         .poll(owner, inbox.id, events[0].id, 50)
         .await

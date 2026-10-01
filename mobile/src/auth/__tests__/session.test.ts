@@ -279,11 +279,12 @@ test('developer bypass signs in and skips onboarding in one step', async () => {
   await expect(api.homeFeed(null)).resolves.toMatchObject({ items: expect.any(Array) });
 });
 
-test('developer bypass stays signed out with the error when sign-in fails', async () => {
-  const { auth } = launch(newDevice(), null);
+test('developer bypass stays signed out and reports the error when sign-in fails', async () => {
+  const { auth, api } = launch(newDevice());
+  jest.spyOn(api, 'developmentSession').mockRejectedValueOnce(new Error('preview unavailable'));
   await auth.bootstrap();
   await auth.signInForDevelopment();
-  expect(auth.getState()).toEqual({ status: 'signed_out', signingIn: false, error: null });
+  expect(auth.getState()).toEqual({ status: 'signed_out', signingIn: false, error: 'Preview sign-in failed: preview unavailable' });
 });
 
 describe('more sign-in methods', () => {

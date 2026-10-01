@@ -1,4 +1,4 @@
-use mlua::{Function, Lua, LuaSerdeExt, StdLib, Table};
+use mlua::{Function, Lua, LuaSerdeExt, SerializeOptions, StdLib, Table};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -37,9 +37,21 @@ pub struct SourceDefinition {
     pub display_name: String,
     pub enabled: bool,
     pub limit: usize,
+    #[serde(default = "default_poll_interval_seconds")]
+    pub poll_interval_seconds: u32,
+    #[serde(default = "default_poll_jitter_seconds")]
+    pub poll_jitter_seconds: u32,
     pub transport: Transport,
     pub rights: RightsPolicy,
     pub transform: String,
+}
+
+const fn default_poll_interval_seconds() -> u32 {
+    300
+}
+
+const fn default_poll_jitter_seconds() -> u32 {
+    60
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -75,12 +87,29 @@ pub struct CarouselPlan {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Capability {
+    OodaComplete,
+    OodaStt,
+    RlcdRank,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityRequest {
+    pub capability: Capability,
+    pub instruction: String,
+    pub max_output_tokens: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TransformPlan {
     pub headline: String,
     pub attribution: String,
     pub source_url: String,
     pub carousel: CarouselPlan,
     pub llm: Option<LlmPlan>,
+    #[serde(default)]
+    pub capabilities: Vec<CapabilityRequest>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -111,6 +140,10 @@ pub enum IngestError {
     InvalidResponse(String),
     #[error("unknown carousel format: {0}")]
     UnknownCarousel(String),
+    #[error("invalid source configuration: {0}")]
+    InvalidSource(String),
+    #[error("invalid capability request: {0}")]
+    InvalidCapability(String),
 }
 
 pub struct Ingestor {
@@ -139,7 +172,29 @@ impl Ingestor {
     pub fn sources(&self) -> Result<Vec<SourceDefinition>, IngestError> {
         let lua = sandbox()?;
         let root: Table = lua.load(&self.script).set_name("sources.lua").eval()?;
-        Ok(lua.from_value(root.get("sources")?)?)
+        let sources: Vec<SourceDefinition> = lua.from_value(root.get("sources")?)?;
+        let mut ids = std::collections::BTreeSet::new();
+        for source in &sources {
+            if !(30..=86_400).contains(&source.poll_interval_seconds) {
+                return Err(IngestError::InvalidSource(format!(
+                    "{} poll_interval_seconds must be between 30 and 86400",
+                    source.id
+                )));
+            }
+            if source.poll_jitter_seconds > source.poll_interval_seconds {
+                return Err(IngestError::InvalidSource(format!(
+                    "{} poll jitter must not exceed its interval",
+                    source.id
+                )));
+            }
+            if !ids.insert(&source.id) {
+                return Err(IngestError::InvalidSource(format!(
+                    "duplicate source id {}",
+                    source.id
+                )));
+            }
+        }
+        Ok(sources)
     }
 
     pub async fn preview(&self, source_id: &str) -> Result<Vec<TransformPlan>, IngestError> {
@@ -167,13 +222,36 @@ impl Ingestor {
         let root: Table = lua.load(&self.script).set_name("sources.lua").eval()?;
         let transforms: Table = root.get("transforms")?;
         let transform: Function = transforms.get(source.transform.as_str())?;
+        // Lua has no native null value.  mlua's default maps `None` to a
+        // truthy NULL userdata, which defeats idioms such as
+        // `item.summary or ""` in a transform.  Missing optional fields must
+        // cross this deliberately narrow boundary as Lua nil instead.
+        let item =
+            lua.to_value_with(item, SerializeOptions::new().serialize_none_to_null(false))?;
         let plan: TransformPlan =
-            lua.from_value(transform.call((lua.to_value(item)?, lua.to_value(&source.rights)?))?)?;
+            lua.from_value(transform.call((item, lua.to_value(&source.rights)?))?)?;
         if !matches!(
             plan.carousel.format.as_str(),
             "headline_source_v1" | "release_notes_v1"
         ) {
             return Err(IngestError::UnknownCarousel(plan.carousel.format));
+        }
+        if plan.capabilities.len() > 4 {
+            return Err(IngestError::InvalidCapability(
+                "a transform may request at most four capabilities".into(),
+            ));
+        }
+        for request in &plan.capabilities {
+            if request.instruction.trim().is_empty() || request.instruction.len() > 2_000 {
+                return Err(IngestError::InvalidCapability(
+                    "instructions must contain 1..=2000 bytes".into(),
+                ));
+            }
+            if !(1..=2_000).contains(&request.max_output_tokens) {
+                return Err(IngestError::InvalidCapability(
+                    "max_output_tokens must be between 1 and 2000".into(),
+                ));
+            }
         }
         Ok(plan)
     }
@@ -287,13 +365,7 @@ impl Ingestor {
         source: &SourceDefinition,
         list: &str,
     ) -> Result<Vec<NormalizedItem>, IngestError> {
-        let endpoint = match list {
-            "top" => "topstories",
-            "best" => "beststories",
-            "show" => "showstories",
-            "ask" => "askstories",
-            _ => return Err(IngestError::InvalidResponse("unknown HN list".into())),
-        };
+        let endpoint = hacker_news_endpoint(list)?;
         let ids: Vec<u64> = self
             .get_json(&format!(
                 "https://hacker-news.firebaseio.com/v0/{endpoint}.json"
@@ -398,6 +470,17 @@ impl Ingestor {
     }
 }
 
+fn hacker_news_endpoint(list: &str) -> Result<&'static str, IngestError> {
+    match list {
+        "top" => Ok("topstories"),
+        "new" => Ok("newstories"),
+        "best" => Ok("beststories"),
+        "show" => Ok("showstories"),
+        "ask" => Ok("askstories"),
+        _ => Err(IngestError::InvalidResponse("unknown HN list".into())),
+    }
+}
+
 fn sandbox() -> Result<Lua, mlua::Error> {
     Lua::new_with(
         StdLib::TABLE | StdLib::STRING | StdLib::MATH,
@@ -462,6 +545,7 @@ mod tests {
     fn bundled_sources_are_typed_and_licensed_sources_are_disabled() {
         let ingestor = Ingestor::bundled().unwrap();
         let sources = ingestor.sources().unwrap();
+        assert_eq!(sources.iter().filter(|source| source.enabled).count(), 50);
         assert!(sources.iter().any(|source| source.id == "hacker-news-top"));
         let bbc = sources
             .iter()
@@ -469,6 +553,7 @@ mod tests {
             .unwrap();
         assert!(!bbc.enabled);
         assert_eq!(bbc.rights.mode, RightsMode::RequiresLicense);
+        assert_eq!(hacker_news_endpoint("new").unwrap(), "newstories");
     }
 
     #[test]
@@ -499,6 +584,31 @@ mod tests {
                 .prompt
                 .contains("https://example.test/release")
         );
+        assert_eq!(plan.capabilities.len(), 2);
+    }
+
+    #[test]
+    fn lua_treats_missing_optional_source_fields_as_nil() {
+        let ingestor = Ingestor::bundled().unwrap();
+        let source = ingestor
+            .sources()
+            .unwrap()
+            .into_iter()
+            .find(|source| source.id == "hacker-news-top")
+            .unwrap();
+        let item = NormalizedItem {
+            source_id: source.id.clone(),
+            external_id: "43".into(),
+            title: "A link without a summary".into(),
+            canonical_url: "https://example.test/link".into(),
+            author: None,
+            published_at_ms: None,
+            summary: None,
+            facts: BTreeMap::new(),
+        };
+
+        let plan = ingestor.transform(&source, &item).unwrap();
+        assert!(plan.llm.unwrap().prompt.ends_with("Source summary: "));
     }
 
     #[test]
@@ -537,6 +647,21 @@ mod tests {
         assert!(matches!(
             ingestor.transform(&source, &item),
             Err(IngestError::UnknownCarousel(_))
+        ));
+    }
+
+    #[test]
+    fn source_schedule_is_validated_before_polling() {
+        let script = r#"
+          return { sources = {{ id="too-fast", display_name="Too Fast", enabled=true, limit=1,
+            poll_interval_seconds=10, poll_jitter_seconds=0,
+            transport={kind="rss", url="https://example.test/feed"},
+            rights={mode="facts", attribution="Example", commercial_use=true}, transform="x" }},
+            transforms = {} }
+        "#;
+        assert!(matches!(
+            Ingestor::new(script),
+            Err(IngestError::InvalidSource(_))
         ));
     }
 }
