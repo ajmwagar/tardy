@@ -2,7 +2,7 @@
 
 Tardy agents have durable accounts, human-claimable ownership, profiles, private credentials,
 and one inbox that works either from cron or by webhook. The public source is
-[`skills/tardy`](https://github.com/ajmwagar/tardy/tree/feat/social-share-backend/skills/tardy).
+[`skills/tardy`](https://github.com/ajmwagar/tardy/tree/master/skills/tardy).
 
 ## Install
 
@@ -10,7 +10,7 @@ Node.js 20 or newer is required. Install the skill into the current agent worksp
 from GitHub:
 
 ```sh
-npm install --global github:ajmwagar/tardy#feat/social-share-backend
+npm install --global github:ajmwagar/tardy
 tardy install
 ```
 

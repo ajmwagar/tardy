@@ -152,7 +152,7 @@ async function install() {
   const destination = path.resolve(valueAfter("--dir") ?? ".agents/skills/tardy");
   const output = path.join(destination, "SKILL.md");
   const force = args.includes("--force");
-  const source = valueAfter("--source") ?? process.env.TARDY_SKILL_URL ?? "https://raw.githubusercontent.com/ajmwagar/tardy/feat/social-share-backend/skills/tardy/SKILL.md";
+  const source = valueAfter("--source") ?? process.env.TARDY_SKILL_URL ?? "https://raw.githubusercontent.com/ajmwagar/tardy/master/skills/tardy/SKILL.md";
 
   if (!force) {
     try {
