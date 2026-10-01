@@ -2,6 +2,10 @@ use crate::ads::{
     AdPaymentProcessor, AdsError, CampaignReport, FundingIntent, NewCampaign, PaymentRequired,
     PaymentRequirements, PgAdsStore, ResourceInfo, X402_VERSION,
 };
+use crate::audio::{
+    AttachPostAudio, AudioError, AudioRelease, AudioUsage, NewAudioRelease, NewOriginalTrack,
+    PgAudioStore, TrendingAudio,
+};
 use crate::domain::{
     AgentCapabilities, AgentHandoff, AgentShareReceipt, EngagementKind, LiveEventPayload,
     ProfilePrivacy, ShareSubject, Visibility,
@@ -45,6 +49,7 @@ pub struct AppState {
     pub ads: Option<Arc<AdsRuntime>>,
     pub subscriptions: Option<Arc<PgSubscriptionStore>>,
     pub social: Option<Arc<PgSocialStore>>,
+    pub audio: Option<Arc<PgAudioStore>>,
 }
 
 pub struct AdsRuntime {
@@ -71,6 +76,7 @@ impl AppState {
             ads: None,
             subscriptions: None,
             social: None,
+            audio: None,
         })
     }
 
@@ -91,6 +97,7 @@ impl AppState {
             ads: None,
             subscriptions: None,
             social: None,
+            audio: None,
         })
     }
 
@@ -111,6 +118,7 @@ impl AppState {
             ads: None,
             subscriptions: None,
             social: None,
+            audio: None,
         })
     }
 
@@ -136,6 +144,11 @@ impl AppState {
 
     pub fn with_pg_accounts(mut self, value: PgAccountStore) -> Self {
         self.pg_accounts = Some(Arc::new(value));
+        self
+    }
+
+    pub fn with_audio_store(mut self, value: PgAudioStore) -> Self {
+        self.audio = Some(Arc::new(value));
         self
     }
 
@@ -210,6 +223,11 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route("/v1/social/posts", post(publish_social_post))
         .route("/v1/social/posts/{id}/comments", post(create_post_comment))
+        .route("/v1/audio/releases", post(create_audio_release))
+        .route("/v1/audio/releases/{id}/tracks", post(add_audio_track))
+        .route("/v1/social/posts/{id}/audio", post(attach_post_audio))
+        .route("/v1/audio/tracks/{id}/usage", post(record_audio_usage))
+        .route("/v1/audio/trending", get(trending_audio))
         .route("/v1/push/devices", post(register_push_device))
         .route(
             "/v1/push/devices/{id}",
@@ -730,6 +748,86 @@ fn social_store(state: &AppState) -> Result<&PgSocialStore, ApiError> {
     state.social.as_deref().ok_or_else(|| ApiError {
         status: StatusCode::SERVICE_UNAVAILABLE,
         message: "durable social features are not configured".into(),
+    })
+}
+
+async fn create_audio_release(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<NewAudioRelease>,
+) -> Result<(StatusCode, Json<AudioRelease>), ApiError> {
+    Ok((
+        StatusCode::CREATED,
+        Json(
+            audio_store(&state)?
+                .create_release(authenticated_actor(&state, &headers).await?, body)
+                .await?,
+        ),
+    ))
+}
+
+async fn add_audio_track(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(body): Json<NewOriginalTrack>,
+) -> Result<(StatusCode, Json<crate::audio::AudioTrack>), ApiError> {
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(
+            audio_store(&state)?
+                .add_original_track(authenticated_actor(&state, &headers).await?, id, body)
+                .await?,
+        ),
+    ))
+}
+
+async fn attach_post_audio(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(body): Json<AttachPostAudio>,
+) -> Result<StatusCode, ApiError> {
+    audio_store(&state)?
+        .attach(authenticated_actor(&state, &headers).await?, id, body)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn record_audio_usage(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(body): Json<AudioUsage>,
+) -> Result<StatusCode, ApiError> {
+    audio_store(&state)?
+        .usage(
+            optional_authenticated_actor(&state, &headers).await?,
+            id,
+            body,
+        )
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct AudioTrendingQuery {
+    #[serde(default = "default_audio_limit")]
+    limit: i64,
+}
+fn default_audio_limit() -> i64 {
+    25
+}
+async fn trending_audio(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<AudioTrendingQuery>,
+) -> Result<Json<Vec<TrendingAudio>>, ApiError> {
+    Ok(Json(audio_store(&state)?.trending(query.limit).await?))
+}
+fn audio_store(state: &AppState) -> Result<&PgAudioStore, ApiError> {
+    state.audio.as_deref().ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        message: "audio catalog is not configured".into(),
     })
 }
 
@@ -1857,6 +1955,22 @@ impl From<SocialError> for ApiError {
                 Self::not_found("social resource not found")
             }
             SocialError::Database(_) => Self::internal(value.to_string()),
+        }
+    }
+}
+
+impl From<AudioError> for ApiError {
+    fn from(value: AudioError) -> Self {
+        match value {
+            AudioError::Invalid(_) => Self::bad_request(value.to_string()),
+            AudioError::NotFound => Self::not_found(value.to_string()),
+            AudioError::Forbidden | AudioError::RightsNotCleared => {
+                Self::forbidden(value.to_string())
+            }
+            AudioError::Database(sqlx::Error::RowNotFound) => {
+                Self::not_found("audio resource not found")
+            }
+            AudioError::Database(_) => Self::internal(value.to_string()),
         }
     }
 }

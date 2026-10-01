@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use tardy::ads::{HttpX402Facilitator, PaymentRequirements, PgAdsStore};
 use tardy::api::AdsRuntime;
+use tardy::audio::PgAudioStore;
 use tardy::pg_accounts::PgAccountStore;
 use tardy::push::PgPushStore;
 use tardy::social::PgSocialStore;
@@ -27,6 +28,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     state = state.with_push_store(PgPushStore::new(pool.clone()));
     state = state.with_pg_accounts(PgAccountStore::new(pool.clone()));
     state = state.with_social_store(PgSocialStore::new(pool.clone()));
+    state = state.with_audio_store(PgAudioStore::new(pool.clone()));
     let subscription_base_url = state.public_base_url.clone();
     state = state.with_subscriptions(PgSubscriptionStore::new(
         pool.clone(),

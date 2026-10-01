@@ -1,5 +1,6 @@
 pub mod ads;
 pub mod api;
+pub mod audio;
 pub mod domain;
 pub mod ingest;
 pub mod media;

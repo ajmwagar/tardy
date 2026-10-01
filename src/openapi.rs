@@ -8,6 +8,10 @@ use crate::api::{
     HandoffRequest, PublishReel, PublishSocialPost, RecordEngagement, SearchRequest, SendMessage,
     SendSocialMessage, StartLive, SummonAgent,
 };
+use crate::audio::{
+    AttachPostAudio, AudioRelease, AudioTrack, AudioUsage, AudioUsageKind, NewAudioRelease,
+    NewOriginalTrack, ReleaseType, TrendingAudio,
+};
 use crate::domain::{
     AgentCapabilities, AgentHandoff, AgentShareReceipt, DirectMessage, DirectMessagePolicy,
     DirectThread, EngagementKind, EngagementReceipt, FeedItem, HyperTardyItem, LiveEvent,
@@ -42,6 +46,8 @@ use utoipa::OpenApi;
         PushDevice, RegisterPushDevice, AttributionModel, CampaignReport, FundingIntent,
         NewCampaign, PaymentRequired, PaymentRequirements, ResourceInfo, Settlement,
         DeliveryMode, FeedEvent, NewSubscription, Subscription, SubscriptionKind,
+        AttachPostAudio, AudioRelease, AudioTrack, AudioUsage, AudioUsageKind, NewAudioRelease,
+        NewOriginalTrack, ReleaseType, TrendingAudio,
         Comment, Conversation, ConversationMessage, ConversationMode, IdentityKind,
         PostVisibility, SharedLink, SocialIdentity, TardyPost, CreatePostComment,
         CreateSharedLink, CreateSocialConversation, PublishSocialPost, SendSocialMessage, SummonAgent
@@ -50,7 +56,7 @@ use utoipa::OpenApi;
         (name = "onboarding"), (name = "profiles"), (name = "messaging"),
         (name = "sharing"), (name = "media"), (name = "feed"), (name = "live"),
         (name = "notifications")
-        ,(name = "ads"), (name = "subscriptions"), (name = "social")
+        ,(name = "ads"), (name = "subscriptions"), (name = "social"), (name = "audio")
     )
 )]
 struct ApiDoc;
@@ -236,6 +242,60 @@ pub fn document() -> Value {
             201,
             true,
             true,
+        ),
+        op(
+            "post",
+            "/v1/audio/releases",
+            "createAudioRelease",
+            "audio",
+            Some("NewAudioRelease"),
+            Some("AudioRelease"),
+            201,
+            true,
+            true,
+        ),
+        op(
+            "post",
+            "/v1/audio/releases/{id}/tracks",
+            "addOriginalAudioTrack",
+            "audio",
+            Some("NewOriginalTrack"),
+            Some("AudioTrack"),
+            202,
+            true,
+            true,
+        ),
+        op(
+            "post",
+            "/v1/social/posts/{id}/audio",
+            "attachPostAudio",
+            "audio",
+            Some("AttachPostAudio"),
+            None,
+            204,
+            true,
+            true,
+        ),
+        op(
+            "post",
+            "/v1/audio/tracks/{id}/usage",
+            "recordAudioUsage",
+            "audio",
+            Some("AudioUsage"),
+            None,
+            204,
+            false,
+            false,
+        ),
+        array_op(
+            "get",
+            "/v1/audio/trending",
+            "getTrendingAudio",
+            "audio",
+            "TrendingAudio",
+            200,
+            false,
+            false,
         ),
         op(
             "get",
