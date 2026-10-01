@@ -66,6 +66,13 @@ export const timeMs: Decoder<string> = Object.assign(
   { wireSuffix: '_ms' },
 );
 
+/** Wire RFC 3339 time (the social routes' `created_at`) → normalized ISO string. */
+export const isoTime: Decoder<string> = (v, path) => {
+  if (typeof v !== 'string') return fail(path, 'RFC 3339 time', v);
+  const ms = Date.parse(v);
+  return Number.isNaN(ms) ? fail(path, 'RFC 3339 time', v) : new Date(ms).toISOString();
+};
+
 /** Reads the field from `key` on the wire instead of the derived snake_case name. */
 export function wire<T>(key: string, decoder: Decoder<T>): Decoder<T> {
   const renamed = ((v: unknown, path: string) => decoder(v, path)) as Decoder<T>;

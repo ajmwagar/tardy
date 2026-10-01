@@ -6,20 +6,28 @@ import type {
   Comment,
   EngagementAction,
   Message,
+  MessageAttachment,
   Notification,
   NotificationKind,
   NotificationPreferences,
   Page,
   Post,
   PushTokenRegistration,
+  SharedLink,
   SignedIn,
   StoryGroup,
   Thread,
+  ThreadParticipant,
   ThreadRef,
   Visibility,
 } from '../types';
 import { array, isoToMs, snakeKeys, TardyWireError, type Decoder } from './codec';
 import * as W from './wire';
+import { conversationPlan, sameMembers } from '@/share/conversation-plan';
+import { tardyUrl } from '@/share/links';
+
+/** The server's page limit for conversation messages (1..=100). */
+const MESSAGE_PAGE = 100;
 
 /**
  * `TardyApi` over HTTP against the Rust server (ajmwagar/tardy, `feat/backend-foundation`).
@@ -115,6 +123,8 @@ export class HttpTardyApi implements TardyApi {
   private readonly baseUrl: string;
   private readonly fetch: FetchLike;
   private current: { token: string; accountId: string } | null = null;
+  /** Links this client created, so a link share can fall back to its URL as the message body. */
+  private links = new Map<string, SharedLink>();
 
   constructor({ baseUrl, fetch = globalThis.fetch.bind(globalThis) as unknown as FetchLike }: HttpTardyApiOptions) {
     if (!/^https?:\/\/[^/]/.test(baseUrl)) throw new Error(`HttpTardyApi: baseUrl must be an http(s) URL, got "${baseUrl}"`);
@@ -266,11 +276,14 @@ export class HttpTardyApi implements TardyApi {
   }
 
   comments(postId: string): Promise<Comment[]> {
-    return this.request('GET', `/v1/posts/${segment(postId)}/comments`, { decode: array(W.comment) });
+    return this.request('GET', `/v1/social/posts/${segment(postId)}/comments`, { decode: array(W.comment) });
   }
 
-  addComment(postId: string, text: string): Promise<Comment> {
-    return this.request('POST', `/v1/posts/${segment(postId)}/comments`, { body: { text }, decode: W.comment });
+  addComment(postId: string, text: string, mentionedIds: readonly string[] = []): Promise<Comment> {
+    return this.request('POST', `/v1/social/posts/${segment(postId)}/comments`, {
+      body: { body: text, mentioned_profile_ids: mentionedIds },
+      decode: W.comment,
+    });
   }
 
   stories(): Promise<StoryGroup[]> {
@@ -279,31 +292,99 @@ export class HttpTardyApi implements TardyApi {
 
   // MARK: messages
 
-  threads(): Promise<Thread[]> {
-    return this.request('GET', '/v1/dm-threads', { decode: array(W.thread) });
+  async threads(): Promise<Thread[]> {
+    const rows = await this.request('GET', '/v1/social/conversations', { decode: array(W.conversation) });
+    // `last_message` is a proposed addition; until the server sends it, read the tail ourselves.
+    const threads = await Promise.all(
+      rows.map(async ({ lastMessage, unreadCount, ...ref }): Promise<Thread | null> => {
+        const last = lastMessage ?? (await this.messages(ref.id)).at(-1);
+        return last ? { ...ref, lastMessage: last, unreadCount: unreadCount ?? 0 } : null;
+      }),
+    );
+    return threads
+      .filter((t): t is Thread => t !== null)
+      .sort((a, b) => Date.parse(b.lastMessage.createdAt) - Date.parse(a.lastMessage.createdAt));
   }
 
-  thread(threadId: string): Promise<ThreadRef> {
-    return this.request('GET', `/v1/dm-threads/${segment(threadId)}`, { decode: W.threadRef });
+  async thread(threadId: string): Promise<ThreadRef> {
+    // No single-conversation read yet (proposed `GET /v1/social/conversations/{id}`): find it in the list.
+    const rows = await this.request('GET', '/v1/social/conversations', { decode: array(W.conversation) });
+    const row = rows.find((t) => t.id === threadId);
+    if (!row) throw new TardyApiError('not_found', `Not found: thread ${threadId}`);
+    const { lastMessage: _last, unreadCount: _unread, ...ref } = row;
+    return ref;
   }
 
-  messages(threadId: string): Promise<Message[]> {
-    return this.request('GET', `/v1/dm-threads/${segment(threadId)}/messages`, { decode: array(W.message) });
+  async messages(threadId: string): Promise<Message[]> {
+    const all: Message[] = [];
+    for (let after = 0; ; ) {
+      const page = await this.request('GET', `/v1/social/conversations/${segment(threadId)}/messages`, {
+        query: { after: String(after), limit: String(MESSAGE_PAGE) },
+        decode: array(W.conversationMessage),
+      });
+      all.push(...page.map((p) => p.message));
+      if (page.length < MESSAGE_PAGE) return all;
+      after = page[page.length - 1].sequence;
+    }
   }
 
-  sendMessage(threadId: string, text: string, sharedPostId?: string): Promise<Message> {
-    // `text` is `body` on the wire (the Rust `SendMessage` field).
-    return this.request('POST', `/v1/dm-threads/${segment(threadId)}/messages`, {
-      body: { body: text, ...(sharedPostId !== undefined && { shared_post_id: sharedPostId }) },
-      decode: W.message,
+  async sendMessage(threadId: string, text: string, attachment?: MessageAttachment): Promise<Message> {
+    const path = `/v1/social/conversations/${segment(threadId)}/messages`;
+    const send = (body: string, sharedLinkId?: string) =>
+      this.request('POST', path, { body: { body, ...(sharedLinkId && { shared_link_id: sharedLinkId }) }, decode: W.message });
+    if (!attachment) return send(text);
+    if ('sharedPostId' in attachment) {
+      // A tardy travels as a shared link to its web URL (the body must be non-empty, and the
+      // URL is what agents can resolve). A note follows as its own message.
+      const link = await this.createSharedLink(tardyUrl(attachment.sharedPostId));
+      const shared = await send(link.canonicalUrl, link.id);
+      if (text.trim()) await send(text);
+      return shared;
+    }
+    const link = this.links.get(attachment.sharedLinkId);
+    if (!text.trim() && !link) throw new TardyApiError('invalid', 'A shared link needs text, or a link created by this client.');
+    return send(text.trim() || link!.canonicalUrl, attachment.sharedLinkId);
+  }
+
+  async openThread(participants: readonly ThreadParticipant[], title?: string): Promise<ThreadRef> {
+    void title; // Group titles are proposed; the server does not store them yet.
+    const viewerId = this.current?.accountId;
+    if (!viewerId) throw new TardyApiError('unauthenticated', 'Sign in to message.');
+    const plan = conversationPlan(participants, viewerId);
+    if (!plan.ok) {
+      throw new TardyApiError(
+        'invalid',
+        plan.reason === 'nobody' ? 'A thread needs someone besides you.' : 'Group chats with more than one other person are not supported by the server yet.',
+      );
+    }
+    const others = [plan.recipientId, ...plan.addAgentIds];
+    // The server creates a new conversation on every call; find the existing one first.
+    const existing = (await this.request('GET', '/v1/social/conversations', { decode: array(W.conversation) })).find((t) =>
+      sameMembers(t.participantIds, viewerId, others),
+    );
+    if (existing) {
+      const { lastMessage: _last, unreadCount: _unread, ...ref } = existing;
+      return ref;
+    }
+    let thread = await this.request('POST', '/v1/social/conversations', {
+      body: { recipient_profile_id: plan.recipientId },
+      decode: W.threadRef,
+    });
+    for (const agentId of plan.addAgentIds) thread = await this.addAgent(thread.id, agentId);
+    return thread;
+  }
+
+  addAgent(threadId: string, agentId: string, includeAnchorShare = true): Promise<ThreadRef> {
+    return this.request('POST', `/v1/social/conversations/${segment(threadId)}/agents`, {
+      body: { agent_profile_id: agentId, include_anchor_share: includeAnchorShare },
+      decode: W.threadRef,
     });
   }
 
-  openThread(participantIds: string[], title?: string): Promise<ThreadRef> {
-    // The server's 1:1 shape today is `{ recipient_id }`; groups (`participants`, `title`) are proposed.
-    const others = participantIds.filter((id) => id !== this.current?.accountId);
-    const body = others.length === 1 ? { recipient_id: others[0] } : { participants: others, ...(title !== undefined && { title }) };
-    return this.request('POST', '/v1/dm-threads', { body, decode: W.threadRef });
+  async createSharedLink(url: string): Promise<SharedLink> {
+    const link = await this.request('POST', '/v1/social/shared-links', { body: { url }, decode: W.sharedLink });
+    this.links.set(link.id, link);
+    return link;
   }
 
   searchAccounts(query: string): Promise<Account[]> {
@@ -311,7 +392,7 @@ export class HttpTardyApi implements TardyApi {
   }
 
   async markThreadRead(threadId: string, throughMessageId: string): Promise<void> {
-    await this.request('POST', `/v1/dm-threads/${segment(threadId)}/read`, { body: { through_message_id: throughMessageId } });
+    await this.request('POST', `/v1/social/conversations/${segment(threadId)}/read`, { body: { through_message_id: throughMessageId } });
   }
 
   // MARK: notifications and push
@@ -367,7 +448,11 @@ export class HttpTardyApi implements TardyApi {
   }
 
   async setFollowing(accountId: string, following: boolean): Promise<void> {
-    await this.request(following ? 'PUT' : 'DELETE', `/v1/profile/following/${segment(accountId)}`);
+    await this.request(following ? 'PUT' : 'DELETE', `/v1/profiles/${segment(accountId)}/follow`);
+  }
+
+  async claimAgent(code: string): Promise<void> {
+    await this.request('POST', '/v1/onboarding/tardy-claims', { body: { code: code.trim() } });
   }
 
   setVisibility(projectId: string, visibility: Visibility): Promise<Account> {

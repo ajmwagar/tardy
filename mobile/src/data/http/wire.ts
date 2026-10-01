@@ -1,4 +1,5 @@
 import { NOTIFICATION_KINDS } from '@/notifications/preferences';
+import { parseTardyUrl } from '@/share/links';
 
 import type {
   Account,
@@ -17,11 +18,11 @@ import type {
   PostStyle,
   ProjectRole,
   Session,
+  SharedLink,
   SharedPostRef,
   SignedIn,
   Story,
   StoryGroup,
-  Thread,
   ThreadRef,
   Visibility,
   WorkStatus,
@@ -31,6 +32,7 @@ import {
   arraySkipping,
   boolean,
   integer,
+  isoTime,
   knownOf,
   knownRecord,
   map,
@@ -87,6 +89,7 @@ export const account: Decoder<Account> = object<Account>({
   postCount: integer,
   visibility: optional(oneOf(VISIBILITIES)),
   viewerRole: optional(oneOf(PROJECT_ROLES)),
+  ownedByViewer: optional(boolean),
 });
 
 const media: Decoder<MediaItem> = tagged<MediaItem>('type', {
@@ -133,14 +136,22 @@ export function page<T>(item: Decoder<T>): Decoder<Page<T>> {
 /** `GET /v1/feed/hyper-tardy` items carry the app's `post` view next to the virality facts. */
 export const trendingPosts: Decoder<Post[]> = map(array(object<{ post: Post }>({ post })), (items) => items.map((i) => i.post));
 
-export const comment: Decoder<Comment> = object<Comment>({
-  id: string,
-  postId: string,
-  authorId: string,
-  text: string,
-  createdAt: timeMs,
-  likeCount: integer,
-});
+/**
+ * The social `Comment` (`POST /v1/social/posts/{id}/comments`). The server does not count
+ * comment likes yet; an absent `like_count` is zero, which is true of every comment it returns.
+ */
+export const comment: Decoder<Comment> = map(
+  object<Omit<Comment, 'likeCount'> & { likeCount?: number }>({
+    id: string,
+    postId: string,
+    authorId: wire('author_profile_id', string),
+    text: wire('body', string),
+    createdAt: wire('created_at', isoTime),
+    likeCount: optional(integer),
+    mentionedIds: wire('mentioned_profile_ids', optional(array(string))),
+  }),
+  ({ likeCount, mentionedIds, ...rest }) => ({ ...rest, likeCount: likeCount ?? 0, ...(mentionedIds?.length ? { mentionedIds } : {}) }),
+);
 
 const story: Decoder<Story> = object<Story>({
   id: string,
@@ -158,32 +169,62 @@ const sharedPost: Decoder<SharedPostRef> = tagged<SharedPostRef>('status', {
   unavailable: object<Extract<SharedPostRef, { status: 'unavailable' }>>({ status: oneOf(['unavailable']) }),
 });
 
-/** The existing Rust `DirectMessage`, plus `id` and `shared_post`. */
-export const message: Decoder<Message> = object<Message>({
-  id: string,
-  threadId: string,
-  senderId: string,
-  text: wire('body', string),
-  createdAt: wire('sent_at_ms', timeMs),
-  sharedPost: optional(sharedPost),
-});
+/**
+ * The social `ConversationMessage`, plus its `sequence` (the paging cursor). A tardy shared
+ * into a conversation travels as a shared link to its `tardy.news/t/{id}` URL in the body
+ * (the server has no shared-post field); it decodes back to `sharedPost` so it renders as a
+ * tardy card. `shared_post` (proposed) wins when the server sends it.
+ */
+export const conversationMessage: Decoder<{ message: Message; sequence: number }> = map(
+  object<Message & { sequence: number }>({
+    id: string,
+    threadId: wire('conversation_id', string),
+    senderId: wire('sender_profile_id', string),
+    text: wire('body', string),
+    createdAt: wire('created_at', isoTime),
+    sharedPost: optional(sharedPost),
+    sharedLinkId: optional(string),
+    sequence: integer,
+  }),
+  ({ sequence, ...m }) => {
+    const sharedPostId = m.sharedLinkId && !m.sharedPost ? parseTardyUrl(m.text) : null;
+    const message: Message = sharedPostId ? { ...m, text: '', sharedPost: { status: 'available', postId: sharedPostId } } : m;
+    if (message.sharedLinkId === undefined) delete message.sharedLinkId;
+    if (message.sharedPost === undefined) delete message.sharedPost;
+    return { message, sequence };
+  },
+);
 
-/** The existing Rust `DirectThread`, plus `last_message` and `unread_count`. */
-export const thread: Decoder<Thread> = object<Thread>({
-  id: string,
-  participantIds: wire('participants', array(string)),
-  title: optional(string),
-  kind: optional(oneOf(['dm', 'work'] as const)),
-  lastMessage: message,
-  unreadCount: integer,
-});
+export const message: Decoder<Message> = map(conversationMessage, (m) => m.message);
 
-/** What `POST /v1/dm-threads` returns: a `DirectThread` that may have no messages yet. */
+const MODES = ['dm', 'work'] as const;
+
+/** The social `Conversation`: `mode` is the app's `kind`. */
 export const threadRef: Decoder<ThreadRef> = object<ThreadRef>({
   id: string,
   participantIds: wire('participants', array(string)),
   title: optional(string),
-  kind: optional(oneOf(['dm', 'work'] as const)),
+  kind: wire('mode', oneOf(MODES)),
+});
+
+/**
+ * `GET /v1/social/conversations` rows. `last_message` and `unread_count` are proposed
+ * additions; until the server sends them the client reads the last message itself.
+ */
+export const conversation: Decoder<ThreadRef & { lastMessage?: Message; unreadCount?: number }> = object({
+  id: string,
+  participantIds: wire('participants', array(string)),
+  title: optional(string),
+  kind: wire('mode', oneOf(MODES)),
+  lastMessage: optional(message),
+  unreadCount: optional(integer),
+});
+
+export const sharedLink: Decoder<SharedLink> = object<SharedLink>({
+  id: string,
+  canonicalUrl: string,
+  provider: string,
+  status: knownOf(['queued', 'processing', 'ready', 'failed']),
 });
 
 /** Notifications of a kind this client does not know are skipped, per the contract. */

@@ -1,14 +1,14 @@
 import type { TardyApi } from '@/data/api';
-import type { ThreadRef } from '@/data/types';
+import type { MessageAttachment, ThreadParticipant, ThreadRef } from '@/data/types';
 
 /** One group with everyone, or a 1:1 thread with each. One recipient is the same either way. */
 export type ShareMode = 'group' | 'separately';
 
 /** The participant sets to open, one per thread the share lands in. */
-export function shareThreadSets(recipientIds: readonly string[], mode: ShareMode): string[][] {
-  const unique = [...new Set(recipientIds)];
+export function shareThreadSets<P extends ThreadParticipant>(recipients: readonly P[], mode: ShareMode): P[][] {
+  const unique = recipients.filter((p, i) => recipients.findIndex((q) => q.id === p.id) === i);
   if (unique.length === 0) return [];
-  return mode === 'group' ? [unique] : unique.map((id) => [id]);
+  return mode === 'group' ? [unique] : unique.map((p) => [p]);
 }
 
 export type ShareResult = {
@@ -19,46 +19,46 @@ export type ShareResult = {
 };
 
 /**
- * Sends `postId` (and an optional note) to the recipients. Threads are found or opened,
- * never duplicated (`openThread` is idempotent), and sends run in parallel. A failure for
- * one recipient does not stop the others: callers report `failed` and keep `sent`.
- * With no `postId` it only opens the thread(s), which is how "New message" starts a chat.
+ * Sends `attachment` (a tardy or a shared link, and an optional note) to the recipients.
+ * Threads are found or opened, never duplicated (`openThread` is idempotent), and sends run
+ * in parallel. A failure for one recipient does not stop the others: callers report
+ * `failed` and keep `sent`. With nothing to send it only opens the thread(s), which is how
+ * "New message" starts a chat.
  */
 export async function share(
   api: Pick<TardyApi, 'openThread' | 'sendMessage'>,
   {
-    recipientIds,
+    recipients,
     threads = [],
     mode,
-    postId,
+    attachment,
     note = '',
     title,
   }: {
-    recipientIds: readonly string[];
+    recipients: readonly ThreadParticipant[];
     /** Existing threads (picked groups) to send into as they are. */
     threads?: readonly ThreadRef[];
     mode: ShareMode;
-    postId?: string;
+    attachment?: MessageAttachment;
     note?: string;
     title?: string;
   },
 ): Promise<ShareResult> {
   const text = note.trim();
   const deliver = async (thread: ThreadRef) => {
-    if (postId !== undefined || text) await api.sendMessage(thread.id, text, postId);
+    if (attachment || text) await api.sendMessage(thread.id, text, attachment);
     return thread;
   };
-  const sets = shareThreadSets(recipientIds, mode);
+  const sets = shareThreadSets(recipients, mode);
   const outcomes = await Promise.allSettled([
     ...threads.map(deliver),
-    ...sets.map(async (ids) => deliver(await api.openThread(ids, ids.length > 1 ? title : undefined))),
+    ...sets.map(async (set) => deliver(await api.openThread(set, set.length > 1 ? title : undefined))),
   ]);
-  const labels = [...threads.map((t) => t.participantIds), ...sets];
+  const labels = [...threads.map((t) => t.participantIds), ...sets.map((set) => set.map((p) => p.id))];
   const result: ShareResult = { sent: [], failed: [] };
   outcomes.forEach((o, i) => {
     if (o.status === 'fulfilled') result.sent.push(o.value);
-    else
-      result.failed.push({ participantIds: labels[i], error: o.reason instanceof Error ? o.reason.message : String(o.reason) });
+    else result.failed.push({ participantIds: labels[i], error: o.reason instanceof Error ? o.reason.message : String(o.reason) });
   });
   return result;
 }

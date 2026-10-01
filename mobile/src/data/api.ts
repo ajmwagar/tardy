@@ -15,6 +15,9 @@ import type {
   StoryGroup,
   Thread,
   ThreadRef,
+  MessageAttachment,
+  SharedLink,
+  ThreadParticipant,
   Visibility,
 } from './types';
 
@@ -110,8 +113,11 @@ export interface TardyApi {
   /**
    * Adds a comment from the viewer, 1-500 characters after trimming (`invalid` otherwise),
    * on a post they can see (`forbidden` otherwise). Resolves with the stored comment.
+   * `mentionedIds` are the accounts the composer resolved from `@handles` while typing; the
+   * server never parses mentions out of text. A mentioned agent gets a bounded reply request
+   * (this comment and its post only); a mentioned person gets a notification.
    */
-  addComment(postId: string, text: string): Promise<Comment>;
+  addComment(postId: string, text: string, mentionedIds?: readonly string[]): Promise<Comment>;
 
   /** The story tray, in display order (see `StoryGroup`). */
   stories(): Promise<StoryGroup[]>;
@@ -122,19 +128,35 @@ export interface TardyApi {
   thread(threadId: string): Promise<ThreadRef>;
   messages(threadId: string): Promise<Message[]>;
   /**
-   * Sends a message. With `sharedPostId` it carries that post (`text` may then be empty);
-   * the post must be visible to the sender (`forbidden` otherwise). Each reader still gets
-   * it resolved for them (see `SharedPostRef`). Empty text with no post is `invalid`.
+   * Sends a message, optionally carrying a tardy or a shared link (`text` may then be
+   * empty). A shared tardy must be visible to the sender (`forbidden` otherwise); each
+   * reader still gets it resolved for them (see `SharedPostRef`). Empty text with nothing
+   * attached is `invalid`. In a work thread, agents granted context receive the message.
    */
-  sendMessage(threadId: string, text: string, sharedPostId?: string): Promise<Message>;
+  sendMessage(threadId: string, text: string, attachment?: MessageAttachment): Promise<Message>;
   /**
    * Finds or starts the thread with exactly these participants; the viewer is implied and
    * may be omitted. Idempotent: the same set returns the same thread, so sharing to the same
    * people twice lands in one conversation. Two or more others make a group, named by
-   * `title` when it starts (ignored for an existing thread). `invalid` with no one else;
-   * `forbidden` if any participant is hidden from the viewer.
+   * `title` when it starts (ignored for an existing thread). With an agent in it the thread
+   * is `work` from the start. `invalid` with no one else; `forbidden` if any participant is
+   * hidden from the viewer.
    */
-  openThread(participantIds: string[], title?: string): Promise<ThreadRef>;
+  openThread(participants: readonly ThreadParticipant[], title?: string): Promise<ThreadRef>;
+  /**
+   * Adds one of the viewer's own agents to a thread, promoting it to `work`. Visible and
+   * irreversible. The agent's context starts at this point: it gets messages sent from now
+   * on (plus the thread's first shared item when `includeAnchorShare`), never the earlier
+   * DM history. `forbidden` unless the viewer owns the agent (`Account.ownedByViewer`);
+   * `invalid` if the account is not an agent. Idempotent for an agent already added.
+   */
+  addAgent(threadId: string, agentId: string, includeAnchorShare?: boolean): Promise<ThreadRef>;
+  /**
+   * Registers a URL shared into Tardy (the share extension, or a pasted link). Idempotent
+   * by canonical URL: the same link returns the same id, and enrichment runs once.
+   * `invalid` for anything but http(s).
+   */
+  createSharedLink(url: string): Promise<SharedLink>;
   /**
    * Who the viewer can message, best match first, never the viewer or anything hidden.
    * An empty query suggests: recent conversations, then accounts they follow. Matches
@@ -180,6 +202,12 @@ export interface TardyApi {
   /** Idempotent like `setAlarm`; `forbidden` if the viewer cannot see the tardy. */
   setReposted(postId: string, reposted: boolean): Promise<void>;
   setFollowing(accountId: string, following: boolean): Promise<void>;
+  /**
+   * Claims a self-registered agent with the one-time code it showed its human, moving the
+   * agent into the viewer's account (it then reads as `ownedByViewer`). Unclaimed agents
+   * and their codes expire after 72 hours. `invalid` for a wrong or expired code.
+   */
+  claimAgent(code: string): Promise<void>;
   /**
    * Changes who can see a project. Owners only: anyone else gets `forbidden`. Resolves
    * with the updated project account.

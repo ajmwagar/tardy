@@ -173,7 +173,7 @@ export default function ShareSheet() {
   }, [groups, people, query, selected, labelOf]);
 
   const selectedKeys = useMemo(() => new Set(selected.map(targetKey)), [selected]);
-  const pickedPeople = selected.flatMap((t) => (t.kind === 'account' ? [t.account.id] : []));
+  const pickedPeople = selected.flatMap((t) => (t.kind === 'account' ? [t.account] : []));
   const pickedGroups = selected.flatMap((t) => (t.kind === 'group' ? [t.thread] : []));
   // A new chat with several people is always a group; only shares offer "Separately".
   const offersGroup = pickedPeople.length > 1;
@@ -193,10 +193,10 @@ export default function ShareSheet() {
     if (selected.length === 0 || phase !== 'idle') return;
     setPhase('sending');
     const result = await share(api, {
-      recipientIds: pickedPeople,
+      recipients: pickedPeople,
       threads: pickedGroups,
       mode: effectiveMode,
-      postId,
+      attachment: postId ? { sharedPostId: postId } : undefined,
       note: composing ? '' : note,
       title: groupName,
     });

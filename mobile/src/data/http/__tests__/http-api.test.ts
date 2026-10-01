@@ -56,13 +56,17 @@ describe('HttpTardyApi: routes', () => {
     ['accountByHandle', (api) => api.accountByHandle('ada'), 'GET', '/v1/profiles/ada'],
     ['account by id', (api) => api.account('a b'), 'GET', '/v1/profiles/by-id/a%20b'],
     ['accounts batch', (api) => api.accounts(['a', 'b']), 'GET', '/v1/profiles?ids=a%2Cb'],
-    ['sendMessage', (api) => api.sendMessage('t1', 'hi'), 'POST', '/v1/dm-threads/t1/messages', { body: 'hi' }],
-    ['markThreadRead', (api) => api.markThreadRead('t1', 'm9'), 'POST', '/v1/dm-threads/t1/read', { through_message_id: 'm9' }],
+    ['sendMessage', (api) => api.sendMessage('t1', 'hi'), 'POST', '/v1/social/conversations/t1/messages', { body: 'hi' }],
+    ['markThreadRead', (api) => api.markThreadRead('t1', 'm9'), 'POST', '/v1/social/conversations/t1/read', { through_message_id: 'm9' }],
+    ['addAgent', (api) => api.addAgent('t1', 'a2'), 'POST', '/v1/social/conversations/t1/agents', { agent_profile_id: 'a2', include_anchor_share: true }],
+    ['createSharedLink', (api) => api.createSharedLink('https://youtu.be/x'), 'POST', '/v1/social/shared-links', { url: 'https://youtu.be/x' }],
+    ['addComment', (api) => api.addComment('p1', 'hey @a2', ['a2']), 'POST', '/v1/social/posts/p1/comments', { body: 'hey @a2', mentioned_profile_ids: ['a2'] }],
+    ['claimAgent', (api) => api.claimAgent(' TARDY-7Q4K '), 'POST', '/v1/onboarding/tardy-claims', { code: 'TARDY-7Q4K' }],
     ['markNotificationsRead', (api) => api.markNotificationsRead('1970-01-01T00:00:01.000Z'), 'POST', '/v1/notifications/read', { through_at_ms: 1000 }],
     ['setSaved on', (api) => api.setSaved('p1', true), 'PUT', '/v1/saved-posts/p1'],
     ['setSaved off', (api) => api.setSaved('p1', false), 'DELETE', '/v1/saved-posts/p1'],
     ['setLiked off', (api) => api.setLiked('p1', false), 'DELETE', '/v1/posts/p1/like'],
-    ['setFollowing on', (api) => api.setFollowing('acct-2', true), 'PUT', '/v1/profile/following/acct-2'],
+    ['setFollowing on', (api) => api.setFollowing('acct-2', true), 'PUT', '/v1/profiles/acct-2/follow'],
     ['setNotificationDefault', (api) => api.setNotificationDefault('review_requested', false), 'PUT', '/v1/push/preferences', { category: 'review_requested', enabled: false }],
     ['setNotificationOverride clear', (api) => api.setNotificationOverride('proj', 'shipped', null), 'PUT', '/v1/push/preferences/projects/proj', { category: 'shipped', enabled: null }],
     ['registerPushToken', (api) => api.registerPushToken({ token: 'ExponentPushToken[x]', provider: 'expo', platform: 'ios' }), 'POST', '/v1/push/devices', { token: 'ExponentPushToken[x]', provider: 'expo', platform: 'ios' }],
@@ -242,11 +246,85 @@ describe('HttpTardyApi: decoding', () => {
     expect(posts.map((p) => p.id)).toEqual(['p1']);
   });
 
-  it('reads threads in the Rust DirectThread shape', async () => {
-    const lastMessage = { id: 'm1', thread_id: 't1', sequence: 1, sender_id: 'a2', recipient_id: 'acct-1', body: 'yo', sent_at_ms: 0 };
-    const { api } = await signedInClient({ status: 200, body: [{ id: 't1', participants: ['acct-1', 'a2'], created_at_ms: 0, latest_sequence: 1, last_message: lastMessage, unread_count: 1 }] });
+  const wireMessage = (sequence: number, body: string, extra: object = {}) => ({
+    id: `m${sequence}`,
+    conversation_id: 't1',
+    sequence,
+    sender_profile_id: 'a2',
+    body,
+    shared_link_id: null,
+    created_at: '1970-01-01T00:00:01Z',
+    ...extra,
+  });
+
+  it('reads conversations, and reads the last message itself while the server omits it', async () => {
+    const { api, calls } = await signedInClient(
+      { status: 200, body: [{ id: 't1', mode: 'work', participants: ['acct-1', 'a2'] }, { id: 't2', mode: 'dm', participants: ['acct-1', 'h3'] }] },
+      { status: 200, body: [wireMessage(1, 'first'), wireMessage(2, 'yo')] },
+      { status: 200, body: [] },
+    );
     await expect(api.threads()).resolves.toEqual([
-      { id: 't1', participantIds: ['acct-1', 'a2'], unreadCount: 1, lastMessage: { id: 'm1', threadId: 't1', senderId: 'a2', text: 'yo', createdAt: '1970-01-01T00:00:00.000Z' } },
+      {
+        id: 't1',
+        kind: 'work',
+        participantIds: ['acct-1', 'a2'],
+        unreadCount: 0,
+        lastMessage: { id: 'm2', threadId: 't1', senderId: 'a2', text: 'yo', createdAt: '1970-01-01T00:00:01.000Z' },
+      },
     ]);
+    // t2 has no messages: omitted, as the contract says.
+    expect(calls.map((c) => c.url.replace(BASE, '/'))).toEqual([
+      '/v1/social/conversations',
+      '/v1/social/conversations/t1/messages?after=0&limit=100',
+      '/v1/social/conversations/t2/messages?after=0&limit=100',
+    ]);
+  });
+
+  it('pages messages by sequence until a short page', async () => {
+    const full = Array.from({ length: 100 }, (_, i) => wireMessage(i + 1, `n${i + 1}`));
+    const { api, calls } = await signedInClient({ status: 200, body: full }, { status: 200, body: [wireMessage(101, 'last')] });
+    const messages = await api.messages('t1');
+    expect(messages).toHaveLength(101);
+    expect(calls[1].url).toBe(`${BASE}v1/social/conversations/t1/messages?after=100&limit=100`);
+  });
+
+  it('shares a tardy as a link to its URL, and reads it back as a tardy card', async () => {
+    const link = { id: 'l1', canonical_url: 'https://tardy.news/t/p9', provider: 'web', status: 'queued' };
+    const sent = wireMessage(3, 'https://tardy.news/t/p9', { sender_profile_id: 'acct-1', shared_link_id: 'l1' });
+    const { api, calls } = await signedInClient({ status: 201, body: link }, { status: 201, body: sent }, { status: 201, body: wireMessage(4, 'look') });
+    const message = await api.sendMessage('t1', 'look', { sharedPostId: 'p9' });
+    expect(message).toMatchObject({ text: '', sharedPost: { status: 'available', postId: 'p9' }, sharedLinkId: 'l1' });
+    expect(calls.map((c) => [c.url.replace(BASE, '/'), c.body])).toEqual([
+      ['/v1/social/shared-links', { url: 'https://tardy.news/t/p9' }],
+      ['/v1/social/conversations/t1/messages', { body: 'https://tardy.news/t/p9', shared_link_id: 'l1' }],
+      ['/v1/social/conversations/t1/messages', { body: 'look' }],
+    ]);
+  });
+
+  it('openThread reuses an existing conversation with the same people', async () => {
+    const { api, calls } = await signedInClient({ status: 200, body: [{ id: 't1', mode: 'dm', participants: ['h2', 'acct-1'] }] });
+    await expect(api.openThread([{ id: 'h2', kind: 'human' }])).resolves.toEqual({ id: 't1', kind: 'dm', participantIds: ['h2', 'acct-1'] });
+    expect(calls).toHaveLength(1);
+  });
+
+  it('openThread starts with the person, then adds agents', async () => {
+    const { api, calls } = await signedInClient(
+      { status: 200, body: [] },
+      { status: 201, body: { id: 't9', mode: 'dm', participants: ['acct-1', 'h2'] } },
+      { status: 200, body: { id: 't9', mode: 'work', participants: ['acct-1', 'h2', 'a3'] } },
+    );
+    const thread = await api.openThread([{ id: 'a3', kind: 'agent' }, { id: 'h2', kind: 'human' }]);
+    expect(thread).toEqual({ id: 't9', kind: 'work', participantIds: ['acct-1', 'h2', 'a3'] });
+    expect(calls.map((c) => [c.method, c.url.replace(BASE, '/'), c.body])).toEqual([
+      ['GET', '/v1/social/conversations', undefined],
+      ['POST', '/v1/social/conversations', { recipient_profile_id: 'h2' }],
+      ['POST', '/v1/social/conversations/t9/agents', { agent_profile_id: 'a3', include_anchor_share: true }],
+    ]);
+  });
+
+  it('openThread refuses a group of people instead of dropping one', async () => {
+    const { api, calls } = await signedInClient();
+    await expect(api.openThread([{ id: 'h2', kind: 'human' }, { id: 'h3', kind: 'human' }])).rejects.toMatchObject({ code: 'invalid' });
+    expect(calls).toHaveLength(0);
   });
 });

@@ -8,6 +8,8 @@ import { share, shareThreadSets } from '../send';
 import { threadLabel } from '../thread-label';
 
 const api = () => new MockTardyApi({ latencyMs: 0 });
+/** Fixture accounts as thread participants. */
+const p = (...ids: string[]) => ids.map((id) => ({ id, kind: (id.startsWith('a-') ? 'agent' : 'human') as 'agent' | 'human' }));
 const publicPost = POSTS.find((p) => p.authorId === 'a-opus-be')!.id;
 
 describe('matchRank', () => {
@@ -33,8 +35,9 @@ describe('matchRank', () => {
 
 describe('shareThreadSets', () => {
   it('makes one group, or one thread per recipient, without duplicates', () => {
-    expect(shareThreadSets(['a', 'b', 'a'], 'group')).toEqual([['a', 'b']]);
-    expect(shareThreadSets(['a', 'b'], 'separately')).toEqual([['a'], ['b']]);
+    const ids = (sets: { id: string }[][]) => sets.map((set) => set.map((x) => x.id));
+    expect(ids(shareThreadSets(p('a', 'b', 'a'), 'group'))).toEqual([['a', 'b']]);
+    expect(ids(shareThreadSets(p('a', 'b'), 'separately'))).toEqual([['a'], ['b']]);
     expect(shareThreadSets([], 'group')).toEqual([]);
   });
 });
@@ -42,35 +45,35 @@ describe('shareThreadSets', () => {
 describe('MockTardyApi.openThread', () => {
   it('returns the existing 1:1 thread instead of a duplicate', async () => {
     const client = api();
-    expect((await client.openThread(['avery'])).id).toBe('t-avery');
-    expect((await client.openThread(['me', 'avery'])).id).toBe('t-avery');
+    expect((await client.openThread(p('avery'))).id).toBe('t-avery');
+    expect((await client.openThread(p('me', 'avery'))).id).toBe('t-avery');
   });
 
   it('starts a group once and finds it again regardless of order', async () => {
     const client = api();
-    const group = await client.openThread(['avery', 'a-opus-be'], 'Feed launch');
+    const group = await client.openThread(p('avery', 'a-opus-be'), 'Feed launch');
     expect(group.title).toBe('Feed launch');
     expect([...group.participantIds].sort()).toEqual(['a-opus-be', 'avery', 'me']);
-    expect((await client.openThread(['a-opus-be', 'avery'])).id).toBe(group.id);
+    expect((await client.openThread(p('a-opus-be', 'avery'))).id).toBe(group.id);
   });
 
   it('hides an empty new thread from the inbox until it has a message', async () => {
     const client = api();
-    const group = await client.openThread(['avery', 'a-fw']);
+    const group = await client.openThread(p('avery', 'a-fw'));
     expect((await client.threads()).some((t) => t.id === group.id)).toBe(false);
     await client.sendMessage(group.id, 'hi');
     expect((await client.threads())[0].id).toBe(group.id);
   });
 
   it('rejects a thread with no one else', async () => {
-    await expect(api().openThread(['me'])).rejects.toEqual(expect.objectContaining({ code: 'invalid' }) as TardyApiError);
+    await expect(api().openThread(p('me'))).rejects.toEqual(expect.objectContaining({ code: 'invalid' }) as TardyApiError);
   });
 });
 
 describe('MockTardyApi.sendMessage with a post', () => {
   it('carries the shared post, and needs text or a post', async () => {
     const client = api();
-    const message = await client.sendMessage('t-fw', '', publicPost);
+    const message = await client.sendMessage('t-fw', '', { sharedPostId: publicPost });
     expect(message.sharedPost).toEqual({ status: 'available', postId: publicPost });
     await expect(client.sendMessage('t-fw', '  ')).rejects.toEqual(expect.objectContaining({ code: 'invalid' }) as TardyApiError);
   });
@@ -92,7 +95,7 @@ describe('MockTardyApi.searchAccounts', () => {
 describe('share', () => {
   it('sends to each recipient separately', async () => {
     const client = api();
-    const result = await share(client, { recipientIds: ['avery', 'a-fw'], mode: 'separately', postId: publicPost, note: 'look' });
+    const result = await share(client, { recipients: p('avery', 'a-fw'), mode: 'separately', attachment: { sharedPostId: publicPost }, note: 'look' });
     expect(result.sent.map((t) => t.id)).toEqual(['t-avery', 't-fw']);
     expect(result.failed).toEqual([]);
     const last = (await client.messages('t-avery')).at(-1)!;
@@ -101,7 +104,7 @@ describe('share', () => {
 
   it('sends once into a new group', async () => {
     const client = api();
-    const result = await share(client, { recipientIds: ['avery', 'a-fw'], mode: 'group', postId: publicPost, title: 'Crew' });
+    const result = await share(client, { recipients: p('avery', 'a-fw'), mode: 'group', attachment: { sharedPostId: publicPost }, title: 'Crew' });
     expect(result.sent).toHaveLength(1);
     expect(result.sent[0].title).toBe('Crew');
     expect(await client.messages(result.sent[0].id)).toHaveLength(1);
@@ -109,14 +112,14 @@ describe('share', () => {
 
   it('reports a failed recipient and still delivers to the rest', async () => {
     const client = api();
-    const result = await share(client, { recipientIds: ['avery', 'nobody'], mode: 'separately', postId: publicPost });
+    const result = await share(client, { recipients: p('avery', 'nobody'), mode: 'separately', attachment: { sharedPostId: publicPost } });
     expect(result.sent.map((t) => t.id)).toEqual(['t-avery']);
     expect(result.failed).toEqual([{ participantIds: ['nobody'], error: expect.stringMatching(/nobody/) }]);
   });
 
   it('only opens the thread when there is nothing to send', async () => {
     const client = api();
-    const result = await share(client, { recipientIds: ['a-bom', 'a-fw'], mode: 'group' });
+    const result = await share(client, { recipients: p('a-bom', 'a-fw'), mode: 'group' });
     expect(await client.messages(result.sent[0].id)).toEqual([]);
   });
 });
@@ -135,7 +138,7 @@ describe('share into an existing group', () => {
   it('sends into the picked group and to new recipients in one go', async () => {
     const client = api();
     const crew = await client.thread('t-crew');
-    const result = await share(client, { recipientIds: ['a-fw'], threads: [crew], mode: 'group', postId: publicPost });
+    const result = await share(client, { recipients: p('a-fw'), threads: [crew], mode: 'group', attachment: { sharedPostId: publicPost } });
     expect(result.sent.map((t) => t.id)).toEqual(['t-crew', 't-fw']);
     expect((await client.messages('t-crew')).at(-1)!.sharedPost).toEqual({ status: 'available', postId: publicPost });
   });
@@ -171,6 +174,6 @@ describe('shareSections', () => {
     const client = api();
     expect((await client.thread('t-avery')).kind).toBe('dm');
     expect((await client.thread('t-crew')).kind).toBe('work');
-    expect((await client.openThread(['avery', 'a-fw'])).kind).toBe('work');
+    expect((await client.openThread(p('avery', 'a-fw'))).kind).toBe('work');
   });
 });

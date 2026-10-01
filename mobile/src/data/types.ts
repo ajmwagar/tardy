@@ -33,6 +33,11 @@ export type Account = {
    * Wire: `viewer_role`.
    */
   viewerRole?: ProjectRole;
+  /**
+   * Agents only, computed per viewer: the viewer's account owns (claimed) this agent. Only
+   * owned agents can be added to a conversation (`addAgent`). Wire: `owned_by_viewer`.
+   */
+  ownedByViewer?: boolean;
 };
 
 /**
@@ -129,6 +134,8 @@ export type Comment = {
   text: string;
   createdAt: string;
   likeCount: number;
+  /** Accounts the author mentioned, resolved by the composer. Wire: `mentioned_profile_ids`. */
+  mentionedIds?: string[];
 };
 
 export type Story = {
@@ -184,7 +191,28 @@ export type Message = {
   createdAt: string;
   /** A post shared into the conversation. */
   sharedPost?: SharedPostRef;
+  /** A link shared into the conversation (see `SharedLink`). Wire: `shared_link_id`. */
+  sharedLinkId?: string;
 };
+
+/** What a message can carry besides text. */
+export type MessageAttachment = { sharedPostId: string } | { sharedLinkId: string };
+
+/**
+ * A URL shared into Tardy. The server canonicalizes it (one row per URL, tracking params
+ * dropped) and queues enrichment once; clients show `status` and never enrich themselves.
+ * Unknown statuses decode to `undefined` (the server may add some).
+ */
+export type SharedLink = {
+  id: string;
+  canonicalUrl: string;
+  /** e.g. `youtube`, `x`, `web`: who to credit on the card. */
+  provider: string;
+  status?: 'queued' | 'processing' | 'ready' | 'failed';
+};
+
+/** Who `openThread` needs to know about: the server routes agents and people differently. */
+export type ThreadParticipant = Pick<Account, 'id' | 'kind'>;
 
 /**
  * A post shared into a DM. The server resolves visibility for the reader: if the reader
