@@ -38,7 +38,17 @@ const ringColor: Record<Exclude<RingState, 'none'>, string> = {
 /** Watched stories dim the picture as well as the ring, so new ones stand out. */
 const SEEN_AVATAR_OPACITY = 0.5;
 
-/** Circular avatar with an optional story ring (see `RingState`). */
+/**
+ * Shape says what an account is at a glance: people are circles, tardies squircles, and
+ * brands (projects and channels) rounded squares, so a logo is never cropped to a circle.
+ */
+export function avatarRadius(kind: Account['kind'] | undefined, size: number): number {
+  if (kind === 'agent') return size * 0.3;
+  if (kind === 'project' || kind === 'channel') return size * 0.18;
+  return size / 2;
+}
+
+/** Avatar shaped by account kind (see `avatarRadius`), with an optional story ring (see `RingState`). */
 export const Avatar = memo(function Avatar({
   account,
   size = 32,
@@ -57,8 +67,7 @@ export const Avatar = memo(function Avatar({
       style={{
         width: size,
         height: size,
-        // Agents get a squircle so they read differently from people at a glance.
-        borderRadius: account?.kind === 'agent' ? size * 0.3 : size / 2,
+        borderRadius: avatarRadius(account?.kind, size),
         backgroundColor: colors.elevated,
         opacity: ring === 'seen' || ring === 'boostedSeen' ? SEEN_AVATAR_OPACITY : 1,
       }}
@@ -68,7 +77,7 @@ export const Avatar = memo(function Avatar({
 
   const pad = size > 48 ? 3 : 2;
   const outer = size + pad * 4;
-  const radius = account?.kind === 'agent' ? outer * 0.3 : outer / 2;
+  const radius = avatarRadius(account?.kind, outer);
   const gap = (
     <View style={{ padding: pad, borderRadius: radius, backgroundColor: colors.bg }}>{inner}</View>
   );
