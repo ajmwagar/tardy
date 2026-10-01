@@ -269,7 +269,7 @@ describe('HttpTardyApi: decoding', () => {
         kind: 'work',
         participantIds: ['acct-1', 'a2'],
         unreadCount: 0,
-        lastMessage: { id: 'm2', threadId: 't1', senderId: 'a2', text: 'yo', createdAt: '1970-01-01T00:00:01.000Z' },
+        lastMessage: { id: 'm2', threadId: 't1', senderId: 'a2', text: 'yo', createdAt: '1970-01-01T00:00:01.000Z', sequence: 2 },
       },
     ]);
     // t2 has no messages: omitted, as the contract says.

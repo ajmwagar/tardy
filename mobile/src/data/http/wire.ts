@@ -227,7 +227,7 @@ export const conversationMessage: Decoder<{ message: Message; sequence: number }
     if (message.sharedLinkId === undefined) delete message.sharedLinkId;
     if (message.sharedPost === undefined) delete message.sharedPost;
     if (message.reactions === undefined) delete message.reactions;
-    return { message, sequence };
+    return { message: { ...message, sequence }, sequence };
   },
 );
 

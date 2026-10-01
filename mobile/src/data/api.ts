@@ -161,7 +161,11 @@ export interface TardyApi {
   threads(): Promise<Thread[]>;
   /** One thread the viewer is in, messages or not (a just-opened group has none). */
   thread(threadId: string): Promise<ThreadRef>;
-  messages(threadId: string): Promise<Message[]>;
+  /**
+   * The thread's messages in order. With `afterSequence`, only those after it (the live
+   * chat's cheap "anything new?" check); without, the whole thread.
+   */
+  messages(threadId: string, afterSequence?: number): Promise<Message[]>;
   /**
    * Sends a message, optionally carrying a tardy or a shared link (`text` may then be
    * empty). A shared tardy must be visible to the sender (`forbidden` otherwise); each

@@ -323,9 +323,9 @@ export class HttpTardyApi implements TardyApi {
     return ref;
   }
 
-  async messages(threadId: string): Promise<Message[]> {
+  async messages(threadId: string, afterSequence = 0): Promise<Message[]> {
     const all: Message[] = [];
-    for (let after = 0; ; ) {
+    for (let after = afterSequence; ; ) {
       const page = await this.request('GET', `/v1/social/conversations/${segment(threadId)}/messages`, {
         query: { after: String(after), limit: String(MESSAGE_PAGE) },
         decode: array(W.conversationMessage),

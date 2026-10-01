@@ -500,9 +500,12 @@ export class MockTardyApi implements TardyApi {
     return this.delay(this.threadList.find((t) => t.id === threadId)!);
   }
 
-  async messages(threadId: string) {
+  async messages(threadId: string, afterSequence = 0) {
     this.visibleThread(threadId);
-    return this.delay(this.messageLog.filter((m) => m.threadId === threadId).map(this.presentMessage));
+    const all = this.messageLog
+      .filter((m) => m.threadId === threadId)
+      .map((m, i) => ({ ...this.presentMessage(m), sequence: i + 1 }));
+    return this.delay(all.filter((m) => m.sequence > afterSequence));
   }
 
   async sendMessage(threadId: string, text: string, attachment?: MessageAttachment) {

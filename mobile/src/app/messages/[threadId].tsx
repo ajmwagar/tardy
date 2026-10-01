@@ -1,7 +1,7 @@
 import { Image } from 'expo-image';
 import { router, Stack, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActionSheetIOS, Alert, FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActionSheetIOS, Alert, AppState, FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ErrorState, Pulse, SkeletonBlock } from '@/components/states';
@@ -12,14 +12,13 @@ import { LinkPreview } from '@/components/link-preview';
 import { ReactionChips, ReactionPicker, type ReactionAnchor } from '@/components/reactions';
 import { ThreadAvatar } from '@/components/thread-avatar';
 import { applyReaction, nextReaction, reactionOf, type ReactionKind } from '@/reactions/reactions';
+import { lastSequence, LIVE_FULL_EVERY, mergeMessages, nextCheckMs, quickCheckCursor } from '@/messages/live';
 import { isWork, promotionNotice } from '@/share/sections';
 import { useSharedLink } from '@/share/use-shared-link';
 import { isGroup, othersIn, threadLabel } from '@/share/thread-label';
 import { api, cacheAccounts, ensureAccounts, refreshUnread, reportError, useAccount, useStore } from '@/state/store';
 import { colors, IMAGE_TRANSITION_MS, radius, timeAgo } from '@/theme';
 
-/** Bounded polling while the thread is open (server push for DMs comes later). */
-const POLL_MS = 3000;
 /** Messages further apart than this get a time divider. */
 const BREAK_MS = 60 * 60 * 1000;
 const LINK_CARD_WIDTH = 260;
@@ -178,20 +177,38 @@ export default function ThreadScreen() {
   const groupLabel = thread && group ? threadLabel(thread, meId, (id) => accounts.get(id)?.handle) : null;
   const lastReadId = useRef<string | null>(null);
 
+  // Live updates (see `messages/live.ts`): one check at a time, only new messages most of the
+  // time, a full re-read every few checks for reactions, fast while the chat is moving, and
+  // nothing while the app is in the background.
+  const cursor = useRef(0);
+  const checks = useRef(0);
+  const inFlight = useRef(false);
+  const lastActivity = useRef(0);
+  const wake = useRef<() => void>(() => {});
+
   const sync = useCallback(async () => {
+    if (inFlight.current) return;
+    inFlight.current = true;
     try {
-      const [current, messages] = await Promise.all([api.thread(threadId), api.messages(threadId)]);
-      await ensureAccounts([...current.participantIds, ...messages.map((m) => m.senderId)]);
-      setThread(current);
-      // Keep local pending/failed sends; everything else comes from the server.
-      setRows((prev) =>
-        [...messages, ...(prev ?? []).filter((r) => r.pending || r.failed || r.event)].sort(
-          (a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt),
-        ),
-      );
+      const full = cursor.current === 0 || checks.current++ % LIVE_FULL_EVERY === 0;
+      const [current, fetched] = await Promise.all([
+        full ? api.thread(threadId) : Promise.resolve(null),
+        api.messages(threadId, full ? undefined : quickCheckCursor(cursor.current)),
+      ]);
+      await ensureAccounts([...(current?.participantIds ?? []), ...fetched.map((m) => m.senderId)]);
+      if (current) setThread(current);
+      if (fetched.some((m) => (m.sequence ?? 0) > cursor.current)) lastActivity.current = Date.now();
+      cursor.current = Math.max(cursor.current, lastSequence(fetched));
+      // Keep local pending/failed sends and event lines; everything else comes from the server.
+      setRows((prev) => {
+        const local = (prev ?? []).filter((r) => r.pending || r.failed || r.event);
+        const stored = (prev ?? []).filter((r) => !(r.pending || r.failed || r.event));
+        const merged = full ? fetched : mergeMessages(stored, fetched);
+        return [...merged, ...local].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+      });
       setError(null);
 
-      const last = messages[messages.length - 1];
+      const last = fetched[fetched.length - 1];
       if (last && last.id !== lastReadId.current) {
         lastReadId.current = last.id;
         await api.markThreadRead(threadId, last.id);
@@ -200,14 +217,35 @@ export default function ThreadScreen() {
     } catch (e) {
       if (e instanceof TardyApiError && e.code === 'forbidden') setError("You can't see this conversation anymore.");
       else setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      inFlight.current = false;
     }
   }, [threadId]);
 
   useFocusEffect(
     useCallback(() => {
-      void sync();
-      const timer = setInterval(() => void sync(), POLL_MS);
-      return () => clearInterval(timer);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      // Opening a chat counts as activity: check fast at first.
+      lastActivity.current = Date.now();
+      let foreground = AppState.currentState === 'active';
+      const tick = async () => {
+        clearTimeout(timer);
+        if (!foreground) return;
+        await sync();
+        timer = setTimeout(tick, nextCheckMs(lastActivity.current, Date.now()));
+      };
+      wake.current = () => void tick();
+      const appState = AppState.addEventListener('change', (next) => {
+        foreground = next === 'active';
+        if (foreground) void tick();
+        else clearTimeout(timer);
+      });
+      void tick();
+      return () => {
+        clearTimeout(timer);
+        appState.remove();
+        wake.current = () => {};
+      };
     }, [sync]),
   );
 
@@ -227,6 +265,9 @@ export default function ThreadScreen() {
       try {
         const saved = await api.sendMessage(threadId, body);
         setRows((prev) => [...(prev ?? []).filter((r) => r.id !== temp.id && r.id !== saved.id), saved]);
+        // A reply (or an agent's 👀) is likely now: check right away and keep checking fast.
+        lastActivity.current = Date.now();
+        wake.current();
       } catch {
         setRows((prev) => (prev ?? []).map((r) => (r.id === temp.id ? { ...r, pending: false, failed: true } : r)));
       }

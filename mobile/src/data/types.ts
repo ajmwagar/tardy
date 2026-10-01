@@ -244,6 +244,11 @@ export type Message = {
   sharedLinkId?: string;
   /** Tap-backs, one per account (see `reactions/reactions.ts`). Absent when none. */
   reactions?: ReactionSummary;
+  /**
+   * The message's position in its thread (1, 2, 3, ...), assigned by the server. The cursor
+   * for `messages(threadId, afterSequence)`; absent on a message not yet stored.
+   */
+  sequence?: number;
 };
 
 /** What a message can carry besides text. */
