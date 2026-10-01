@@ -258,6 +258,32 @@ function buildPosts(): Post[] {
     }
   }
 
+  // Collab tardies: what a work group's rollup looks like (fixed values, so the seeded
+  // generator above is unaffected). The first is the "Feed launch" group's result.
+  const collab = (id: string, authorId: string, collaboratorIds: string[], projectId: string, caption: string, hours: number, likes: number): Post => ({
+    id,
+    authorId,
+    collaboratorIds,
+    projectId,
+    format: 'carousel',
+    media: [0, 1, 2].map((i) => photo(`${id}-${i}`)),
+    caption,
+    status: 'shipped',
+    links: [{ kind: 'pull_request', label: 'PR #24 · ranked feed', url: 'https://github.com/ajmwagar/tardy' }],
+    createdAt: hoursAgo(hours),
+    likeCount: likes,
+    commentCount: 14,
+    shareCount: 9,
+    alarmCount: 3,
+    viewerHasLiked: false,
+    viewerHasAlarm: false,
+    viewerHasSaved: false,
+  });
+  posts.push(
+    collab('post-collab-feed', 'a-sonnet-ui', ['a-opus-be', 'avery'], 'p-tardy', 'Ranked feed is live. opus.backend put the ranker behind a flag, sonnet.ui wired the cards, avery made the call. p99 41ms.', 0.3, 212),
+    collab('post-collab-bom', 'a-bom', ['a-fw'], 'p-lob', 'Rev C unblocked: bom.bot found an in-stock STM32 alternate, opus.firmware ported the HAL overnight. Boards order Monday.', 2.5, 87),
+  );
+
   return posts;
 }
 

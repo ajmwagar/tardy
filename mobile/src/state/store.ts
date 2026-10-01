@@ -138,7 +138,7 @@ export function ingestPosts(posts: Post[]) {
 
 export async function loadFeedPage(page: Promise<{ items: Post[]; nextCursor: string | null }>) {
   const result = await page;
-  await ensureAccounts(result.items.flatMap((p) => [p.authorId, p.projectId]));
+  await ensureAccounts(result.items.flatMap((p) => [p.authorId, p.projectId, ...(p.collaboratorIds ?? [])]));
   ingestPosts(result.items);
   return result;
 }

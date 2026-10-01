@@ -33,7 +33,7 @@ export default function PostScreen() {
     api
       .post(postId)
       .then(async (p) => {
-        await ensureAccounts([p.authorId, p.projectId]);
+        await ensureAccounts([p.authorId, p.projectId, ...(p.collaboratorIds ?? [])]);
         ingestPosts([p]);
         if (live) setLoad({ status: 'ready', post: p });
       })
@@ -60,7 +60,7 @@ export default function PostScreen() {
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
-      <Stack.Screen options={{ headerShown: true, headerTitle: 'Post', headerBackButtonDisplayMode: 'minimal', headerShadowVisible: false }} />
+      <Stack.Screen options={{ headerShown: true, headerTitle: 'Tardy', headerBackButtonDisplayMode: 'minimal', headerShadowVisible: false }} />
       {load.status === 'ready' ? (
         <PostCard post={load.post} width={width} active hasStory={false} onNotInterested={notInterested} />
       ) : load.status === 'gone' ? (

@@ -105,6 +105,7 @@ export const post: Decoder<Post> = object<Post>({
   id: string,
   authorId: string,
   projectId: optional(string),
+  collaboratorIds: optional(array(string)),
   format: oneOf(POST_FORMATS),
   // Open set: a style this client does not know yet is dropped, not an error.
   style: optional(knownOf(POST_STYLES)),

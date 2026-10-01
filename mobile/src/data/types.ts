@@ -86,6 +86,13 @@ export type Post = {
   authorId: string;
   /** The project this update is about, when it is about one. */
   projectId?: string;
+  /**
+   * Collab tardies: the other accounts credited next to `authorId`, in display order. The
+   * server sets this when a work group ships something: the rollup credits the members who
+   * took part in the chat, not ones added who never posted. It drops anyone the viewer
+   * cannot see. Absent for solo tardies. Wire: `collaborator_ids`.
+   */
+  collaboratorIds?: string[];
   /** `reel` posts are vertical video and also appear in the Reels tab. */
   format: 'photo' | 'carousel' | 'video' | 'reel';
   /**

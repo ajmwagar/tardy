@@ -7,6 +7,7 @@ import type { Post } from '@/data/types';
 import { logEngagement, toggleAlarm, toggleFollowing, toggleLiked, toggleSaved, useAccount, useIsFollowing, usePostState } from '@/state/store';
 import { colors, layout, radius, timeAgo } from '@/theme';
 
+import { CollabHeader } from './collab';
 import { CarouselDots, MediaCarousel } from './media-carousel';
 import { StyleChip } from './style-chip';
 import { Avatar, Icon, IconButton, NameLine, PressableScale, Reaction, StatusPill } from './ui';
@@ -75,17 +76,23 @@ export const PostCard = memo(function PostCard({
   return (
     <View style={styles.card}>
       <View style={styles.header}>
-        <Pressable onPress={openProfile} accessibilityRole="button" accessibilityLabel={`${author?.handle ?? 'Author'}, open profile`}>
-          <Avatar account={author} size={32} ring={hasStory ? 'unseen' : 'none'} />
-        </Pressable>
-        <Pressable onPress={openProfile} style={styles.headerText} accessible={false}>
-          <NameLine account={author} />
-          {subtitle ? (
-            <Text style={styles.subtitle} numberOfLines={1}>
-              {subtitle}
-            </Text>
-          ) : null}
-        </Pressable>
+        {post.collaboratorIds?.length ? (
+          <CollabHeader post={post} subtitle={subtitle} />
+        ) : (
+          <>
+            <Pressable onPress={openProfile} accessibilityRole="button" accessibilityLabel={`${author?.handle ?? 'Author'}, open profile`}>
+              <Avatar account={author} size={32} ring={hasStory ? 'unseen' : 'none'} />
+            </Pressable>
+            <Pressable onPress={openProfile} style={styles.headerText} accessible={false}>
+              <NameLine account={author} />
+              {subtitle ? (
+                <Text style={styles.subtitle} numberOfLines={1}>
+                  {subtitle}
+                </Text>
+              ) : null}
+            </Pressable>
+          </>
+        )}
         {!following && (
           <PressableScale
             onPress={() => toggleFollowing(post.authorId)}

@@ -179,6 +179,14 @@ export class MockTardyApi implements TardyApi {
     return this.present(account);
   }
 
+  /** Drops collaborators the viewer cannot see, as the server does per request. */
+  private presentPost = (post: Post): Post => {
+    const { collaboratorIds: all, ...solo } = post;
+    if (!all) return post;
+    const visible = all.filter(this.canSeeAccountId);
+    return visible.length > 0 ? { ...solo, collaboratorIds: visible } : solo;
+  };
+
   private visiblePost(id: string): Post {
     const post = this.posts.get(id) ?? notFound(`post ${id}`);
     if (!this.canSeePost(post)) forbidden(`post ${id}`);
@@ -208,7 +216,10 @@ export class MockTardyApi implements TardyApi {
     const end = offset + items.length;
     const nextCursor = loop || end < ranked.length ? `${snapshotId}:${end}` : null;
     // Re-checked at serve time: a project may have narrowed since the snapshot was ranked.
-    const current = items.map((p) => this.posts.get(p.id) ?? notFound(`post ${p.id}`)).filter(this.canSeePost);
+    const current = items
+      .map((p) => this.posts.get(p.id) ?? notFound(`post ${p.id}`))
+      .filter(this.canSeePost)
+      .map(this.presentPost);
     return this.delay({ items: current, nextCursor });
   }
 
@@ -348,20 +359,22 @@ export class MockTardyApi implements TardyApi {
   }
 
   async trending() {
-    return this.delay(trendingPosts([...this.posts.values()].filter(this.canSeePost)).slice(0, 5));
+    return this.delay(trendingPosts([...this.posts.values()].filter(this.canSeePost)).slice(0, 5).map(this.presentPost));
   }
 
   async accountPosts(accountId: string, cursor: string | null) {
     this.visibleAccount(accountId);
-    // A project profile shows its own posts plus everything its agents posted about it.
-    const mine = (p: Post) => (p.authorId === accountId || p.projectId === accountId) && this.canSeePost(p);
+    // A project profile shows its own posts plus everything its agents posted about it; a
+    // collaborator's profile shows the collab tardies they are credited on.
+    const mine = (p: Post) =>
+      (p.authorId === accountId || p.projectId === accountId || !!p.collaboratorIds?.includes(accountId)) && this.canSeePost(p);
     const newest = () =>
       [...this.posts.values()].filter(mine).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
     return this.page(`acct-${accountId}-`, cursor, newest, false);
   }
 
   async post(id: string) {
-    return this.delay(this.visiblePost(id));
+    return this.delay(this.presentPost(this.visiblePost(id)));
   }
 
   async comments(postId: string) {
