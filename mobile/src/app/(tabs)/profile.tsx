@@ -36,7 +36,7 @@ export default function MyProfileScreen() {
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       <View style={styles.bar}>
-        <Text style={type.title}>{me?.handle}</Text>
+        <Text style={type.title} numberOfLines={1} maxFontSizeMultiplier={1.3} accessibilityRole="header">{me?.handle}</Text>
         <IconButton icon="line.3.horizontal" label="Menu" onPress={openMenu} style={styles.edgeButton} />
       </View>
       {me && <ProfileView account={me} isMe />}

@@ -5,7 +5,7 @@ import { FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { EmptyState, ErrorState, Pulse, SkeletonBlock } from '@/components/states';
-import { Avatar, Icon, NameLine } from '@/components/ui';
+import { Avatar, Icon, NameLine, PressableScale } from '@/components/ui';
 import type { Thread } from '@/data/types';
 import { api, ensureAccounts, refreshUnread, useAccount, useStore } from '@/state/store';
 import { colors, timeAgo, type } from '@/theme';
@@ -25,7 +25,12 @@ const openThread = (thread: Thread) => router.push({ pathname: '/messages/[threa
 const ActiveBubble = memo(function ActiveBubble({ thread, me }: { thread: Thread; me: string | undefined }) {
   const account = useAccount(other(thread, me));
   return (
-    <Pressable style={styles.active} onPress={() => openThread(thread)}>
+    <PressableScale
+      style={styles.active}
+      scaleTo={0.95}
+      onPress={() => openThread(thread)}
+      accessibilityRole="button"
+      accessibilityLabel={`${account?.handle ?? 'Someone'}, active now`}>
       <View>
         <Avatar account={account} size={58} />
         <View style={styles.presence} />
@@ -33,7 +38,7 @@ const ActiveBubble = memo(function ActiveBubble({ thread, me }: { thread: Thread
       <Text style={styles.activeLabel} numberOfLines={1}>
         {account?.handle}
       </Text>
-    </Pressable>
+    </PressableScale>
   );
 });
 
@@ -160,7 +165,7 @@ export default function MessagesScreen() {
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       <View style={styles.bar}>
-        <Text style={type.title}>{me?.handle ?? 'messages'}</Text>
+        <Text style={type.title} numberOfLines={1} maxFontSizeMultiplier={1.3} accessibilityRole="header">{me?.handle ?? 'messages'}</Text>
         <Icon name="square.and.pencil" size={24} />
       </View>
 

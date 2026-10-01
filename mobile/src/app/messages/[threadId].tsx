@@ -201,6 +201,8 @@ export default function ThreadScreen() {
           headerTitle: () => (
             <Pressable
               style={styles.titleRow}
+              accessibilityRole="button"
+              accessibilityLabel={`${otherAccount?.handle ?? 'Conversation'}, open profile`}
               onPress={() => otherAccount && router.push({ pathname: '/profile/[handle]', params: { handle: otherAccount.handle } })}>
               <Avatar account={otherAccount} size={28} />
               <View>

@@ -17,7 +17,7 @@ const CommentRow = memo(function CommentRow({ comment }: { comment: Comment }) {
   const openProfile = () => author && router.push({ pathname: '/profile/[handle]', params: { handle: author.handle } });
   return (
     <View style={styles.row}>
-      <Pressable onPress={openProfile}>
+      <Pressable onPress={openProfile} accessibilityRole="button" accessibilityLabel={`${author?.handle ?? 'Author'}, open profile`}>
         <Avatar account={author} size={34} />
       </Pressable>
       <View style={styles.rowBody}>

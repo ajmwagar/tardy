@@ -179,7 +179,7 @@ export default function NotificationsScreen() {
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       <View style={styles.bar}>
-        <Text style={type.title}>Activity</Text>
+        <Text style={type.title} numberOfLines={1} maxFontSizeMultiplier={1.3} accessibilityRole="header">Activity</Text>
         <IconButton icon="slider.horizontal.3" size={22} label="Notification settings" onPress={() => router.push('/settings')} style={styles.edgeButton} />
       </View>
 

@@ -2,7 +2,7 @@ import { BlurView } from 'expo-blur';
 import { router } from 'expo-router';
 import { memo, useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import Animated, { cancelAnimation, Easing, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
+import Animated, { cancelAnimation, Easing, useAnimatedStyle, useReducedMotion, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
 
 import type { Post } from '@/data/types';
 import { useStore } from '@/state/store';
@@ -14,23 +14,25 @@ const SPEED = 42;
  * Frosted breaking-news strip for posts going viral right now: white text on blur, nothing
  * else competing for attention. The headlines scroll
  * continuously (two copies laid end to end, so the loop is seamless); tap to open the
- * top story. Renders nothing when nothing is trending.
+ * top story. Holds still under Reduce Motion. Renders nothing when nothing is trending.
  */
 export const BreakingTicker = memo(function BreakingTicker({ posts }: { posts: Post[] }) {
   const accounts = useStore((s) => s.accounts);
   const [width, setWidth] = useState(0);
   const offset = useSharedValue(0);
+  // Reduce Motion: the strip holds still and shows the first headline instead of scrolling.
+  const still = useReducedMotion();
 
   const headline = posts
     .map((p) => `${accounts.get(p.authorId)?.handle ?? ''}: ${p.caption}`)
     .join('     •     ');
 
   useEffect(() => {
-    if (width === 0) return;
+    if (width === 0 || still) return;
     offset.value = 0;
     offset.value = withRepeat(withTiming(-width, { duration: (width / SPEED) * 1000, easing: Easing.linear }), -1, false);
     return () => cancelAnimation(offset);
-  }, [offset, width]);
+  }, [offset, width, still]);
 
   const scroll = useAnimatedStyle(() => ({ transform: [{ translateX: offset.value }] }));
 
@@ -39,17 +41,22 @@ export const BreakingTicker = memo(function BreakingTicker({ posts }: { posts: P
   return (
     <Pressable
       style={styles.bar}
-      onPress={() => router.push({ pathname: '/comments/[postId]', params: { postId: posts[0].id } })}>
+      onPress={() => router.push({ pathname: '/comments/[postId]', params: { postId: posts[0].id } })}
+      accessibilityRole="button"
+      accessibilityLabel={`Breaking: ${headline}`}
+      accessibilityHint="Opens the top story's comments">
       <BlurView intensity={40} tint="systemUltraThinMaterialDark" style={StyleSheet.absoluteFill} />
-      <Text style={styles.labelText}>Breaking</Text>
+      <Text style={styles.labelText} maxFontSizeMultiplier={1.2}>
+        Breaking
+      </Text>
       <View style={styles.divider} />
       <View style={styles.track}>
         <Animated.View style={[styles.row, scroll]}>
-          <Text style={styles.headline} numberOfLines={1} onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
+          <Text style={styles.headline} numberOfLines={1} maxFontSizeMultiplier={1.2} onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
             {headline}
             {'     •     '}
           </Text>
-          <Text style={styles.headline} numberOfLines={1}>
+          <Text style={styles.headline} numberOfLines={1} maxFontSizeMultiplier={1.2}>
             {headline}
             {'     •     '}
           </Text>
