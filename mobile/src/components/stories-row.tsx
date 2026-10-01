@@ -127,7 +127,8 @@ export const StoriesRow = memo(function StoriesRow({ groups: serverOrder }: { gr
 });
 
 const styles = StyleSheet.create({
-  row: { paddingHorizontal: 8, paddingVertical: 10, gap: 4 },
+  // The bottom padding holds the Boosted line, so a boost arriving never changes the tray's height.
+  row: { paddingHorizontal: 8, paddingTop: 10, paddingBottom: 14, gap: 4 },
   bubble: { width: 82, alignItems: 'center', gap: 5 },
   yourStory: { width: 78, height: 78, alignItems: 'center', justifyContent: 'center' },
   plus: {
@@ -145,5 +146,5 @@ const styles = StyleSheet.create({
   },
   label: { color: colors.text, fontSize: 11.5, maxWidth: 76 },
   labelSeen: { color: colors.textSecondary },
-  boosted: { color: colors.textSecondary, fontSize: 10, fontWeight: '600', marginTop: -3 },
+  boosted: { position: 'absolute', bottom: -13, color: colors.textSecondary, fontSize: 10, fontWeight: '600' },
 });
