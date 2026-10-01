@@ -4,14 +4,30 @@ import { FlatList, StyleSheet, Text, View, type NativeScrollEvent, type NativeSy
 
 import type { MediaItem } from '@/data/types';
 import { logEngagement, toggleMuted, useStore } from '@/state/store';
-import { colors, IMAGE_TRANSITION_MS, layout } from '@/theme';
+import { feedFrameRatio, fitFor, mediaRatio } from '@/media/aspect';
+import { colors, IMAGE_TRANSITION_MS } from '@/theme';
 
 import { DoubleTapLike } from './double-tap-like';
 import { Icon } from './ui';
 import { VideoSurface } from './video-surface';
 
-/** Feed media at 4:5 like Instagram; anything taller is cropped, wider is letterboxed. */
-const ASPECT = layout.feedMediaAspect;
+/**
+ * Feed media at its real shape: the frame follows the first item (4:5 tall to 1.91:1 wide,
+ * see `media/aspect.ts`), and an item that doesn't fit the frame is shown whole over a blurred
+ * copy of itself instead of being cropped.
+ */
+function Backdrop({ uri }: { uri: string }) {
+  return (
+    <Image
+      source={uri}
+      style={[StyleSheet.absoluteFill, { transform: [{ scale: 1.2 }] }]}
+      contentFit="cover"
+      blurRadius={30}
+      cachePolicy="memory-disk"
+      accessible={false}
+    />
+  );
+}
 
 export const MediaCarousel = memo(function MediaCarousel({
   postId,
@@ -27,7 +43,8 @@ export const MediaCarousel = memo(function MediaCarousel({
   active: boolean;
   onIndexChange?: (index: number) => void;
 }) {
-  const height = width / ASPECT;
+  const frame = feedFrameRatio(media);
+  const height = width / frame;
   const [index, setIndex] = useState(0);
   const muted = useStore((s) => s.muted);
   const hasVideo = media.some((m) => m.type === 'video');
@@ -46,23 +63,24 @@ export const MediaCarousel = memo(function MediaCarousel({
 
   const renderItem = useCallback(
     ({ item, index: i }: { item: MediaItem; index: number }) => (
-      <View style={{ width, height, backgroundColor: colors.surface }}>
+      <View style={{ width, height, backgroundColor: colors.surface, overflow: 'hidden' }}>
+        {fitFor(mediaRatio(item), frame) === 'contain' && <Backdrop uri={item.type === 'image' ? item.url : item.posterUrl} />}
         {item.type === 'image' ? (
           <Image
             source={item.url}
             recyclingKey={item.url}
             style={StyleSheet.absoluteFill}
-            contentFit="cover"
+            contentFit={fitFor(mediaRatio(item), frame)}
             cachePolicy="memory-disk"
             transition={IMAGE_TRANSITION_MS}
             priority={i === 0 ? 'high' : 'normal'}
           />
         ) : (
-          <VideoSurface postId={postId} media={item} active={active && i === index} />
+          <VideoSurface postId={postId} media={item} active={active && i === index} contentFit={fitFor(mediaRatio(item), frame)} />
         )}
       </View>
     ),
-    [active, height, index, postId, width],
+    [active, frame, height, index, postId, width],
   );
 
   return (

@@ -101,7 +101,8 @@ export function VideoSurface({
         video
       )}
       {status !== 'readyToPlay' && (
-        <Image source={media.posterUrl} style={StyleSheet.absoluteFill} contentFit="cover" cachePolicy="memory-disk" transition={IMAGE_TRANSITION_MS} />
+        // Same fit as the video, so nothing jumps when the first frame replaces the poster.
+        <Image source={media.posterUrl} style={StyleSheet.absoluteFill} contentFit={contentFit} cachePolicy="memory-disk" transition={IMAGE_TRANSITION_MS} />
       )}
       {status === 'error' && (
         <MediaError
