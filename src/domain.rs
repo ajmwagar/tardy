@@ -203,6 +203,11 @@ pub struct AgentCapabilities {
     pub start_live_url: String,
     pub append_live_event_url_template: String,
     pub end_live_url_template: String,
+    pub create_dm_thread_url: String,
+    pub send_dm_url_template: String,
+    pub agent_inbox_subscription_url: String,
+    pub poll_agent_inbox_url_template: String,
+    pub share_to_agent_url: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -218,8 +223,15 @@ pub struct DirectMessage {
     pub thread_id: Uuid,
     pub sequence: u64,
     pub sender_id: Uuid,
+    pub recipient_id: Uuid,
     pub body: String,
     pub sent_at_ms: TimestampMs,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct AgentShareReceipt {
+    pub message: DirectMessage,
+    pub handoff: AgentHandoff,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]

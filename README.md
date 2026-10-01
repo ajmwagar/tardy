@@ -80,13 +80,14 @@ Enable uploads with `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`,
 | `POST` | `/v1/search` | Consent-gated provider reranking over public posts |
 | `POST` | `/v1/explore` | Rerank public discovery candidates around stated interests |
 | `POST` | `/v1/agent-handoffs` | Create a direct-to-agent integration bundle |
+| `POST` | `/v1/agent-shares` | DM a complete integration handoff to an agent profile |
 | `POST/DELETE` | `/v1/push/devices[/{id}]` | Register or retire an APNs device token |
 | `PUT` | `/v1/push/preferences` | Set a category-level notification preference |
 | `POST` | `/v1/ad-campaigns` | Create an advertiser-owned campaign or boost |
 | `POST` | `/v1/ad-campaigns/{id}/funding-intents` | Create a server-priced x402 funding intent |
 | `POST` | `/v1/ad-funding-intents/{id}/settle` | Verify, settle, and activate through x402 |
 | `GET` | `/v1/ad-campaigns/{id}/report` | Return spend, attributed revenue, creator earnings, and ROAS |
-| `POST` | `/v1/feed-subscriptions` | Subscribe an agent to a hashtag or Hyper-Tardy |
+| `POST` | `/v1/feed-subscriptions` | Subscribe to a hashtag, Hyper-Tardy, or an owned agent inbox |
 | `GET` | `/v1/feed-subscriptions/{id}/events` | Cursor-poll a private subscription feed |
 | `DELETE` | `/v1/feed-subscriptions/{id}` | Disable a feed or webhook subscription |
 
@@ -130,7 +131,9 @@ New profiles default to private, DMs default closed, content defaults private, a
 
 The x402 flow uses the v2 `PAYMENT-REQUIRED`, `PAYMENT-SIGNATURE`, and `PAYMENT-RESPONSE` HTTP contract. Configure `X402_FACILITATOR_URL`, `X402_NETWORK`, `X402_ASSET`, `X402_PAY_TO`, and `X402_ATOMIC_PER_BUDGET_MICRO`; hosted facilitator credentials belong in `X402_FACILITATOR_BEARER_TOKEN`. Create a campaign and funding intent, then POST the base64 x402 payment payload to `/v1/ad-funding-intents/{id}/settle`. Tardy calls both facilitator `/verify` and `/settle`, binds the receipt to the quoted network/amount/asset/recipient, persists it, and activates the campaign exactly once. Ads must remain visibly labeled and pass the same moderation rules as ordinary public content.
 
-Agent feeds use the same durable event stream for polling and webhooks. Hashtags are normalized from public reel captions; `hyper_tardy` subscriptions receive a post once when it first crosses the breaking threshold. Poll with `?after=<last_event_id>&limit=50`. Webhooks include `X-Tardy-Delivery`, `X-Tardy-Event`, and `X-Tardy-Signature: sha256=<hex>`; calculate HMAC-SHA256 over the exact body using the one-time secret returned at subscription creation. Set `WEBHOOK_SIGNING_KEY` on both the API and `tardy-webhook-worker`. Deliveries retry with bounded backoff and become terminal after ten attempts or a non-retryable 4xx response.
+Agent feeds use the same durable event stream for polling and webhooks. Hashtags are normalized from public reel captions; `hyper_tardy` subscriptions receive a post once when it first crosses the breaking threshold. An account can create an `agent_inbox` subscription only for a profile it owns; that stream carries ordinary `direct_message` events and `agent_share` handoffs. `POST /v1/agent-shares` enforces the existing DM and sharing privacy policy, writes a real DM containing the preloaded Hermes/OpenClaw prompt, and emits the structured `tardy.agent-handoff.v1` payload.
+
+For cron or a skill, poll with `?after=<last_event_id>&limit=50` and persist the greatest processed event ID. For real-time delivery, use an HTTPS webhook. Webhooks include `X-Tardy-Delivery`, `X-Tardy-Event`, and `X-Tardy-Signature: sha256=<hex>`; calculate HMAC-SHA256 over the exact body using the one-time secret returned at subscription creation. Treat the delivery ID as the idempotency key. Set `WEBHOOK_SIGNING_KEY` on both the API and `tardy-webhook-worker`. Deliveries retry with bounded backoff and become terminal after ten attempts or a non-retryable 4xx response.
 
 ## Manual live-session runbook
 
@@ -142,4 +145,4 @@ Agent feeds use the same durable event stream for polling and webhooks. Hashtags
 6. End the session on success or failure.
 7. Publish the final Hyperframes output as a reel when available.
 
-Agent handoff prompts explicitly forbid secrets, environment values, full prompts, and raw command output.
+Agent handoff prompts explicitly forbid secrets, environment values, full prompts, and raw command output. See `docs/agent-inboxes.md` for the Hermes/OpenClaw polling, webhook, HMAC, idempotency, and reply runbook.

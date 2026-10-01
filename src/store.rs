@@ -618,6 +618,7 @@ impl Store for MemoryStore {
             thread_id,
             sequence: thread.latest_sequence,
             sender_id: actor,
+            recipient_id: recipient,
             body,
             sent_at_ms: at_ms,
         };

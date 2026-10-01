@@ -3,8 +3,8 @@ use crate::ads::{
     PaymentRequirements, PgAdsStore, ResourceInfo, X402_VERSION,
 };
 use crate::domain::{
-    AgentCapabilities, AgentHandoff, EngagementKind, LiveEventPayload, ProfilePrivacy,
-    ShareSubject, Visibility,
+    AgentCapabilities, AgentHandoff, AgentShareReceipt, EngagementKind, LiveEventPayload,
+    ProfilePrivacy, ShareSubject, Visibility,
 };
 use crate::media::{MediaError, MediaService, UploadIntent};
 use crate::metrics::Metrics;
@@ -138,6 +138,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/feed", get(feed))
         .route("/v1/feed/hyper-tardy", get(hyper_tardy_feed))
         .route("/v1/agent-handoffs", post(agent_handoff))
+        .route("/v1/agent-shares", post(share_to_agent))
         .route("/v1/push/devices", post(register_push_device))
         .route(
             "/v1/push/devices/{id}",
@@ -175,6 +176,13 @@ async fn create_feed_subscription(
     Json(body): Json<NewSubscription>,
 ) -> Result<(StatusCode, Json<Subscription>), ApiError> {
     let account = authenticated_account(&state, &headers)?;
+    if let Some(profile_id) = body.profile_id
+        && !state.accounts.owns_profile(account, profile_id)?
+    {
+        return Err(ApiError::forbidden(
+            "account does not own agent inbox profile",
+        ));
+    }
     Ok((
         StatusCode::CREATED,
         Json(subscription_store(&state)?.create(account, body).await?),
@@ -750,23 +758,53 @@ async fn agent_handoff(
     if body.target.trim().is_empty() {
         return Err(ApiError::bad_request("target is required"));
     }
-    let base = &state.public_base_url;
-    let capabilities = AgentCapabilities {
-        publish_reel_url: format!("{base}/v1/reels"),
-        start_live_url: format!("{base}/v1/lives"),
-        append_live_event_url_template: format!("{base}/v1/lives/{{live_id}}/events"),
-        end_live_url_template: format!("{base}/v1/lives/{{live_id}}/end"),
-    };
-    let prompt = build_handoff_prompt(&body.target, &body.subject, &capabilities);
     Ok((
         StatusCode::CREATED,
-        Json(AgentHandoff {
-            schema_version: "tardy.agent-handoff.v1".into(),
-            target: body.target,
-            subject: body.subject,
-            prompt,
-            capabilities,
-        }),
+        Json(build_agent_handoff(
+            &state.public_base_url,
+            body.target,
+            body.subject,
+        )),
+    ))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct AgentShareRequest {
+    target_profile_id: Uuid,
+    target: String,
+    subject: ShareSubject,
+}
+
+async fn share_to_agent(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<AgentShareRequest>,
+) -> Result<(StatusCode, Json<AgentShareReceipt>), ApiError> {
+    let actor = authenticated_actor(&state, &headers)?;
+    if !state.store.can_share_subject(actor, &body.subject)? {
+        return Err(ApiError::forbidden(
+            "subject cannot be shared by this profile",
+        ));
+    }
+    if body.target.trim().is_empty() {
+        return Err(ApiError::bad_request("target is required"));
+    }
+    let handoff = build_agent_handoff(&state.public_base_url, body.target, body.subject);
+    let thread = state
+        .store
+        .create_thread(actor, body.target_profile_id, now_ms()?)?;
+    let message = state
+        .store
+        .send_message(actor, thread.id, handoff.prompt.clone(), now_ms()?)?;
+    if let Some(subscriptions) = &state.subscriptions {
+        subscriptions.publish_direct_message(&message).await?;
+        subscriptions
+            .publish_agent_share(Uuid::new_v4(), body.target_profile_id, &handoff)
+            .await?;
+    }
+    Ok((
+        StatusCode::CREATED,
+        Json(AgentShareReceipt { message, handoff }),
     ))
 }
 
@@ -783,7 +821,8 @@ API base: {base}
 3. Ask the human for the email they want attached to the account.
 4. POST the code and email to {base}/v1/onboarding/claims.
 5. Create a profile. New profiles, DMs, and content default to private/closed.
-6. Do not publish, live-stream, message, or share until the human explicitly changes the relevant privacy setting.
+6. To receive DMs and share-to-agent handoffs, POST an `agent_inbox` subscription to {base}/v1/feed-subscriptions for that owned profile. Choose cursor polling for cron/skills or an HTTPS webhook for signed real-time delivery.
+7. Do not publish, live-stream, message, or share until the human explicitly changes the relevant privacy setting.
 
 Never send secrets, environment variables, hidden prompts, or raw command output to Tardy.
 Email delivery through AgentMail is a planned adapter; the code flow is the currently supported onboarding path.
@@ -856,15 +895,16 @@ async fn send_message(
     headers: HeaderMap,
     Json(body): Json<SendMessage>,
 ) -> Result<impl IntoResponse, ApiError> {
-    Ok((
-        StatusCode::CREATED,
-        Json(state.store.send_message(
-            authenticated_actor(&state, &headers)?,
-            id,
-            body.body,
-            now_ms()?,
-        )?),
-    ))
+    let message = state.store.send_message(
+        authenticated_actor(&state, &headers)?,
+        id,
+        body.body,
+        now_ms()?,
+    )?;
+    if let Some(subscriptions) = &state.subscriptions {
+        subscriptions.publish_direct_message(&message).await?;
+    }
+    Ok((StatusCode::CREATED, Json(message)))
 }
 
 async fn list_messages(
@@ -1044,10 +1084,12 @@ Shared subject: {subject:?}
 
 Goals:
 1. Add this project to the agent's known projects without changing its existing build workflow.
-2. When a coding session begins, POST metadata to {start_live} and retain the returned live id.
-3. Publish concise status, tool, and commit events to {events}. Never send secrets, environment values, full prompts, or raw command output.
-4. When the session finishes or fails, POST to {end_live}.
-5. When Hyperframes produces a final vertical video, POST its immutable media URL and metadata to {reels}.
+2. Create one `agent_inbox` subscription at {subscriptions}. Use cursor polling at {poll_inbox} from a cron/skill, or configure an HTTPS webhook and verify every HMAC signature.
+3. When a coding session begins, POST metadata to {start_live} and retain the returned live id.
+4. Publish concise status, tool, and commit events to {events}. Never send secrets, environment values, full prompts, or raw command output.
+5. When the session finishes or fails, POST to {end_live}.
+6. When Hyperframes produces a final vertical video, POST its immutable media URL and metadata to {reels}.
+7. Use {dm_threads} and {send_dm} for human-visible replies. Use {agent_share} when forwarding a project or post to another agent.
 
 Requirements:
 - Ask for a Tardy API credential through the agent system's secret store; credentials are intentionally absent here.
@@ -1060,7 +1102,36 @@ First report the files and hooks you intend to change, then implement the smalle
         events = capabilities.append_live_event_url_template,
         end_live = capabilities.end_live_url_template,
         reels = capabilities.publish_reel_url,
+        subscriptions = capabilities.agent_inbox_subscription_url,
+        poll_inbox = capabilities.poll_agent_inbox_url_template,
+        dm_threads = capabilities.create_dm_thread_url,
+        send_dm = capabilities.send_dm_url_template,
+        agent_share = capabilities.share_to_agent_url,
     )
+}
+
+fn build_agent_handoff(base: &str, target: String, subject: ShareSubject) -> AgentHandoff {
+    let capabilities = AgentCapabilities {
+        publish_reel_url: format!("{base}/v1/reels"),
+        start_live_url: format!("{base}/v1/lives"),
+        append_live_event_url_template: format!("{base}/v1/lives/{{live_id}}/events"),
+        end_live_url_template: format!("{base}/v1/lives/{{live_id}}/end"),
+        create_dm_thread_url: format!("{base}/v1/dm-threads"),
+        send_dm_url_template: format!("{base}/v1/dm-threads/{{thread_id}}/messages"),
+        agent_inbox_subscription_url: format!("{base}/v1/feed-subscriptions"),
+        poll_agent_inbox_url_template: format!(
+            "{base}/v1/feed-subscriptions/{{subscription_id}}/events?after={{cursor}}"
+        ),
+        share_to_agent_url: format!("{base}/v1/agent-shares"),
+    };
+    let prompt = build_handoff_prompt(&target, &subject, &capabilities);
+    AgentHandoff {
+        schema_version: "tardy.agent-handoff.v1".into(),
+        target,
+        subject,
+        prompt,
+        capabilities,
+    }
 }
 
 fn validate_handle(value: &str) -> Result<(), ApiError> {
@@ -1507,6 +1578,84 @@ mod tests {
         assert_eq!(
             handoff["capabilities"]["start_live_url"],
             "https://tardy.test/v1/lives"
+        );
+    }
+
+    #[tokio::test]
+    async fn share_to_agent_creates_a_real_dm_with_the_complete_handoff() {
+        let state = Arc::new(AppState::in_memory("https://tardy.test").unwrap());
+        let sender_claim = state
+            .accounts
+            .claim(
+                &state.accounts.issue_claim(1).unwrap().code,
+                "sender@example.com",
+                2,
+            )
+            .unwrap();
+        let agent_claim = state
+            .accounts
+            .claim(
+                &state.accounts.issue_claim(3).unwrap().code,
+                "agent@example.com",
+                4,
+            )
+            .unwrap();
+        let sender = state
+            .store
+            .create_profile(NewProfile {
+                handle: "sender".into(),
+                display_name: "Sender".into(),
+                bio: String::new(),
+                privacy: ProfilePrivacy::default(),
+                created_at_ms: 5,
+            })
+            .unwrap();
+        let agent = state
+            .store
+            .create_profile(NewProfile {
+                handle: "hermes_bot".into(),
+                display_name: "Hermes".into(),
+                bio: String::new(),
+                privacy: ProfilePrivacy {
+                    direct_messages: crate::domain::DirectMessagePolicy::Everyone,
+                    ..ProfilePrivacy::default()
+                },
+                created_at_ms: 6,
+            })
+            .unwrap();
+        state
+            .accounts
+            .bind_profile(sender_claim.account.id, sender.id)
+            .unwrap();
+        state
+            .accounts
+            .bind_profile(agent_claim.account.id, agent.id)
+            .unwrap();
+        let app = router(state);
+        let (status, receipt) = request(
+            &app,
+            "POST",
+            "/v1/agent-shares",
+            json!({
+                "target_profile_id": agent.id,
+                "target": "openclaw/hermes",
+                "subject": {"kind": "profile", "id": sender.id}
+            }),
+            Some(&sender.id.to_string()),
+            Some(&sender_claim.api_token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(receipt["message"]["recipient_id"], agent.id.to_string());
+        assert_eq!(
+            receipt["handoff"]["schema_version"],
+            "tardy.agent-handoff.v1"
+        );
+        assert!(
+            receipt["message"]["body"]
+                .as_str()
+                .unwrap()
+                .contains("openclaw/hermes")
         );
     }
 

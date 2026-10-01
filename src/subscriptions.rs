@@ -1,4 +1,4 @@
-use crate::domain::{HyperTardyItem, Reel};
+use crate::domain::{AgentHandoff, DirectMessage, HyperTardyItem, Reel};
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
@@ -12,6 +12,7 @@ use uuid::Uuid;
 pub enum SubscriptionKind {
     Hashtag,
     HyperTardy,
+    AgentInbox,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema)]
@@ -25,6 +26,8 @@ pub enum DeliveryMode {
 pub struct NewSubscription {
     pub kind: SubscriptionKind,
     pub hashtag: Option<String>,
+    /// Required for `agent_inbox`; the authenticated account must own it.
+    pub profile_id: Option<Uuid>,
     pub delivery: DeliveryMode,
     pub webhook_url: Option<String>,
 }
@@ -34,6 +37,7 @@ pub struct Subscription {
     pub id: Uuid,
     pub kind: SubscriptionKind,
     pub hashtag: Option<String>,
+    pub profile_id: Option<Uuid>,
     pub delivery: DeliveryMode,
     pub webhook_url: Option<String>,
     pub poll_url: String,
@@ -45,7 +49,9 @@ pub struct Subscription {
 pub struct FeedEvent {
     pub id: i64,
     pub kind: String,
-    pub reel_id: Uuid,
+    pub subject_id: Uuid,
+    pub reel_id: Option<Uuid>,
+    pub recipient_profile_id: Option<Uuid>,
     pub hashtags: Vec<String>,
     pub payload: serde_json::Value,
 }
@@ -97,7 +103,12 @@ impl PgSubscriptionStore {
             .hashtag
             .map(|value| normalize_hashtag(&value))
             .transpose()?;
-        if matches!(input.kind, SubscriptionKind::Hashtag) != input.hashtag.is_some() {
+        let valid_selector = match input.kind {
+            SubscriptionKind::Hashtag => input.hashtag.is_some() && input.profile_id.is_none(),
+            SubscriptionKind::HyperTardy => input.hashtag.is_none() && input.profile_id.is_none(),
+            SubscriptionKind::AgentInbox => input.hashtag.is_none() && input.profile_id.is_some(),
+        };
+        if !valid_selector {
             return Err(SubscriptionError::Invalid);
         }
         if matches!(input.delivery, DeliveryMode::Webhook) {
@@ -113,13 +124,14 @@ impl PgSubscriptionStore {
             return Err(SubscriptionError::Invalid);
         }
         let id = Uuid::new_v4();
-        sqlx::query("INSERT INTO feed_subscriptions (id,account_id,kind,hashtag,delivery,webhook_url) VALUES ($1,$2,$3,$4,$5,$6)")
+        sqlx::query("INSERT INTO feed_subscriptions (id,account_id,kind,hashtag,profile_id,delivery,webhook_url) VALUES ($1,$2,$3,$4,$5,$6,$7)")
             .bind(id).bind(account_id).bind(kind_name(input.kind)).bind(&input.hashtag)
-            .bind(delivery_name(input.delivery)).bind(&input.webhook_url).execute(&self.pool).await?;
+            .bind(input.profile_id).bind(delivery_name(input.delivery)).bind(&input.webhook_url).execute(&self.pool).await?;
         Ok(Subscription {
             id,
             kind: input.kind,
             hashtag: input.hashtag,
+            profile_id: input.profile_id,
             delivery: input.delivery,
             webhook_url: input.webhook_url,
             poll_url: format!("{}/v1/feed-subscriptions/{id}/events", self.public_base_url),
@@ -151,7 +163,7 @@ impl PgSubscriptionStore {
         after: i64,
         limit: i64,
     ) -> Result<Vec<FeedEvent>, SubscriptionError> {
-        let rows = sqlx::query("SELECT e.id,e.kind,e.reel_id,e.hashtags,e.payload FROM feed_subscriptions s JOIN feed_events e ON ((s.kind='hyper_tardy' AND e.kind='hyper_tardy') OR (s.kind='hashtag' AND e.kind='post_published' AND s.hashtag=ANY(e.hashtags))) WHERE s.id=$1 AND s.account_id=$2 AND s.active AND e.id>$3 ORDER BY e.id LIMIT $4")
+        let rows = sqlx::query("SELECT e.id,e.kind,e.subject_id,e.reel_id,e.recipient_profile_id,e.hashtags,e.payload FROM feed_subscriptions s JOIN feed_events e ON ((s.kind='hyper_tardy' AND e.kind='hyper_tardy') OR (s.kind='hashtag' AND e.kind='post_published' AND s.hashtag=ANY(e.hashtags)) OR (s.kind='agent_inbox' AND e.kind IN ('direct_message','agent_share') AND s.profile_id=e.recipient_profile_id)) WHERE s.id=$1 AND s.account_id=$2 AND s.active AND e.id>$3 ORDER BY e.id LIMIT $4")
             .bind(id).bind(account_id).bind(after).bind(limit).fetch_all(&self.pool).await?;
         Ok(rows
             .into_iter()
@@ -164,6 +176,8 @@ impl PgSubscriptionStore {
         self.emit(
             "post_published",
             reel.id,
+            Some(reel.id),
+            None,
             tags,
             serde_json::to_value(reel).map_err(|_| SubscriptionError::Invalid)?,
         )
@@ -177,8 +191,42 @@ impl PgSubscriptionStore {
         self.emit(
             "hyper_tardy",
             item.reel.id,
+            Some(item.reel.id),
+            None,
             extract_hashtags(&item.reel.caption),
             serde_json::to_value(item).map_err(|_| SubscriptionError::Invalid)?,
+        )
+        .await
+    }
+
+    pub async fn publish_direct_message(
+        &self,
+        message: &DirectMessage,
+    ) -> Result<(), SubscriptionError> {
+        self.emit(
+            "direct_message",
+            Uuid::new_v4(),
+            None,
+            Some(message.recipient_id),
+            Vec::new(),
+            serde_json::to_value(message).map_err(|_| SubscriptionError::Invalid)?,
+        )
+        .await
+    }
+
+    pub async fn publish_agent_share(
+        &self,
+        event_id: Uuid,
+        recipient_profile_id: Uuid,
+        handoff: &AgentHandoff,
+    ) -> Result<(), SubscriptionError> {
+        self.emit(
+            "agent_share",
+            event_id,
+            None,
+            Some(recipient_profile_id),
+            Vec::new(),
+            serde_json::to_value(handoff).map_err(|_| SubscriptionError::Invalid)?,
         )
         .await
     }
@@ -186,15 +234,17 @@ impl PgSubscriptionStore {
     async fn emit(
         &self,
         kind: &str,
-        reel_id: Uuid,
+        subject_id: Uuid,
+        reel_id: Option<Uuid>,
+        recipient_profile_id: Option<Uuid>,
         hashtags: Vec<String>,
         payload: serde_json::Value,
     ) -> Result<(), SubscriptionError> {
         let mut tx = self.pool.begin().await?;
-        let event_id = sqlx::query_scalar::<_,i64>("INSERT INTO feed_events (kind,reel_id,hashtags,payload) VALUES ($1,$2,$3,$4) ON CONFLICT (kind,reel_id) DO NOTHING RETURNING id")
-            .bind(kind).bind(reel_id).bind(&hashtags).bind(payload).fetch_optional(&mut *tx).await?;
+        let event_id = sqlx::query_scalar::<_,i64>("INSERT INTO feed_events (kind,subject_id,reel_id,recipient_profile_id,hashtags,payload) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (kind,subject_id) DO NOTHING RETURNING id")
+            .bind(kind).bind(subject_id).bind(reel_id).bind(recipient_profile_id).bind(&hashtags).bind(payload).fetch_optional(&mut *tx).await?;
         if let Some(event_id) = event_id {
-            sqlx::query("INSERT INTO webhook_deliveries (id,subscription_id,event_id) SELECT gen_random_uuid(),s.id,$1 FROM feed_subscriptions s JOIN feed_events e ON e.id=$1 WHERE s.active AND s.delivery='webhook' AND ((s.kind='hyper_tardy' AND e.kind='hyper_tardy') OR (s.kind='hashtag' AND e.kind='post_published' AND s.hashtag=ANY(e.hashtags))) ON CONFLICT DO NOTHING")
+            sqlx::query("INSERT INTO webhook_deliveries (id,subscription_id,event_id) SELECT gen_random_uuid(),s.id,$1 FROM feed_subscriptions s JOIN feed_events e ON e.id=$1 WHERE s.active AND s.delivery='webhook' AND ((s.kind='hyper_tardy' AND e.kind='hyper_tardy') OR (s.kind='hashtag' AND e.kind='post_published' AND s.hashtag=ANY(e.hashtags)) OR (s.kind='agent_inbox' AND e.kind IN ('direct_message','agent_share') AND s.profile_id=e.recipient_profile_id)) ON CONFLICT DO NOTHING")
                 .bind(event_id).execute(&mut *tx).await?;
         }
         tx.commit().await?;
@@ -206,7 +256,7 @@ impl PgSubscriptionStore {
         worker: &str,
         limit: i64,
     ) -> Result<Vec<ClaimedWebhook>, SubscriptionError> {
-        let rows=sqlx::query("WITH claimed AS (SELECT id FROM webhook_deliveries WHERE status IN ('queued','retry') AND available_at<=now() AND (lease_until IS NULL OR lease_until<now()) ORDER BY available_at,id FOR UPDATE SKIP LOCKED LIMIT $1) UPDATE webhook_deliveries d SET status='sending',lease_owner=$2,lease_until=now()+interval '60 seconds',attempts=d.attempts+1 FROM claimed c,feed_subscriptions s,feed_events e WHERE d.id=c.id AND s.id=d.subscription_id AND e.id=d.event_id RETURNING d.id,d.subscription_id,d.event_id,s.webhook_url,e.kind,e.reel_id,e.hashtags,e.payload,d.attempts")
+        let rows=sqlx::query("WITH claimed AS (SELECT id FROM webhook_deliveries WHERE status IN ('queued','retry') AND available_at<=now() AND (lease_until IS NULL OR lease_until<now()) ORDER BY available_at,id FOR UPDATE SKIP LOCKED LIMIT $1) UPDATE webhook_deliveries d SET status='sending',lease_owner=$2,lease_until=now()+interval '60 seconds',attempts=d.attempts+1 FROM claimed c,feed_subscriptions s,feed_events e WHERE d.id=c.id AND s.id=d.subscription_id AND e.id=d.event_id RETURNING d.id,d.subscription_id,d.event_id,s.webhook_url,e.kind,e.subject_id,e.reel_id,e.recipient_profile_id,e.hashtags,e.payload,d.attempts")
             .bind(limit).bind(worker).fetch_all(&self.pool).await?;
         rows.into_iter()
             .map(|row| {
@@ -219,7 +269,9 @@ impl PgSubscriptionStore {
                     event: FeedEvent {
                         id: row.try_get("event_id")?,
                         kind: row.try_get("kind")?,
+                        subject_id: row.try_get("subject_id")?,
                         reel_id: row.try_get("reel_id")?,
+                        recipient_profile_id: row.try_get("recipient_profile_id")?,
                         hashtags: row.try_get("hashtags")?,
                         payload: row.try_get("payload")?,
                     },
@@ -297,6 +349,7 @@ fn kind_name(value: SubscriptionKind) -> &'static str {
     match value {
         SubscriptionKind::Hashtag => "hashtag",
         SubscriptionKind::HyperTardy => "hyper_tardy",
+        SubscriptionKind::AgentInbox => "agent_inbox",
     }
 }
 fn delivery_name(value: DeliveryMode) -> &'static str {
@@ -325,7 +378,9 @@ fn event_from_row(row: &sqlx::postgres::PgRow) -> Result<FeedEvent, sqlx::Error>
     Ok(FeedEvent {
         id: row.try_get("id")?,
         kind: row.try_get("kind")?,
+        subject_id: row.try_get("subject_id")?,
         reel_id: row.try_get("reel_id")?,
+        recipient_profile_id: row.try_get("recipient_profile_id")?,
         hashtags: row.try_get("hashtags")?,
         payload: row.try_get("payload")?,
     })

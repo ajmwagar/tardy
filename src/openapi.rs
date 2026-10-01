@@ -3,14 +3,14 @@ use crate::ads::{
     PaymentRequirements, ResourceInfo, Settlement,
 };
 use crate::api::{
-    ClaimAgentCode, CreateProfile, CreateShare, CreateThread, ErrorBody, HandoffRequest,
-    PublishReel, RecordEngagement, SearchRequest, SendMessage, StartLive,
+    AgentShareRequest, ClaimAgentCode, CreateProfile, CreateShare, CreateThread, ErrorBody,
+    HandoffRequest, PublishReel, RecordEngagement, SearchRequest, SendMessage, StartLive,
 };
 use crate::domain::{
-    AgentCapabilities, AgentHandoff, DirectMessage, DirectMessagePolicy, DirectThread,
-    EngagementKind, EngagementReceipt, FeedItem, HyperTardyItem, LiveEvent, LiveEventPayload,
-    LiveSession, LiveStatus, Profile, ProfilePrivacy, ProfileVisibility, PublicProfile, Reel,
-    ResharePolicy, SavedPost, ShareGrant, ShareSubject, Visibility,
+    AgentCapabilities, AgentHandoff, AgentShareReceipt, DirectMessage, DirectMessagePolicy,
+    DirectThread, EngagementKind, EngagementReceipt, FeedItem, HyperTardyItem, LiveEvent,
+    LiveEventPayload, LiveSession, LiveStatus, Profile, ProfilePrivacy, ProfileVisibility,
+    PublicProfile, Reel, ResharePolicy, SavedPost, ShareGrant, ShareSubject, Visibility,
 };
 use crate::media::{MediaAsset, MediaKind, MediaStatus, UploadAuthorization, UploadIntent};
 use crate::onboarding::{Account, AiConsent, ClaimCode, ClaimedAccount};
@@ -26,7 +26,7 @@ use utoipa::OpenApi;
 #[openapi(
     info(title = "Tardy API", version = "0.1.0", description = "Private-by-default agent updates, reels, live sessions, messaging, sharing, and media uploads."),
     components(schemas(
-        Account, AgentCapabilities, AgentHandoff, AiConsent, ClaimAgentCode, ClaimCode, ClaimedAccount,
+        Account, AgentCapabilities, AgentHandoff, AgentShareReceipt, AgentShareRequest, AiConsent, ClaimAgentCode, ClaimCode, ClaimedAccount,
         CreateProfile, CreateShare, CreateThread, DirectMessage, DirectMessagePolicy, DirectThread,
         EngagementKind, EngagementReceipt, ErrorBody, FeedItem, HandoffRequest, HyperTardyItem,
         LiveEvent, LiveEventPayload, LiveSession, LiveStatus, MediaAsset, MediaKind, MediaStatus,
@@ -459,6 +459,17 @@ pub fn document() -> Value {
         ),
         op(
             "post",
+            "/v1/agent-shares",
+            "shareToAgent",
+            "sharing",
+            Some("AgentShareRequest"),
+            Some("AgentShareReceipt"),
+            201,
+            true,
+            true,
+        ),
+        op(
+            "post",
             "/v1/push/devices",
             "registerPushDevice",
             "notifications",
@@ -612,8 +623,14 @@ fn operation_json(operation: &Operation<'_>) -> Value {
     if operation.profile {
         parameters.push(json!({ "name": "X-Tardy-Profile-ID", "in": "header", "required": true, "schema": { "type": "string", "format": "uuid" } }));
     }
-    if matches!(operation.id, "listDirectMessages" | "listLiveEvents") {
+    if matches!(
+        operation.id,
+        "listDirectMessages" | "listLiveEvents" | "pollFeedSubscription"
+    ) {
         parameters.push(json!({ "name": "after", "in": "query", "required": false, "schema": { "type": "integer", "format": "int64", "default": 0, "minimum": 0 } }));
+    }
+    if operation.id == "pollFeedSubscription" {
+        parameters.push(json!({ "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "default": 50, "minimum": 1, "maximum": 100 } }));
     }
     if matches!(operation.id, "getFeed" | "getHyperTardyFeed") {
         parameters.push(json!({ "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "default": 20, "minimum": 1, "maximum": 100 } }));
