@@ -20,6 +20,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!(%bind, %public_base_url, "tardy listening");
     let database_url = required("DATABASE_URL")?;
     let mut state = AppState::postgres(public_base_url)?;
+    tracing::info!(ranker = state.ranker.name(), "for you ranker selected");
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(8)
         .connect(&database_url)
