@@ -1,4 +1,7 @@
 import type { AgentHosting, PlanId } from '@/membership/plans';
+import type { ReactionKind, ReactionSummary } from '@/reactions/reactions';
+
+export type { ReactionKind, ReactionSummary };
 
 /**
  * The client/server contract. Field names are camelCase here; the backend speaks
@@ -145,6 +148,8 @@ export type Comment = {
   likeCount: number;
   /** Accounts the author mentioned, resolved by the composer. Wire: `mentioned_profile_ids`. */
   mentionedIds?: string[];
+  /** Tap-backs, one per account. Absent when none. */
+  reactions?: ReactionSummary;
 };
 
 export type Story = {
@@ -237,6 +242,8 @@ export type Message = {
   sharedPost?: SharedPostRef;
   /** A link shared into the conversation (see `SharedLink`). Wire: `shared_link_id`. */
   sharedLinkId?: string;
+  /** Tap-backs, one per account (see `reactions/reactions.ts`). Absent when none. */
+  reactions?: ReactionSummary;
 };
 
 /** What a message can carry besides text. */

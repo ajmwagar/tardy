@@ -9,7 +9,9 @@ import { Avatar, haptic, Icon, IconButton, NameLine, PressableScale, StatusPill 
 import { TardyApiError } from '@/data/api';
 import type { Account, Message, Post, ThreadRef } from '@/data/types';
 import { LinkPreview } from '@/components/link-preview';
+import { ReactionChips, ReactionPicker, type ReactionAnchor } from '@/components/reactions';
 import { ThreadAvatar } from '@/components/thread-avatar';
+import { applyReaction, nextReaction, reactionOf, type ReactionKind } from '@/reactions/reactions';
 import { isWork, promotionNotice } from '@/share/sections';
 import { useSharedLink } from '@/share/use-shared-link';
 import { isGroup, othersIn, threadLabel } from '@/share/thread-label';
@@ -93,16 +95,31 @@ const Bubble = memo(function Bubble({
   mine,
   showAvatar,
   showName,
+  me,
   onRetry,
+  onReact,
+  onToggleReaction,
 }: {
   row: Row;
   mine: boolean;
   showAvatar: boolean;
   /** Groups: the sender's handle above the first bubble of their run. */
   showName: boolean;
+  me: string | undefined;
   onRetry: (row: Row) => void;
+  /** Long-press: open the tap-back bar above this bubble. */
+  onReact: (row: Row, anchor: ReactionAnchor) => void;
+  onToggleReaction: (row: Row, kind: ReactionKind) => void;
 }) {
   const sender = useAccount(row.senderId);
+  const bubbleRef = useRef<View>(null);
+  // Only delivered messages can be reacted to (a pending or failed one has no server id yet).
+  const reactable = !row.pending && !row.failed && !row.id.startsWith('local-');
+  const longPress = () => {
+    if (!reactable) return;
+    haptic.selection();
+    bubbleRef.current?.measureInWindow((_x, y) => onReact(row, { y }));
+  };
   return (
     <View style={[styles.bubbleRow, mine ? styles.bubbleRowMine : styles.bubbleRowTheirs]}>
       {!mine && <View style={styles.avatarSlot}>{showAvatar && <Avatar account={sender} size={26} />}</View>}
@@ -113,12 +130,22 @@ const Bubble = memo(function Bubble({
           <LinkCard id={row.sharedLinkId} url={row.text} />
         ) : row.text ? (
           <Pressable
-            disabled={!row.failed}
-            onPress={() => onRetry(row)}
+            ref={bubbleRef}
+            onPress={row.failed ? () => onRetry(row) : undefined}
+            onLongPress={longPress}
+            delayLongPress={280}
+            accessibilityActions={reactable ? [{ name: 'longpress', label: 'React' }] : undefined}
+            onAccessibilityAction={(e) => e.nativeEvent.actionName === 'longpress' && longPress()}
             style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs, row.pending && styles.bubblePending]}>
             <Text style={mine ? styles.textMine : styles.textTheirs}>{row.text}</Text>
           </Pressable>
         ) : null}
+        <ReactionChips
+          reactions={row.reactions}
+          me={me}
+          onToggle={(kind) => onToggleReaction(row, kind)}
+          align={mine ? 'flex-end' : 'flex-start'}
+        />
         {row.failed && <Text style={styles.failed}>Not delivered · tap to retry</Text>}
       </View>
     </View>
@@ -257,6 +284,32 @@ export default function ThreadScreen() {
     );
   }, [thread]);
   const retry = useCallback((r: Row) => void send(r.text, r), [send]);
+  // Tap-backs: one per person per message. Applied at once, rolled back if the server refuses.
+  const [picker, setPicker] = useState<{ row: Row; anchor: ReactionAnchor } | null>(null);
+  const openPicker = useCallback((row: Row, anchor: ReactionAnchor) => setPicker({ row, anchor }), []);
+  const react = useCallback(
+    async (row: Row, kind: ReactionKind | null) => {
+      if (!meId) return;
+      const patch = (reactions: Row['reactions']) =>
+        setRows((prev) => (prev ?? []).map((r) => (r.id === row.id ? { ...r, reactions: reactions?.length ? reactions : undefined } : r)));
+      patch(applyReaction(row.reactions, meId, kind));
+      try {
+        patch((await api.reactToMessage(threadId, row.id, kind)).reactions);
+      } catch (e) {
+        patch(row.reactions);
+        reportError(`Couldn't react: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+    [meId, threadId],
+  );
+  const toggleReaction = useCallback(
+    (row: Row, kind: ReactionKind) => {
+      haptic.impact();
+      void react(row, nextReaction(meId ? reactionOf(row.reactions, meId) : null, kind));
+    },
+    [react, meId],
+  );
+
   const renderItem = useCallback(
     ({ item, index }: { item: Row; index: number }) => {
       const older = data[index + 1];
@@ -277,12 +330,15 @@ export default function ThreadScreen() {
             mine={item.senderId === meId}
             showAvatar={!newer || newer.senderId !== item.senderId}
             showName={group && (!older || !!gap || older.senderId !== item.senderId)}
+            me={meId}
             onRetry={retry}
+            onReact={openPicker}
+            onToggleReaction={toggleReaction}
           />
         </View>
       );
     },
-    [data, meId, retry, group],
+    [data, meId, retry, group, openPicker, toggleReaction],
   );
 
   return (
@@ -325,6 +381,15 @@ export default function ThreadScreen() {
         <ThreadSkeleton />
       ) : (
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={insets.top + 44}>
+          <ReactionPicker
+            anchor={picker?.anchor ?? null}
+            current={picker && meId ? reactionOf(picker.row.reactions, meId) : null}
+            onClose={() => setPicker(null)}
+            onPick={(kind) => {
+              if (picker) toggleReaction(picker.row, kind);
+              setPicker(null);
+            }}
+          />
           <FlatList
             data={data}
             inverted
