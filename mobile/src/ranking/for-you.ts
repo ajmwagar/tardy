@@ -65,6 +65,8 @@ export function authorAffinity(history: readonly EngagementAction[], posts: Read
       case 'vqv': a.positive += 1; break;
       case 'dwell': a.dwellMs += action.ms; break;
       case 'not_interested': a.negative += 1; break;
+      case 'alarm': a.positive += 2; break;
+      case 'unalarm': a.positive -= 2; break;
     }
   }
   return byAuthor;
@@ -136,4 +138,23 @@ export function rankForYou(posts: readonly Post[], viewer: Viewer, options: Rank
   return candidates
     .map((post, i) => ({ post, score: scores[i], inNetwork: inputs[i].inNetwork === true }))
     .sort((a, b) => b.score - a.score);
+}
+
+/**
+ * Engagement velocity: weighted interactions per hour since posting. Shares and
+ * alarms count most because they signal "other people need to see this".
+ */
+export function velocity(post: Post, now = Date.now()): number {
+  const hours = Math.max(0.5, (now - Date.parse(post.createdAt)) / 3_600_000);
+  return (post.likeCount + 3 * post.commentCount + 5 * post.shareCount + 5 * post.alarmCount) / hours;
+}
+
+/**
+ * Posts breaking out right now: velocity in the top decile of the candidate set and
+ * at least `minVelocity`, fastest first. Relative, so the bar moves with the network.
+ */
+export function trendingPosts(posts: readonly Post[], now = Date.now(), minVelocity = 50): Post[] {
+  const scored = posts.map((post) => ({ post, v: velocity(post, now) })).sort((a, b) => b.v - a.v);
+  const cutoff = scored[Math.floor(scored.length * 0.1)]?.v ?? Infinity;
+  return scored.filter(({ v }) => v >= cutoff && v >= minVelocity).map(({ post }) => post);
 }

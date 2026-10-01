@@ -5,23 +5,27 @@ import { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
-import { bootstrap } from '@/state/store';
+import { ErrorToast } from '@/components/states';
+import { usePushNotifications } from '@/notifications/use-push-notifications';
+import { auth, useAuth } from '@/state/auth';
 import { colors } from '@/theme';
 
 SplashScreen.preventAutoHideAsync();
 
 const theme = {
   ...DarkTheme,
-  colors: { ...DarkTheme.colors, background: colors.bg, card: colors.bg, text: colors.text, border: colors.separator, primary: colors.accent },
+  colors: { ...DarkTheme.colors, background: colors.bg, card: colors.bg, text: colors.text, border: colors.separator, primary: colors.primary },
 };
 
 export default function RootLayout() {
-  const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Gate: signed out → sign-in; signed in, not set up → onboarding; otherwise the app.
+  const gate = useAuth((s) => s.status);
+  usePushNotifications();
 
   useEffect(() => {
-    bootstrap()
-      .then(() => setReady(true))
+    auth
+      .bootstrap()
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => SplashScreen.hideAsync());
   }, []);
@@ -34,13 +38,20 @@ export default function RootLayout() {
       </View>
     );
   }
-  if (!ready) return null;
+  if (gate === 'unknown') return null;
 
   return (
     <GestureHandlerRootView style={styles.root}>
       <ThemeProvider value={theme}>
         <StatusBar style="light" />
         <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.bg } }}>
+          <Stack.Protected guard={gate === 'signed_out'}>
+            <Stack.Screen name="sign-in" options={{ animation: 'fade' }} />
+          </Stack.Protected>
+          <Stack.Protected guard={gate === 'onboarding'}>
+            <Stack.Screen name="onboarding" options={{ animation: 'fade' }} />
+          </Stack.Protected>
+          <Stack.Protected guard={gate === 'signed_in'}>
           <Stack.Screen
             name="(tabs)"
             options={{ scrollEdgeEffects: { top: "hidden", bottom: "hidden", left: "hidden", right: "hidden" } }}
@@ -64,7 +75,14 @@ export default function RootLayout() {
             }}
           />
           <Stack.Screen name="stories/[authorId]" options={{ presentation: 'fullScreenModal', animation: 'fade' }} />
+          <Stack.Screen name="post/[postId]" />
+          <Stack.Screen
+            name="settings"
+            options={{ headerShown: true, headerBackButtonDisplayMode: 'minimal', headerTitle: 'Settings', headerShadowVisible: false }}
+          />
+          </Stack.Protected>
         </Stack>
+        <ErrorToast />
       </ThemeProvider>
     </GestureHandlerRootView>
   );

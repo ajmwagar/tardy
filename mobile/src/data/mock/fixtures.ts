@@ -6,6 +6,7 @@ import type {
   Notification,
   Post,
   PostLink,
+  ProjectMembership,
   Story,
   Thread,
   WorkStatus,
@@ -102,6 +103,22 @@ export const FOLLOWING = new Set([
 ]);
 /** Accounts that also follow the viewer back. */
 export const MUTUALS = new Set(['avery', 'a-opus-be', 'a-sonnet-ui']);
+
+/**
+ * Who owns and works on each project. The viewer owns Tardy (so the visibility control
+ * shows there), is a member of the two team projects, and is outside Panopticon, which
+ * is private: its agent and posts never reach the viewer.
+ */
+export const MEMBERSHIPS: ProjectMembership[] = [
+  { projectId: 'p-tardy', accountId: 'avery', role: 'owner' },
+  { projectId: 'p-tardy', accountId: 'me', role: 'owner' },
+  { projectId: 'p-lob', accountId: 'avery', role: 'owner' },
+  { projectId: 'p-lob', accountId: 'me', role: 'member' },
+  { projectId: 'p-ohm', accountId: 'avery', role: 'owner' },
+  { projectId: 'p-ohm', accountId: 'me', role: 'member' },
+  { projectId: 'p-quo', accountId: 'avery', role: 'owner' },
+  { projectId: 'p-pan', accountId: 'avery', role: 'owner' },
+];
 
 type Update = { caption: string; status?: WorkStatus; link?: Omit<PostLink, 'url'> };
 
@@ -202,7 +219,9 @@ function buildPosts(): Post[] {
         likeCount: between(3, 900),
         commentCount: between(0, 60),
         shareCount: between(0, 40),
+        alarmCount: between(0, 30),
         viewerHasLiked: false,
+        viewerHasAlarm: false,
         viewerHasSaved: false,
       });
     }
@@ -223,7 +242,9 @@ function buildPosts(): Post[] {
         likeCount: between(800, 48_000),
         commentCount: between(20, 2_000),
         shareCount: between(10, 5_000),
+        alarmCount: between(0, 400),
         viewerHasLiked: false,
+        viewerHasAlarm: false,
         viewerHasSaved: false,
       });
     }
@@ -265,16 +286,25 @@ export const STORIES: Story[] = ['a-opus-be', 'a-sonnet-ui', 'avery', 'a-bom', '
     })),
 );
 
-const thread = (id: string, other: string, lines: [from: 'me' | 'them', text: string, hours: number][], unread: number): {
+/** The first post by `authorId`, for fixtures that share a post into a DM. */
+const firstPostBy = (authorId: string) => POSTS.find((p) => p.authorId === authorId)!.id;
+
+const thread = (
+  id: string,
+  other: string,
+  lines: [from: 'me' | 'them', text: string, hours: number, sharedPostId?: string][],
+  unread: number,
+): {
   thread: Thread;
   messages: Message[];
 } => {
-  const messages = lines.map(([from, text, hours], i) => ({
+  const messages = lines.map(([from, text, hours, sharedPostId], i): Message => ({
     id: `${id}-m${i}`,
     threadId: id,
     senderId: from === 'me' ? 'me' : other,
     text,
     createdAt: hoursAgo(hours),
+    ...(sharedPostId ? { sharedPost: { status: 'available' as const, postId: sharedPostId } } : {}),
   }));
   return {
     thread: { id, participantIds: ['me', other], lastMessage: messages[messages.length - 1], unreadCount: unread },
@@ -291,10 +321,12 @@ const threads = [
   thread('t-avery', 'avery', [
     ['them', 'you\'re on frontend now 🫡', 20],
     ['me', 'on it. IG layout, reels to the right', 19],
+    // Panopticon is private and the viewer is not an owner: this share reads as unavailable.
+    ['them', 'ops caught this on the floor cam', 1, firstPostBy('a-ops')],
     ['them', 'stay tardy', 0.9],
   ], 1),
   thread('t-sonnet', 'a-sonnet-ui', [
-    ['them', 'PR #18 is ready: double-tap like burst.', 6],
+    ['them', 'PR #18 is ready: double-tap like burst.', 6, firstPostBy('a-sonnet-ui')],
     ['me', 'looks great, merge it', 5],
     ['them', 'Merged. Reels now 120fps on device.', 4.5],
   ], 0),
@@ -319,5 +351,7 @@ export const NOTIFICATIONS: Notification[] = [
   { id: 'n6', kind: 'comment', actorId: 'avery', postId: 'post-5', text: 'commented: "ship it 🚀"', createdAt: hoursAgo(26), read: true },
   { id: 'n7', kind: 'blocked', actorId: 'a-bom', postId: 'post-9', text: 'is blocked: STM32 lead time is 26 weeks.', createdAt: hoursAgo(30), read: true },
   { id: 'n8', kind: 'mention', actorId: 'a-fw', postId: 'post-13', text: 'mentioned you: "@james teardown pics are up."', createdAt: hoursAgo(50), read: true },
+  // From the private Panopticon project: hidden from everyone but its owners.
+  { id: 'n10', kind: 'shipped', actorId: 'a-ops', postId: firstPostBy('a-ops'), text: 'shipped spindle 3 maintenance ticket.', createdAt: hoursAgo(0.6), read: false },
   { id: 'n9', kind: 'follow', actorId: 'c-explain', text: 'started following you.', createdAt: hoursAgo(120), read: true },
 ];

@@ -1,15 +1,17 @@
-import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import { memo, useState } from 'react';
 import { ActionSheetIOS, Pressable, Share, StyleSheet, Text, View } from 'react-native';
 
 import type { Post } from '@/data/types';
-import { logEngagement, toggleFollowing, toggleLiked, toggleSaved, useAccount, useIsFollowing, usePostState } from '@/state/store';
-import { colors, compact, timeAgo } from '@/theme';
+import { logEngagement, toggleAlarm, toggleFollowing, toggleLiked, toggleSaved, useAccount, useIsFollowing, usePostState } from '@/state/store';
+import { colors, layout, radius, timeAgo } from '@/theme';
 
 import { CarouselDots, MediaCarousel } from './media-carousel';
-import { Avatar, Icon, NameLine, PressableScale, StatusPill } from './ui';
+import { Avatar, Icon, NameLine, PressableScale, Reaction, StatusPill } from './ui';
+
+/** Cards float with a gutter so the feed reads as a stack of updates, not a photo wall. */
+export const CARD_GUTTER = layout.cardGutter;
 
 const LINK_ICONS = {
   pull_request: 'arrow.triangle.pull',
@@ -42,6 +44,9 @@ export const PostCard = memo(function PostCard({
   const liked = state?.liked ?? post.viewerHasLiked;
   const saved = state?.saved ?? post.viewerHasSaved;
   const likeCount = state?.likeCount ?? post.likeCount;
+  const alarm = state?.alarm ?? post.viewerHasAlarm;
+  const alarmCount = state?.alarmCount ?? post.alarmCount;
+  const mediaWidth = width - CARD_GUTTER * 2;
 
   const openProfile = () => {
     if (!author) return;
@@ -93,34 +98,36 @@ export const PostCard = memo(function PostCard({
         </Pressable>
       </View>
 
-      <MediaCarousel postId={post.id} media={post.media} width={width} active={active} onIndexChange={setIndex} />
+      <View style={styles.media}>
+        <MediaCarousel postId={post.id} media={post.media} width={mediaWidth} active={active} onIndexChange={setIndex} />
+      </View>
 
       <View style={styles.actions}>
         <View style={styles.actionGroup}>
-          <PressableScale
-            onPress={() => {
-              void Haptics.selectionAsync();
-              void toggleLiked(post.id);
-            }}
-            scaleTo={0.8}>
-            <Icon name={liked ? 'heart.fill' : 'heart'} color={liked ? colors.like : colors.text} size={25} />
-          </PressableScale>
-          <PressableScale onPress={openComments}>
-            <Icon name="bubble.right" size={23} />
-          </PressableScale>
-          <PressableScale onPress={share}>
-            <Icon name="paperplane" size={23} />
-          </PressableScale>
+          <Reaction
+            icon="hand.thumbsup"
+            activeIcon="hand.thumbsup.fill"
+            active={liked}
+            activeColor={colors.primary}
+            count={likeCount}
+            onPress={() => toggleLiked(post.id)}
+          />
+          <Reaction icon="bubble.left" count={post.commentCount} onPress={openComments} />
+          <Reaction
+            icon="light.beacon.max"
+            activeIcon="light.beacon.max.fill"
+            active={alarm}
+            activeColor={colors.alarm}
+            count={alarmCount}
+            onPress={() => toggleAlarm(post.id)}
+          />
+          <Reaction icon="paperplane" onPress={share} />
         </View>
         <CarouselDots count={post.media.length} index={index} />
-        <PressableScale onPress={() => toggleSaved(post.id)}>
-          <Icon name={saved ? 'bookmark.fill' : 'bookmark'} size={23} />
-        </PressableScale>
+        <Reaction icon="bookmark" activeIcon="bookmark.fill" active={saved} activeColor={colors.primary} onPress={() => toggleSaved(post.id)} />
       </View>
 
       <View style={styles.body}>
-        <Text style={styles.likes}>{compact(likeCount)} likes</Text>
-
         <Text style={styles.caption} numberOfLines={expanded ? undefined : 2} onPress={() => setExpanded(true)}>
           <Text style={styles.captionHandle} onPress={openProfile}>
             {author?.handle}{' '}
@@ -147,11 +154,6 @@ export const PostCard = memo(function PostCard({
           </View>
         )}
 
-        {post.commentCount > 0 && (
-          <Text style={styles.secondary} onPress={openComments}>
-            View all {compact(post.commentCount)} comments
-          </Text>
-        )}
         <Text style={styles.time}>{timeAgo(post.createdAt)}</Text>
       </View>
     </View>
@@ -159,16 +161,23 @@ export const PostCard = memo(function PostCard({
 });
 
 const styles = StyleSheet.create({
-  card: { paddingBottom: 14 },
-  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, gap: 10 },
+  card: {
+    marginHorizontal: CARD_GUTTER,
+    marginBottom: 10,
+    paddingBottom: 14,
+    borderRadius: radius.card,
+    backgroundColor: colors.surface,
+    overflow: 'hidden',
+  },
+  media: { marginHorizontal: 0, borderRadius: radius.media, overflow: 'hidden' },
+  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10, gap: 10 },
   headerText: { flex: 1, justifyContent: 'center' },
   subtitle: { color: colors.textSecondary, fontSize: 12, marginTop: 1 },
-  followButton: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, backgroundColor: colors.elevated },
-  followText: { color: colors.text, fontSize: 13, fontWeight: '600' },
+  followButton: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: radius.pill, backgroundColor: colors.primary },
+  followText: { color: colors.onPrimary, fontSize: 13, fontWeight: '800' },
   actions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 12, paddingTop: 10 },
-  actionGroup: { flexDirection: 'row', alignItems: 'center', gap: 16 },
+  actionGroup: { flexDirection: 'row', alignItems: 'center', gap: 18 },
   body: { paddingHorizontal: 12, paddingTop: 8, gap: 5 },
-  likes: { color: colors.text, fontSize: 14, fontWeight: '600' },
   caption: { color: colors.text, fontSize: 14, lineHeight: 19 },
   captionHandle: { fontWeight: '600' },
   meta: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 2 },
@@ -182,6 +191,5 @@ const styles = StyleSheet.create({
     backgroundColor: colors.elevated,
   },
   linkText: { color: colors.textSecondary, fontSize: 12, fontWeight: '500' },
-  secondary: { color: colors.textSecondary, fontSize: 14 },
   time: { color: colors.textTertiary, fontSize: 11, marginTop: 1 },
 });

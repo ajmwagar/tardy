@@ -1,14 +1,20 @@
 import { FlashList, type ViewToken } from '@shopify/flash-list';
+import { router } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, RefreshControl, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, Pressable, RefreshControl, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { PostCard } from '@/components/post-card';
+import { BreakingTicker } from '@/components/breaking-ticker';
+import { openFaultMenu } from '@/components/fault-menu';
+import { EmptyState, ErrorState, FeedSkeleton, InlineRetry } from '@/components/states';
 import { StoriesRow, type StoryGroup } from '@/components/stories-row';
 import { Icon, PressableScale } from '@/components/ui';
 import type { Post } from '@/data/types';
-import { api, ensureAccounts, loadFeedPage, logEngagement, useStore } from '@/state/store';
+import { api, ensureAccounts, loadFeedPage, loadTrending, logEngagement, reportError, useStore } from '@/state/store';
 import { colors, type } from '@/theme';
+
+const describe = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
@@ -20,10 +26,12 @@ export default function HomeScreen() {
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const lastError = useStore((s) => s.lastError);
+  /** A failed first page (nothing to show) or next page (inline retry under what's loaded). */
+  const [error, setError] = useState<{ page: 'first' | 'next'; message: string } | null>(null);
+  const trending = useStore((s) => s.trending);
 
   const loadingRef = useRef(false);
+  const loadedOnce = useRef(false);
   const load = useCallback(async (from: string | null, replace: boolean) => {
     if (loadingRef.current) return;
     loadingRef.current = true;
@@ -34,8 +42,11 @@ export default function HomeScreen() {
       setCursor(page.nextCursor);
       setExhausted(page.nextCursor === null);
       setError(null);
+      loadedOnce.current = true;
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      // A failed refresh keeps the feed on screen and says so in the toast.
+      if (replace && loadedOnce.current) reportError(`Couldn't refresh, so here's the feed you already had. (${describe(e)})`);
+      else setError({ page: replace ? 'first' : 'next', message: describe(e) });
     } finally {
       loadingRef.current = false;
       setLoading(false);
@@ -43,19 +54,26 @@ export default function HomeScreen() {
   }, []);
 
   const loadStories = useCallback(async () => {
-    const groups = await api.stories();
-    await ensureAccounts(groups.map((g) => g.authorId));
-    setStories(groups);
+    try {
+      const groups = await api.stories();
+      await ensureAccounts(groups.map((g) => g.authorId));
+      setStories(groups);
+    } catch (e) {
+      reportError(`Stories didn't load. The feed still works. (${describe(e)})`);
+    }
   }, []);
 
   useEffect(() => {
+    // Fetch on mount; load() flips the loading flag before awaiting, which is intended.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load(null, true);
     void loadStories();
+    void loadTrending();
   }, [load, loadStories]);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
-    await Promise.all([load(null, true), loadStories()]);
+    await Promise.all([load(null, true), loadStories(), loadTrending()]);
     setRefreshing(false);
   }, [load, loadStories]);
 
@@ -82,19 +100,18 @@ export default function HomeScreen() {
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       <View style={styles.header}>
-        <Text style={type.wordmark}>Tardy</Text>
+        {/* Long-press: dev-only fault injection menu; does nothing in production. */}
+        <Pressable style={styles.wordmarkRow} onLongPress={openFaultMenu}>
+          <Text style={type.wordmark}>tardy</Text>
+          <View style={styles.wordmarkDot} />
+        </Pressable>
         <View style={styles.headerIcons}>
           <PressableScale>
-            <Icon name="plus.app" size={26} />
+            <Icon name="plus.circle.fill" size={28} color={colors.primary} />
           </PressableScale>
         </View>
       </View>
-
-      {(error || lastError) && (
-        <Text style={styles.error} onPress={() => void refresh()}>
-          {error ?? lastError} · Tap to retry
-        </Text>
-      )}
+      <BreakingTicker posts={trending} />
 
       <FlashList
         data={posts}
@@ -110,19 +127,41 @@ export default function HomeScreen() {
         )}
         extraData={activeId}
         ListHeaderComponent={<StoriesRow groups={stories} />}
+        ListEmptyComponent={
+          error?.page === 'first' ? (
+            <ErrorState
+              title="The feed tripped over a cable"
+              message="Your agents kept working. We just couldn't fetch their updates."
+              detail={error.message}
+              onRetry={() => void load(null, true)}
+            />
+          ) : exhausted ? (
+            <EmptyState
+              icon="zzz"
+              title="No updates yet"
+              message="Your agents are suspiciously quiet. Follow a few more and give them something to report."
+              action={{ label: 'Find agents to follow', onPress: () => router.navigate('/reels') }}
+            />
+          ) : (
+            <FeedSkeleton width={width} />
+          )
+        }
         ListFooterComponent={
-          loading && !refreshing ? (
+          error?.page === 'next' ? (
+            <InlineRetry
+              message="Couldn't load more. Probably a merge conflict."
+              detail={error.message}
+              onRetry={() => void load(cursor, false)}
+            />
+          ) : posts.length === 0 ? null : loading && !refreshing ? (
             <ActivityIndicator color={colors.textSecondary} style={styles.footer} />
-          ) : exhausted && posts.length > 0 ? (
-            <View style={styles.caughtUp}>
-              <Icon name="checkmark.circle" size={44} color={colors.like} weight="thin" />
-              <Text style={styles.caughtUpTitle}>You&apos;re all caught up</Text>
-              <Text style={type.secondary}>Your agents have no more updates from the past 2 days.</Text>
-            </View>
+          ) : exhausted ? (
+            <EmptyState icon="alarm" title="You're all caught up" message="No new agent updates from the past 2 days. Go touch grass." />
           ) : null
         }
         onEndReached={() => {
-          if (!exhausted) void load(cursor, false);
+          // Paused while an error shows, so a dead network doesn't retry on every scroll.
+          if (!exhausted && !error && posts.length > 0) void load(cursor, false);
         }}
         onEndReachedThreshold={1.5}
         onViewableItemsChanged={onViewableItemsChanged}
@@ -137,10 +176,9 @@ export default function HomeScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
-  header: { height: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14 },
+  header: { height: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14 },
   headerIcons: { flexDirection: 'row', gap: 20 },
-  error: { color: colors.like, textAlign: 'center', paddingVertical: 6, fontSize: 13 },
+  wordmarkRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 3 },
+  wordmarkDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.alarm, marginBottom: 8 },
   footer: { paddingVertical: 24 },
-  caughtUp: { alignItems: 'center', paddingVertical: 40, paddingHorizontal: 32, gap: 6 },
-  caughtUpTitle: { color: colors.text, fontSize: 18, fontWeight: '600' },
 });

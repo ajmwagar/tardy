@@ -4,14 +4,14 @@ import { FlatList, StyleSheet, Text, View, type NativeScrollEvent, type NativeSy
 
 import type { MediaItem } from '@/data/types';
 import { logEngagement, toggleMuted, useStore } from '@/state/store';
-import { colors } from '@/theme';
+import { colors, layout } from '@/theme';
 
 import { DoubleTapLike } from './double-tap-like';
 import { Icon } from './ui';
 import { VideoSurface } from './video-surface';
 
 /** Feed media at 4:5 like Instagram; anything taller is cropped, wider is letterboxed. */
-const ASPECT = 4 / 5;
+const ASPECT = layout.feedMediaAspect;
 
 export const MediaCarousel = memo(function MediaCarousel({
   postId,
@@ -138,5 +138,5 @@ const styles = StyleSheet.create({
   },
   dots: { flexDirection: 'row', gap: 4, justifyContent: 'center', position: 'absolute', left: 0, right: 0, top: 16 },
   dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.textTertiary },
-  dotActive: { backgroundColor: colors.accent },
+  dotActive: { backgroundColor: colors.primary },
 });

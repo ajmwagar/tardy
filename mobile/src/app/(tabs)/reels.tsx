@@ -1,5 +1,4 @@
 import { FlashList, type ViewToken } from '@shopify/flash-list';
-import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useIsFocused } from 'expo-router';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
@@ -7,20 +6,25 @@ import { Share, StyleSheet, Text, useWindowDimensions, View } from 'react-native
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { DoubleTapLike } from '@/components/double-tap-like';
-import { Avatar, Icon, NameLine, PressableScale, StatusPill } from '@/components/ui';
+import { BreakingTicker } from '@/components/breaking-ticker';
+import { EmptyState, ErrorState, ReelSkeleton } from '@/components/states';
+import { Avatar, Icon, NameLine, PressableScale, Reaction, StatusPill } from '@/components/ui';
 import { VideoSurface } from '@/components/video-surface';
 import type { Post } from '@/data/types';
-import { api, loadFeedPage, logEngagement, toggleFollowing, toggleLiked, toggleMuted, toggleSaved, useAccount, useIsFollowing, usePostState, useStore } from '@/state/store';
-import { colors, compact } from '@/theme';
+import { api, loadFeedPage, logEngagement, toggleAlarm, toggleFollowing, toggleLiked, toggleMuted, toggleSaved, useAccount, useIsFollowing, usePostState, useStore } from '@/state/store';
+import { colors } from '@/theme';
 
 type Item = { key: string; post: Post };
 
-const TAB_BAR_HEIGHT = 82;
+/**
+ * Height of the floating tab bar above the home indicator. Overlays sit just above it so
+ * the caption hugs the bottom and the video keeps as much of the screen as possible.
+ */
+const TAB_BAR_CLEARANCE = 56;
 
 const Reel = memo(function Reel({ post, active, height }: { post: Post; active: boolean; height: number }) {
   const insets = useSafeAreaInsets();
-  // The native video layer stops at the safe area; keep overlays above the tab bar.
-  const chrome = insets.bottom + TAB_BAR_HEIGHT;
+  const chrome = insets.bottom + TAB_BAR_CLEARANCE;
   const author = useAccount(post.authorId);
   const project = useAccount(post.projectId);
   const state = usePostState(post.id);
@@ -29,52 +33,70 @@ const Reel = memo(function Reel({ post, active, height }: { post: Post; active: 
   const [expanded, setExpanded] = useState(false);
   const media = post.media[0];
 
-  const liked = state?.liked ?? false;
   const openProfile = () => author && router.push({ pathname: '/profile/[handle]', params: { handle: author.handle } });
+  const share = async () => {
+    const r = await Share.share({ message: `${post.caption}\n\n— @${author?.handle} on Tardy` });
+    if (r.action === Share.sharedAction) logEngagement({ type: 'share', postId: post.id });
+  };
 
   return (
     <View style={{ height, backgroundColor: '#000' }}>
       <DoubleTapLike postId={post.id} onSingleTap={toggleMuted} heartSize={120}>
         <View style={{ height }}>
-          {media?.type === 'video' && <VideoSurface postId={post.id} media={media} active={active} />}
+          {media?.type === 'video' && <VideoSurface postId={post.id} media={media} active={active} fullBleed />}
         </View>
       </DoubleTapLike>
 
-      <LinearGradient pointerEvents="none" colors={['transparent', 'rgba(0,0,0,0.65)']} style={styles.scrim} />
+      <LinearGradient pointerEvents="none" colors={['transparent', 'rgba(0,0,0,0.55)']} style={[styles.scrim, { height: chrome + 150 }]} />
 
-      <View style={[styles.rail, { bottom: chrome + 20 }]}>
-        <RailButton
-          icon={liked ? 'heart.fill' : 'heart'}
-          color={liked ? colors.like : '#fff'}
-          label={compact(state?.likeCount ?? post.likeCount)}
-          onPress={() => {
-            void Haptics.selectionAsync();
-            void toggleLiked(post.id);
-          }}
+      <View style={[styles.rail, { bottom: chrome + 8 }]}>
+        <Reaction
+          vertical
+          size={30}
+          color="#fff"
+          icon="hand.thumbsup"
+          activeIcon="hand.thumbsup.fill"
+          active={state?.liked}
+          activeColor={colors.primary}
+          count={state?.likeCount ?? post.likeCount}
+          onPress={() => toggleLiked(post.id)}
         />
-        <RailButton
-          icon="bubble.right"
-          label={compact(post.commentCount)}
+        <Reaction
+          vertical
+          size={29}
+          color="#fff"
+          icon="bubble.left"
+          count={post.commentCount}
           onPress={() => router.push({ pathname: '/comments/[postId]', params: { postId: post.id } })}
         />
-        <RailButton
-          icon="paperplane"
-          label={compact(post.shareCount)}
-          onPress={async () => {
-            const r = await Share.share({ message: `${post.caption}\n\n— @${author?.handle} on Tardy` });
-            if (r.action === Share.sharedAction) logEngagement({ type: 'share', postId: post.id });
-          }}
+        <Reaction
+          vertical
+          size={29}
+          color="#fff"
+          icon="light.beacon.max"
+          activeIcon="light.beacon.max.fill"
+          active={state?.alarm}
+          activeColor={colors.alarm}
+          count={state?.alarmCount ?? post.alarmCount}
+          onPress={() => toggleAlarm(post.id)}
         />
-        <RailButton icon={state?.saved ? 'bookmark.fill' : 'bookmark'} onPress={() => toggleSaved(post.id)} />
-        <PressableScale onPress={openProfile} style={styles.railAvatar}>
-          <Avatar account={author} size={30} />
-        </PressableScale>
+        <Reaction vertical size={28} color="#fff" icon="paperplane" count={post.shareCount} onPress={share} />
+        <Reaction
+          vertical
+          size={27}
+          color="#fff"
+          icon="bookmark"
+          activeIcon="bookmark.fill"
+          active={state?.saved}
+          activeColor={colors.primary}
+          onPress={() => toggleSaved(post.id)}
+        />
       </View>
 
-      <View style={[styles.info, { bottom: chrome + 14 }]}>
+      <View style={[styles.info, { bottom: chrome + 6 }]}>
         <View style={styles.authorRow}>
           <PressableScale onPress={openProfile} scaleTo={0.96} style={styles.authorRow}>
-            <Avatar account={author} size={32} />
+            <Avatar account={author} size={28} />
             <NameLine account={author} style={styles.white} />
           </PressableScale>
           {!following && (
@@ -83,37 +105,28 @@ const Reel = memo(function Reel({ post, active, height }: { post: Post; active: 
             </PressableScale>
           )}
         </View>
-        <Text style={styles.caption} numberOfLines={expanded ? 6 : 2} onPress={() => setExpanded((e) => !e)}>
+        <Text style={styles.caption} numberOfLines={expanded ? 6 : 1} onPress={() => setExpanded((e) => !e)}>
           {post.caption}
         </Text>
         <View style={styles.metaRow}>
           {post.status && <StatusPill value={post.status} compact />}
           {project && project.id !== post.authorId && (
-            <View style={styles.projectChip}>
+            <View style={styles.chip}>
               <Icon name="folder.fill" size={10} color="#fff" />
-              <Text style={styles.projectText}>{project.name}</Text>
+              <Text style={styles.chipText}>{project.name}</Text>
             </View>
           )}
-          <View style={styles.projectChip}>
-            <Icon name={muted ? 'speaker.slash.fill' : 'music.note'} size={10} color="#fff" />
-            <Text style={styles.projectText} numberOfLines={1}>
-              {muted ? 'Tap to unmute' : `Original audio · ${author?.handle ?? ''}`}
-            </Text>
-          </View>
+          {muted && (
+            <View style={styles.chip}>
+              <Icon name="speaker.slash.fill" size={10} color="#fff" />
+              <Text style={styles.chipText}>Tap to unmute</Text>
+            </View>
+          )}
         </View>
       </View>
     </View>
   );
 });
-
-function RailButton({ icon, label, color = '#fff', onPress }: { icon: Parameters<typeof Icon>[0]['name']; label?: string; color?: string; onPress: () => void }) {
-  return (
-    <PressableScale onPress={onPress} style={styles.railButton} scaleTo={0.8}>
-      <Icon name={icon} size={29} color={color} />
-      {label ? <Text style={styles.railLabel}>{label}</Text> : null}
-    </PressableScale>
-  );
-}
 
 export default function ReelsScreen() {
   const window = useWindowDimensions();
@@ -122,9 +135,13 @@ export default function ReelsScreen() {
   const [height, setHeight] = useState(window.height);
   const insets = useSafeAreaInsets();
   const focused = useIsFocused();
+  const trending = useStore((s) => s.trending);
   const [items, setItems] = useState<Item[]>([]);
   const [activeKey, setActiveKey] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  /** A failed first page (full-screen retry) or next page (retry reel at the end). */
+  const [error, setError] = useState<{ page: 'first' | 'next'; message: string } | null>(null);
+  /** The feed loops, so this only happens when there is nothing to show at all. */
+  const [exhausted, setExhausted] = useState(false);
   const cursor = useRef<string | null>(null);
   const loading = useRef(false);
 
@@ -136,9 +153,10 @@ export default function ReelsScreen() {
       cursor.current = page.nextCursor;
       // The reels feed loops, so the same post can appear twice: key by position.
       setItems((prev) => [...prev, ...page.items.map((post, i) => ({ key: `${prev.length + i}:${post.id}`, post }))]);
+      setExhausted(page.nextCursor === null);
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError({ page: cursor.current === null ? 'first' : 'next', message: e instanceof Error ? e.message : String(e) });
     } finally {
       loading.current = false;
     }
@@ -147,6 +165,12 @@ export default function ReelsScreen() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const reload = useCallback(() => {
+    setExhausted(false);
+    void load();
+  }, [load]);
+  const chrome = insets.bottom + TAB_BAR_CLEARANCE;
 
   const dwell = useRef<{ id: string; at: number } | null>(null);
   const onViewableItemsChanged = useCallback(({ viewableItems }: { viewableItems: ViewToken<Item>[] }) => {
@@ -165,29 +189,59 @@ export default function ReelsScreen() {
 
   return (
     <View style={styles.screen} onLayout={(e) => setHeight(e.nativeEvent.layout.height)}>
-      <FlashList
-        data={items}
-        keyExtractor={(item) => item.key}
-        renderItem={({ item }) => <Reel post={item.post} height={height} active={focused && item.key === (activeKey ?? items[0]?.key)} />}
-        extraData={`${activeKey}-${focused}`}
-        pagingEnabled
-        decelerationRate="fast"
-        showsVerticalScrollIndicator={false}
-        onEndReached={load}
-        onEndReachedThreshold={3}
-        onViewableItemsChanged={onViewableItemsChanged}
-        viewabilityConfig={{ itemVisiblePercentThreshold: 80 }}
-        drawDistance={height}
-      />
-      <View pointerEvents="box-none" style={[styles.topBar, { top: insets.top + 4 }]}>
-        <Text style={styles.topTitle}>Reels</Text>
-        <Icon name="camera" size={24} color="#fff" />
-      </View>
-      {error && (
-        <Text style={[styles.error, { top: insets.top + 48 }]} onPress={load}>
-          {error} · Tap to retry
-        </Text>
+      {items.length === 0 ? (
+        error?.page === 'first' ? (
+          <ErrorState
+            style={[styles.fill, { paddingBottom: chrome }]}
+            title="Reels are buffering forever"
+            message="The projector jammed. Your agents' footage is fine, we just couldn't fetch it."
+            detail={error.message}
+            onRetry={reload}
+          />
+        ) : exhausted ? (
+          <EmptyState
+            style={[styles.fill, { paddingBottom: chrome }]}
+            icon="video.badge.ellipsis"
+            title="No reels yet"
+            message="Nobody screen-recorded their agent today. Bold of them."
+            action={{ label: 'Check again', onPress: reload }}
+          />
+        ) : (
+          <ReelSkeleton height={height} bottom={chrome} />
+        )
+      ) : (
+        <FlashList
+          data={items}
+          keyExtractor={(item) => item.key}
+          renderItem={({ item }) => <Reel post={item.post} height={height} active={focused && item.key === (activeKey ?? items[0]?.key)} />}
+          extraData={`${activeKey}-${focused}`}
+          pagingEnabled
+          decelerationRate="fast"
+          showsVerticalScrollIndicator={false}
+          onEndReached={() => {
+            // Paused while an error shows, so a dead network doesn't retry on every swipe.
+            if (!error && !exhausted) void load();
+          }}
+          ListFooterComponent={
+            error?.page === 'next' ? (
+              <ErrorState
+                style={[styles.fill, { height, paddingBottom: chrome }]}
+                title="End of the reel (for now)"
+                message="Couldn't load the next batch. Everything you've watched is still above."
+                detail={error.message}
+                onRetry={() => void load()}
+              />
+            ) : null
+          }
+          onEndReachedThreshold={3}
+          onViewableItemsChanged={onViewableItemsChanged}
+          viewabilityConfig={{ itemVisiblePercentThreshold: 80 }}
+          drawDistance={height}
+        />
       )}
+      <View pointerEvents="box-none" style={[styles.topBar, { top: insets.top }]}>
+        <BreakingTicker posts={trending} />
+      </View>
     </View>
   );
 }
@@ -196,30 +250,26 @@ const shadow = { textShadowColor: 'rgba(0,0,0,0.5)', textShadowRadius: 6, textSh
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: '#000' },
-  scrim: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 360 },
-  topBar: { position: 'absolute', left: 16, right: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  topTitle: { color: '#fff', fontSize: 22, fontWeight: '700', ...shadow },
-  rail: { position: 'absolute', right: 10, alignItems: 'center', gap: 20 },
-  railButton: { alignItems: 'center', gap: 4 },
-  railLabel: { color: '#fff', fontSize: 12, fontWeight: '600', ...shadow },
-  railAvatar: { borderWidth: 2, borderColor: '#fff', borderRadius: 10, overflow: 'hidden' },
-  info: { position: 'absolute', left: 14, right: 76, gap: 8 },
-  authorRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  fill: { flex: 1, justifyContent: 'center' },
+  scrim: { position: 'absolute', left: 0, right: 0, bottom: 0 },
+  topBar: { position: 'absolute', left: 0, right: 0 },
+  rail: { position: 'absolute', right: 8, alignItems: 'center', gap: 18 },
+  info: { position: 'absolute', left: 12, right: 70, gap: 6 },
+  authorRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   white: { color: '#fff', ...shadow },
-  follow: { borderWidth: 1, borderColor: 'rgba(255,255,255,0.7)', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4 },
-  followText: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  follow: { borderRadius: 999, paddingHorizontal: 12, paddingVertical: 4, backgroundColor: colors.primary },
+  followText: { color: colors.onPrimary, fontSize: 12, fontWeight: '800' },
   caption: { color: '#fff', fontSize: 14, lineHeight: 19, ...shadow },
   metaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, alignItems: 'center' },
-  projectChip: {
+  chip: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
     paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingVertical: 3,
     borderRadius: 999,
-    backgroundColor: 'rgba(255,255,255,0.18)',
+    backgroundColor: 'rgba(255,255,255,0.16)',
     maxWidth: 220,
   },
-  projectText: { color: '#fff', fontSize: 12, fontWeight: '500' },
-  error: { position: 'absolute', alignSelf: 'center', color: colors.like, fontSize: 13 },
+  chipText: { color: '#fff', fontSize: 11.5, fontWeight: '600' },
 });

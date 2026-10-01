@@ -1,12 +1,15 @@
 import { useEvent } from 'expo';
 import { Image } from 'expo-image';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { useEffect, useRef } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { MediaItem } from '@/data/types';
 import { logEngagement, useStore } from '@/state/store';
-import { colors } from '@/theme';
+
+import { MediaError } from './states';
 
 type VideoMedia = Extract<MediaItem, { type: 'video' }>;
 
@@ -23,14 +26,22 @@ export function VideoSurface({
   media,
   active,
   contentFit = 'cover',
+  fullBleed = false,
 }: {
   postId: string;
   media: VideoMedia;
   active: boolean;
   contentFit?: 'cover' | 'contain';
+  /**
+   * For edge-to-edge surfaces (Reels). iOS draws video only inside the screen's safe area
+   * (status bar and tab bar excluded), which leaves black bands; this fills them with a
+   * blurred, scaled-up copy of the frame that fades into the video.
+   */
+  fullBleed?: boolean;
 }) {
   const muted = useStore((s) => s.muted);
-  const player = useVideoPlayer({ uri: media.url, useCaching: !media.url.endsWith('.m3u8') }, (p) => {
+  const source = { uri: media.url, useCaching: !media.url.endsWith('.m3u8') };
+  const player = useVideoPlayer(source, (p) => {
     p.loop = true;
     p.muted = true;
     p.timeUpdateEventInterval = 1;
@@ -39,6 +50,8 @@ export function VideoSurface({
   const { status, error } = useEvent(player, 'statusChange', { status: player.status, error: undefined });
 
   useEffect(() => {
+    // The player is an imperative native handle; writing to it is the API.
+    // eslint-disable-next-line react-hooks/immutability
     player.muted = muted;
   }, [player, muted]);
 
@@ -62,26 +75,68 @@ export function VideoSurface({
     }
   }, [timeUpdate, active, postId]);
 
+  const video = <VideoView player={player} style={StyleSheet.absoluteFill} contentFit={contentFit} nativeControls={false} />;
+
   return (
     <View style={StyleSheet.absoluteFill}>
-      <VideoView player={player} style={StyleSheet.absoluteFill} contentFit={contentFit} nativeControls={false} />
+      {fullBleed ? (
+        // A nested provider measures *this* view's safe area (tab bar included), not the window's.
+        <SafeAreaProvider style={StyleSheet.absoluteFill}>
+          <BleedFill posterUrl={media.posterUrl}>{video}</BleedFill>
+        </SafeAreaProvider>
+      ) : (
+        video
+      )}
       {status !== 'readyToPlay' && (
         <Image source={media.posterUrl} style={StyleSheet.absoluteFill} contentFit="cover" cachePolicy="memory-disk" />
       )}
       {status === 'error' && (
-        <View style={[StyleSheet.absoluteFill, styles.error]}>
-          <Text style={styles.errorText}>Video failed to load</Text>
-          <Text style={styles.errorDetail} numberOfLines={2}>
-            {error?.message ?? media.url}
-          </Text>
-        </View>
+        <MediaError
+          detail={error?.message ?? media.url}
+          onRetry={() => {
+            void player.replaceAsync(source).then(() => {
+              if (active) player.play();
+            });
+          }}
+        />
       )}
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  error: { alignItems: 'center', justifyContent: 'center', backgroundColor: colors.overlay, padding: 24 },
-  errorText: { color: colors.text, fontWeight: '600' },
-  errorDetail: { color: colors.textSecondary, fontSize: 12, marginTop: 4, textAlign: 'center' },
-});
+/** Soft edge where the sharp video meets the blurred bands. */
+const FADE = 28;
+
+/**
+ * Places the video exactly inside the area iOS will draw it in, and paints the bands outside
+ * it with a heavily blurred copy of the poster, so the reel reads as one continuous image.
+ */
+function BleedFill({ posterUrl, children }: { posterUrl: string; children: React.ReactNode }) {
+  const { top, bottom } = useSafeAreaInsets();
+  return (
+    <View style={StyleSheet.absoluteFill}>
+      <Image
+        source={posterUrl}
+        style={[StyleSheet.absoluteFill, { transform: [{ scale: 1.25 }] }]}
+        contentFit="cover"
+        blurRadius={40}
+        cachePolicy="memory-disk"
+      />
+      <View style={[StyleSheet.absoluteFill, { top, bottom }]}>{children}</View>
+      {top > 0 && (
+        <LinearGradient
+          pointerEvents="none"
+          colors={['rgba(0,0,0,0.18)', 'transparent']}
+          style={{ position: 'absolute', left: 0, right: 0, top, height: FADE }}
+        />
+      )}
+      {bottom > 0 && (
+        <LinearGradient
+          pointerEvents="none"
+          colors={['transparent', 'rgba(0,0,0,0.18)']}
+          style={{ position: 'absolute', left: 0, right: 0, bottom, height: FADE }}
+        />
+      )}
+    </View>
+  );
+}

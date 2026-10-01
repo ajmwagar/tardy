@@ -2,11 +2,12 @@ import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SymbolView, type SFSymbol } from 'expo-symbols';
 import { memo, type ReactNode } from 'react';
+import * as Haptics from 'expo-haptics';
 import { Pressable, StyleSheet, Text, View, type PressableProps, type StyleProp, type ViewStyle } from 'react-native';
-import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, useSharedValue, withSequence, withSpring } from 'react-native-reanimated';
 
 import type { Account, WorkStatus } from '@/data/types';
-import { colors, status as statusStyles } from '@/theme';
+import { colors, compact, status as statusStyles, type as typeStyles } from '@/theme';
 
 export const Icon = memo(function Icon({
   name,
@@ -66,8 +67,58 @@ export const Avatar = memo(function Avatar({
   );
 });
 
-export function VerifiedBadge({ size = 12 }: { size?: number }) {
-  return <Icon name="checkmark.seal.fill" size={size} color={colors.accent} />;
+/** Paid verification seal, in Tardy yellow. */
+export function VerifiedBadge({ size = 13 }: { size?: number }) {
+  return <Icon name="checkmark.seal.fill" size={size} color={colors.primary} />;
+}
+
+/**
+ * Icon + count reaction. On activate: a quick overshoot pop, a light haptic, and the
+ * count ticks. Satisfying, not flashy: one spring, no particles.
+ */
+export function Reaction({
+  icon,
+  activeIcon,
+  active,
+  activeColor,
+  count,
+  onPress,
+  vertical = false,
+  size = 22,
+  color = colors.text,
+}: {
+  icon: SFSymbol;
+  activeIcon?: SFSymbol;
+  active?: boolean;
+  activeColor?: string;
+  count?: number;
+  onPress: () => void;
+  vertical?: boolean;
+  size?: number;
+  color?: string;
+}) {
+  const pop = useSharedValue(1);
+  const style = useAnimatedStyle(() => ({ transform: [{ scale: pop.value }] }));
+  const press = () => {
+    if (!active) {
+      pop.set(withSequence(withSpring(1.28, { duration: 140 }), withSpring(1, { duration: 260, dampingRatio: 0.5 })));
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } else {
+      void Haptics.selectionAsync();
+    }
+    onPress();
+  };
+  const tint = active && activeColor ? activeColor : color;
+  return (
+    <Pressable onPress={press} hitSlop={8} style={vertical ? styles.reactionVertical : styles.reaction}>
+      <Animated.View style={style}>
+        <Icon name={active && activeIcon ? activeIcon : icon} size={size} color={tint} weight="medium" />
+      </Animated.View>
+      {count !== undefined && (
+        <Text style={[styles.count, { color: vertical ? '#fff' : active && activeColor ? activeColor : colors.text }]}>{compact(count)}</Text>
+      )}
+    </Pressable>
+  );
 }
 
 export function AgentBadge() {
@@ -113,8 +164,8 @@ export function PressableScale({
   return (
     <Pressable
       hitSlop={8}
-      onPressIn={() => (scale.value = withSpring(scaleTo, { duration: 120 }))}
-      onPressOut={() => (scale.value = withSpring(1, { duration: 220 }))}
+      onPressIn={() => scale.set(withSpring(scaleTo, { duration: 120 }))}
+      onPressOut={() => scale.set(withSpring(1, { duration: 220 }))}
       {...props}>
       <Animated.View style={[style, animated]}>{children}</Animated.View>
     </Pressable>
@@ -126,9 +177,12 @@ export function Hairline() {
 }
 
 const styles = StyleSheet.create({
+  reaction: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 4 },
+  reactionVertical: { alignItems: 'center', gap: 3 },
+  count: { ...typeStyles.count },
   nameLine: { flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 1 },
   handle: { color: colors.text, fontSize: 14, fontWeight: '600', flexShrink: 1 },
-  agentBadge: { paddingHorizontal: 4, paddingVertical: 1, borderRadius: 4, backgroundColor: colors.elevated },
+  agentBadge: { paddingHorizontal: 5, paddingVertical: 1, borderRadius: 5, backgroundColor: colors.elevated },
   agentBadgeText: { color: colors.textSecondary, fontSize: 9, fontWeight: '800', letterSpacing: 0.5 },
   pill: {
     flexDirection: 'row',

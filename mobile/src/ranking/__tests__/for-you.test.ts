@@ -1,6 +1,6 @@
 import type { Post } from '@/data/types';
 
-import { rankForYou, type Viewer } from '../for-you';
+import { rankForYou, trendingPosts, type Viewer } from '../for-you';
 
 const NOW = Date.parse('2026-09-30T12:00:00Z');
 
@@ -15,7 +15,9 @@ const post = (id: string, authorId: string, overrides: Partial<Post> = {}): Post
   likeCount: 100,
   commentCount: 0,
   shareCount: 0,
+  alarmCount: 0,
   viewerHasLiked: false,
+  viewerHasAlarm: false,
   viewerHasSaved: false,
   ...overrides,
 });
@@ -64,5 +66,19 @@ describe('rankForYou', () => {
     const posts = [post('a1', 'a'), post('a2', 'a'), post('a3', 'a'), post('b1', 'b', { likeCount: 60 })];
     const ranked = rankForYou(posts, viewer(), { now: NOW });
     expect(order(ranked).indexOf('b1')).toBeLessThan(3);
+  });
+});
+
+describe('trendingPosts', () => {
+  it('returns only the fastest-moving posts, fastest first', () => {
+    const hourAgo = new Date(NOW - 3_600_000).toISOString();
+    const posts = Array.from({ length: 20 }, (_, i) => post(`p${i}`, 'a', { likeCount: 10, createdAt: hourAgo }));
+    posts.push(post('viral', 'b', { likeCount: 5_000, shareCount: 400, createdAt: hourAgo }));
+    posts.push(post('hot', 'c', { likeCount: 900, createdAt: hourAgo }));
+    expect(trendingPosts(posts, NOW).map((p) => p.id)).toEqual(['viral', 'hot']);
+  });
+
+  it('returns nothing when no post clears the velocity floor', () => {
+    expect(trendingPosts([post('quiet', 'a', { likeCount: 3 })], NOW)).toEqual([]);
   });
 });

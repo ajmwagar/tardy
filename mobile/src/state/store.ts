@@ -1,7 +1,9 @@
 import { useSyncExternalStore } from 'react';
 
 import type { TardyApi } from '@/data/api';
+import { faults, withFaults } from '@/data/mock/faults';
 import { MockTardyApi } from '@/data/mock/mock-api';
+import { keychainSlot } from '@/auth/keychain';
 import type { Account, EngagementAction, Post } from '@/data/types';
 
 /**
@@ -12,9 +14,19 @@ import type { Account, EngagementAction, Post } from '@/data/types';
  * rolls the change back and surfaces the error via `lastError`.
  */
 
-export const api: TardyApi = new MockTardyApi();
+/** Wrapped for dev-only fault injection (`data/mock/faults.ts`); a no-op in production. */
+export const api: TardyApi = withFaults(
+  // Starts signed out; the mock server's sessions survive relaunch in the keychain.
+  new MockTardyApi({ viewerId: null, persistence: keychainSlot('tardy.mock-server') }),
+  faults,
+);
 
-type PostState = { liked: boolean; saved: boolean; likeCount: number };
+const describe = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+/** The `lastError` text for a write that failed and was undone locally. */
+const rolledBack = (what: string, error: unknown) => `Couldn't ${what}, so we put it back. (${describe(error)})`;
+
+type PostState = { liked: boolean; saved: boolean; likeCount: number; alarm: boolean; alarmCount: number };
 
 type State = {
   accounts: ReadonlyMap<string, Account>;
@@ -24,16 +36,21 @@ type State = {
   lastError: string | null;
   /** Feed and reels share one mute switch, like Instagram. */
   muted: boolean;
+  /** Viral posts for the breaking ticker. */
+  trending: Post[];
 };
 
-let state: State = {
+const initialState = (): State => ({
   accounts: new Map(),
   posts: new Map(),
   following: new Set(),
   seenStories: new Set(),
   lastError: null,
   muted: true,
-};
+  trending: [],
+});
+
+let state: State = initialState();
 
 const listeners = new Set<() => void>();
 
@@ -79,7 +96,7 @@ export function useAccount(id: string | undefined): Account | undefined {
   return useStore((s) => (id ? s.accounts.get(id) : undefined));
 }
 
-/** Seeds the follow graph and viewer account. Call once at app start. */
+/** Seeds the follow graph and viewer account. Runs on every sign-in (see `state/auth.ts`). */
 export async function bootstrap() {
   const [me, following] = await Promise.all([api.me(), api.followingIds()]);
   seedFollowing(following);
@@ -93,7 +110,15 @@ export function ingestPosts(posts: Post[]) {
   set((s) => {
     const next = new Map(s.posts);
     for (const p of posts) {
-      if (!next.has(p.id)) next.set(p.id, { liked: p.viewerHasLiked, saved: p.viewerHasSaved, likeCount: p.likeCount });
+      if (!next.has(p.id)) {
+        next.set(p.id, {
+          liked: p.viewerHasLiked,
+          saved: p.viewerHasSaved,
+          likeCount: p.likeCount,
+          alarm: p.viewerHasAlarm,
+          alarmCount: p.alarmCount,
+        });
+      }
     }
     return { posts: next };
   });
@@ -118,7 +143,8 @@ function patchPost(id: string, patch: (p: PostState) => PostState) {
   });
 }
 
-async function optimistic(id: string, patch: (p: PostState) => PostState, sync: () => Promise<void>) {
+/** `what` finishes "Couldn't …" in the rollback message, e.g. "save that". */
+async function optimistic(id: string, what: string, patch: (p: PostState) => PostState, sync: () => Promise<void>) {
   const before = state.posts.get(id);
   if (!before) return;
   patchPost(id, patch);
@@ -126,7 +152,7 @@ async function optimistic(id: string, patch: (p: PostState) => PostState, sync: 
     await sync();
   } catch (error) {
     patchPost(id, () => before);
-    set(() => ({ lastError: error instanceof Error ? error.message : String(error) }));
+    set(() => ({ lastError: rolledBack(what, error) }));
   }
 }
 
@@ -136,6 +162,7 @@ export function setLiked(id: string, liked: boolean) {
   logEngagement({ type: liked ? 'favorite' : 'unfavorite', postId: id });
   return optimistic(
     id,
+    liked ? 'give that a thumbs up' : 'take back your thumbs up',
     (p) => ({ ...p, liked, likeCount: p.likeCount + (liked ? 1 : -1) }),
     () => api.setLiked(id, liked),
   );
@@ -145,7 +172,18 @@ export const toggleLiked = (id: string) => setLiked(id, !state.posts.get(id)?.li
 
 export function toggleSaved(id: string) {
   const saved = !state.posts.get(id)?.saved;
-  return optimistic(id, (p) => ({ ...p, saved }), () => api.setSaved(id, saved));
+  return optimistic(id, saved ? 'save that' : 'unsave that', (p) => ({ ...p, saved }), () => api.setSaved(id, saved));
+}
+
+export function toggleAlarm(id: string) {
+  const on = !state.posts.get(id)?.alarm;
+  logEngagement({ type: on ? 'alarm' : 'unalarm', postId: id });
+  return optimistic(
+    id,
+    on ? 'raise the alarm' : 'stand down the alarm',
+    (p) => ({ ...p, alarm: on, alarmCount: p.alarmCount + (on ? 1 : -1) }),
+    () => api.setAlarm(id, on),
+  );
 }
 
 // MARK: follows & stories
@@ -156,6 +194,17 @@ export function useIsFollowing(accountId: string) {
 
 export function seedFollowing(ids: Iterable<string>) {
   set(() => ({ following: new Set(ids) }));
+}
+
+const followListeners = new Set<(accountId: string) => void>();
+
+/**
+ * Called after the user follows an account (a confirmed tap, not the bootstrap seed).
+ * Push setup uses it to ask for notification permission at a moment that explains itself.
+ */
+export function onUserFollow(listener: (accountId: string) => void) {
+  followListeners.add(listener);
+  return () => void followListeners.delete(listener);
 }
 
 export async function toggleFollowing(accountId: string) {
@@ -172,9 +221,10 @@ export async function toggleFollowing(accountId: string) {
   logEngagement({ type: following ? 'follow_author' : 'unfollow_author', authorId: accountId });
   try {
     await api.setFollowing(accountId, following);
+    if (following) followListeners.forEach((l) => l(accountId));
   } catch (error) {
     apply(!following);
-    set(() => ({ lastError: error instanceof Error ? error.message : String(error) }));
+    set(() => ({ lastError: rolledBack(following ? 'follow them' : 'unfollow them', error) }));
   }
 }
 
@@ -182,9 +232,24 @@ export function markStoriesSeen(ids: string[]) {
   set((s) => ({ seenStories: new Set([...s.seenStories, ...ids]) }));
 }
 
+/** Refreshes the breaking ticker. Failures leave the last headlines up and set `lastError`. */
+export async function loadTrending() {
+  try {
+    const posts = await api.trending();
+    await ensureAccounts(posts.map((p) => p.authorId));
+    ingestPosts(posts);
+    set(() => ({ trending: posts }));
+  } catch (error) {
+    set(() => ({ lastError: `Trending failed: ${error instanceof Error ? error.message : String(error)}` }));
+  }
+}
+
 export const toggleMuted = () => set((s) => ({ muted: !s.muted }));
 
 export const clearError = () => set(() => ({ lastError: null }));
+
+/** Surfaces a non-blocking failure in the app-wide error toast (`ErrorToast`). */
+export const reportError = (message: string) => set(() => ({ lastError: message }));
 
 // MARK: engagement
 
@@ -210,4 +275,23 @@ export async function flushEngagement() {
     queue = [...batch, ...queue];
     set(() => ({ lastError: `Engagement sync failed: ${error instanceof Error ? error.message : String(error)}` }));
   }
+}
+
+// MARK: session
+
+/** Replaces cached accounts with fresher copies from the server (e.g. after a handle change). */
+export function cacheAccounts(accounts: Account[]) {
+  set((s) => {
+    const next = new Map(s.accounts);
+    accounts.forEach((a) => next.set(a.id, a));
+    return { accounts: next };
+  });
+}
+
+/** Drops everything that belonged to the signed-out viewer. */
+export function resetViewerState() {
+  if (flushTimer) clearTimeout(flushTimer);
+  flushTimer = null;
+  queue = [];
+  set(() => initialState());
 }

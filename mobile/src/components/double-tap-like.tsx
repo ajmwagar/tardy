@@ -5,12 +5,13 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { useAnimatedStyle, useSharedValue, withSequence, withSpring, withTiming } from 'react-native-reanimated';
 
 import { setLiked } from '@/state/store';
+import { colors } from '@/theme';
 
 import { Icon } from './ui';
 
 /**
- * Wraps media so a double tap likes the post with the heart burst; a single tap is
- * forwarded (e.g. to mute/unmute video). Double tap never unlikes, same as Instagram.
+ * Wraps media so a double tap gives the post a thumbs up with a pop; a single tap is
+ * forwarded (e.g. to mute/unmute video). Double tap never removes it.
  */
 export function DoubleTapLike({
   postId,
@@ -45,7 +46,7 @@ export function DoubleTapLike({
         {children}
         <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.center]}>
           <Animated.View style={[heartStyle, styles.shadow]}>
-            <Icon name="heart.fill" size={heartSize} color="#FFFFFF" />
+            <Icon name="hand.thumbsup.fill" size={heartSize} color={colors.primary} />
           </Animated.View>
         </View>
       </View>
