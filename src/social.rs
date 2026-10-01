@@ -1,8 +1,16 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
+use std::collections::HashSet;
 use utoipa::ToSchema;
 use uuid::Uuid;
+
+/// Who a profile follows and who follows it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FollowGraph {
+    pub following: HashSet<Uuid>,
+    pub followers: HashSet<Uuid>,
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum SocialError {
@@ -164,6 +172,29 @@ impl PgSocialStore {
             .bind(actor).bind(target).execute(&self.pool).await;
         map_foreign_key(result)?;
         Ok(())
+    }
+
+    /// The viewer's follow graph for ranking, in one query: who they follow, and who follows
+    /// them back (for the value model's mutual-follow boost).
+    pub async fn follow_graph(&self, viewer: Uuid) -> Result<FollowGraph, SocialError> {
+        let rows = sqlx::query(
+            "SELECT followed_profile_id AS id, true AS outbound FROM profile_follows WHERE follower_profile_id=$1
+             UNION ALL
+             SELECT follower_profile_id AS id, false AS outbound FROM profile_follows WHERE followed_profile_id=$1",
+        )
+        .bind(viewer)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut graph = FollowGraph::default();
+        for row in rows {
+            let id: Uuid = row.try_get("id")?;
+            if row.try_get::<bool, _>("outbound")? {
+                graph.following.insert(id);
+            } else {
+                graph.followers.insert(id);
+            }
+        }
+        Ok(graph)
     }
 
     pub async fn unfollow(&self, actor: Uuid, target: Uuid) -> Result<(), SocialError> {

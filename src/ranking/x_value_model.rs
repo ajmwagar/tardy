@@ -8,12 +8,12 @@
 //! an out-of-network discount and author-diversity decay, and sorts.
 //!
 //! **Phoenix is not available.** Its weights are not public and Tardy has no training
-//! data yet. [`predict`] stands in for it with a transparent heuristic over facts the store
-//! already has: per-reel engagement counts, freshness, whether the viewer follows the
-//! author, and the viewer's own engagement history with that author. Everything after
-//! prediction is X's code, called unmodified: [`xai_value_model::compute_value_scores`]
-//! with X's production default weights. The heuristic mirrors the app's on-device port
-//! (`mobile/src/ranking/for-you.ts`) so both sides rank the same way.
+//! data yet. [`predict`] stands in for it with separate per-action probabilities from facts
+//! the store has: each post's smoothed like, share and completion rates, freshness, whether
+//! the viewer follows the author (and is followed back), and the viewer's own history with
+//! that author. Everything after prediction is X's code, called unmodified:
+//! [`xai_value_model::compute_value_scores`] (the logic of X's VM ranker) with X's
+//! production default weights from `home-mixer/params/param.rs`.
 //!
 //! Like the Lua ranker, this only orders candidates the trust boundary already admitted;
 //! it never filters, and currently-live sessions stay pinned first.
@@ -29,9 +29,11 @@ use xai_value_model::{
 };
 
 /// Discount applied to posts from authors the viewer does not follow
-/// (`QueryScoringContext::effective_oon_weight`), matching the app's port.
+/// (`QueryScoringContext::effective_oon_weight`). X runs this step in its remote VM ranker,
+/// whose production value is not published; 0.75 is the value in X's own scoring tests.
 pub const OON_WEIGHT: f64 = 0.75;
 /// Each additional post from the same author is multiplied by `(1 - floor) * decay^k + floor`.
+/// Like the OON weight, X's production values are unpublished; these are its test values.
 pub const AUTHOR_DIVERSITY_DECAY: f64 = 0.5;
 pub const AUTHOR_DIVERSITY_FLOOR: f64 = 0.25;
 /// `rust_home_mixer_min_video_duration_ms`: videos must be longer than this for VQV.
@@ -174,6 +176,8 @@ impl XValueModelRanker {
                     FeedItem::Reel(reel) => reel.duration_ms > MIN_VIDEO_DURATION_MS as u64,
                     FeedItem::Live(_) => false,
                 };
+                let is_mutual_follow_author =
+                    in_network == Some(true) && signals.followers.contains(&author);
                 CandidateScoringInputs {
                     phoenix_scores: predict(Facts {
                         in_network,
@@ -183,6 +187,7 @@ impl XValueModelRanker {
                     }),
                     author_id,
                     in_network,
+                    is_mutual_follow_author,
                     vqv_eligible,
                     ..Default::default()
                 }
@@ -207,56 +212,63 @@ pub struct Facts<'a> {
     pub viewer_history: Option<&'a EngagementCounts>,
 }
 
-fn sigmoid(x: f64) -> f64 {
-    1.0 / (1.0 + (-x).exp())
+/// How many views of evidence the priors below are worth: a post with fewer views leans on
+/// the prior, a post with many leans on its own rates.
+const PRIOR_VIEWS: f64 = 20.0;
+/// Per-view action rates for a post nobody has engaged with yet.
+const PRIOR_LIKE_RATE: f64 = 0.05;
+const PRIOR_SHARE_RATE: f64 = 0.01;
+const PRIOR_COMPLETION_RATE: f64 = 0.3;
+/// A post's predicted engagement halves every this many hours.
+const FRESHNESS_HALF_LIFE_HOURS: f64 = 24.0;
+
+/// A per-view rate, smoothed toward `prior` (empirical Bayes with `PRIOR_VIEWS` pseudo-views).
+fn smoothed_rate(hits: u64, views: f64, prior: f64) -> f64 {
+    (hits as f64 + PRIOR_VIEWS * prior) / (views + PRIOR_VIEWS)
 }
 
-/// Heuristic stand-in for Phoenix. NOT a learned model: per-action probabilities are fixed
-/// fractions of one engagement propensity, which rises with following the author, the
-/// viewer's past positive engagement with them, the post's popularity, and freshness, and
-/// falls when the viewer keeps skipping this author. Constants mirror the app's
-/// `predict` in `mobile/src/ranking/for-you.ts`.
+/// Stand-in for Phoenix. NOT a learned model, but shaped like one: each head is a separate
+/// per-action probability, so X's weights trade actions off the way they do in production
+/// (a share is worth 4x a like, a completed view feeds dwell). Each probability is the post's
+/// own smoothed rate for that action (likes, shares, completed views over views), scaled by
+/// how this viewer relates to the author: following them, their past engagement with the
+/// author (up), skipping the author's posts (down to zero), and freshness.
+///
+/// Heads Tardy records nothing for (replies, quotes, clicks, link opens, DM versus
+/// copy-link shares, blocks, reports) are `None`: the value model skips a missing head
+/// rather than this function inventing a probability for it.
 pub fn predict(facts: Facts<'_>) -> PhoenixScores {
-    let in_network = facts.in_network == Some(true);
-    let age_hours = facts.age_ms as f64 / 3_600_000.0;
     let counts = facts.counts;
-    // log10 of weighted engagement, ~0 for a new post and 1 at ~1,000 weighted actions.
-    let popularity = ((1.0
-        + counts.likes as f64
-        + 2.0 * counts.shares as f64
-        + 0.5 * counts.completed_views as f64)
-        .log10()
-        / 3.0)
-        .min(1.0);
-    let (affinity, negative) = facts.viewer_history.map_or((0.0, 0.0), affinity);
+    // A like or share can be counted without a view; never let a rate exceed 1.
+    let views = counts
+        .views
+        .max(counts.likes)
+        .max(counts.shares)
+        .max(counts.completed_views) as f64;
+    let like = smoothed_rate(counts.likes, views, PRIOR_LIKE_RATE);
+    let share = smoothed_rate(counts.shares, views, PRIOR_SHARE_RATE);
+    let completion = smoothed_rate(counts.completed_views, views, PRIOR_COMPLETION_RATE);
 
-    let base = sigmoid(
-        -2.2 + if in_network { 1.1 } else { 0.0 } + 0.45 * affinity + 1.2 * popularity
-            - age_hours / 24.0
-            - 2.0 * negative,
-    );
+    let in_network = facts.in_network == Some(true);
+    let (affinity, negative) = facts.viewer_history.map_or((0.0, 0.0), affinity);
+    let age_hours = facts.age_ms as f64 / 3_600_000.0;
+    // This viewer rather than the average one.
+    let personal = if in_network { 1.5 } else { 1.0 }
+        * (1.0 + 0.15 * affinity)
+        * (1.0 - negative).powi(2)
+        * 0.5_f64.powf(age_hours / FRESHNESS_HALF_LIFE_HOURS);
+    let p = |rate: f64| (rate * personal).clamp(0.0, 1.0);
+
     PhoenixScores {
-        favorite_score: Some(base),
-        reply_score: Some(base * 0.08),
-        retweet_score: Some(base * 0.05),
-        share_score: Some(base * 0.06),
-        share_via_dm_score: Some(base * 0.03),
-        share_via_copy_link_score: Some(base * 0.004),
-        // Every reel is a video; no photos or outbound links to expand or open.
-        photo_expand_score: Some(0.0),
-        video_open_score: Some(base * 0.5),
-        vqv_score: Some(base * 0.6),
-        open_link_score: Some(0.0),
-        click_score: Some(base * 0.3),
-        dwell_score: Some(0.3 + base * 0.6),
-        dwell_time: Some(4.0 + base * 20.0),
-        follow_author_score: Some(if in_network { 0.0 } else { base * 0.04 }),
-        post_unexplored_score: Some(if in_network { 0.5 } else { 0.0 }),
+        favorite_score: Some(p(like)),
+        share_score: Some(p(share)),
+        vqv_score: Some(p(completion)),
+        dwell_score: Some(p(completion)),
+        not_dwelled_score: Some(1.0 - p(completion)),
+        // Only strangers can be followed; liking a stranger's post is the best proxy we have.
+        follow_author_score: Some(if in_network { 0.0 } else { 0.1 * p(like) }),
         not_interested_score: Some((0.002 + 0.05 * negative).min(1.0)),
         mute_author_score: Some((0.0005 + 0.02 * negative).min(1.0)),
-        block_author_score: Some(0.0002),
-        report_score: Some(0.000_05),
-        not_dwelled_score: Some(1.0 - base),
         ..Default::default()
     }
 }
@@ -668,5 +680,80 @@ mod tests {
             .rank(vec![FeedItem::Reel(popular), live.clone()], &signals, NOW)
             .unwrap();
         assert_eq!(ranked[0], live);
+    }
+
+    #[test]
+    fn shares_outweigh_likes_as_x_weights_them() {
+        // Same views and reach; one post earned shares, the other a few more likes. X weights a
+        // share 4x a like (2.0 vs 0.5), so the shared post ranks first.
+        let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
+        let (shared, liked) = (reel(a, NOW - HOUR), reel(b, NOW - HOUR));
+        let mut signals = RankingSignals::default();
+        signals
+            .reel_engagement
+            .insert(shared.id, counts(100, 40, 10, 10));
+        signals
+            .reel_engagement
+            .insert(liked.id, counts(100, 40, 16, 0));
+        assert_eq!(
+            rank(vec![liked.clone(), shared.clone()], &signals),
+            vec![shared.id, liked.id]
+        );
+    }
+
+    #[test]
+    fn rates_not_raw_counts() {
+        // 50 likes from 1,000 views (5%) loses to 30 likes from 60 views (50%).
+        let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
+        let (big, good) = (reel(a, NOW - HOUR), reel(b, NOW - HOUR));
+        let mut signals = RankingSignals::default();
+        signals
+            .reel_engagement
+            .insert(big.id, counts(1_000, 300, 50, 5));
+        signals
+            .reel_engagement
+            .insert(good.id, counts(60, 30, 30, 3));
+        assert_eq!(
+            rank(vec![big.clone(), good.clone()], &signals),
+            vec![good.id, big.id]
+        );
+    }
+
+    #[test]
+    fn heads_without_data_stay_empty() {
+        let scores = predict(Facts {
+            in_network: Some(true),
+            age_ms: HOUR,
+            counts: counts(10, 5, 2, 1),
+            viewer_history: None,
+        });
+        for head in [
+            scores.reply_score,
+            scores.click_score,
+            scores.share_via_dm_score,
+            scores.share_via_copy_link_score,
+            scores.report_score,
+        ] {
+            assert_eq!(head, None);
+        }
+        let p = scores.favorite_score.unwrap();
+        assert!((0.0..=1.0).contains(&p));
+    }
+
+    #[test]
+    fn mutual_follow_is_marked_from_the_follow_graph() {
+        let (mutual, one_way) = (Uuid::new_v4(), Uuid::new_v4());
+        let signals = RankingSignals {
+            followed_profiles: Some(HashSet::from([mutual, one_way])),
+            followers: HashSet::from([mutual]),
+            ..Default::default()
+        };
+        let items = [
+            FeedItem::Reel(reel(mutual, NOW - HOUR)),
+            FeedItem::Reel(reel(one_way, NOW - HOUR)),
+        ];
+        let inputs = XValueModelRanker::default().inputs(&items, &signals, NOW);
+        assert!(inputs[0].is_mutual_follow_author);
+        assert!(!inputs[1].is_mutual_follow_author);
     }
 }

@@ -1131,7 +1131,15 @@ async fn feed(
     let mut items = match &state.ranker {
         FeedRanker::Lua(ranker) => ranker.rank(candidates, now)?,
         FeedRanker::XValueModel(ranker) => {
-            ranker.rank(candidates, &state.store.ranking_signals(viewer)?, now)?
+            let mut signals = state.store.ranking_signals(viewer)?;
+            // The follow graph lives in the social store (PostgreSQL). Without it the ranker
+            // treats in-network as unknown rather than "follows nobody".
+            if let (Some(viewer), Some(social)) = (viewer, state.social.as_ref()) {
+                let graph = social.follow_graph(viewer).await?;
+                signals.followed_profiles = Some(graph.following);
+                signals.followers = graph.followers;
+            }
+            ranker.rank(candidates, &signals, now)?
         }
     };
     items.truncate(query.limit);

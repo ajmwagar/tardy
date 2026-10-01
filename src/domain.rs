@@ -143,6 +143,9 @@ pub struct RankingSignals {
     /// Profiles the viewer follows. `None` when the store has no follow graph, which
     /// rankers must treat as "in-network unknown" rather than "follows nobody".
     pub followed_profiles: Option<HashSet<Uuid>>,
+    /// Profiles that follow the viewer. With `followed_profiles`, marks mutual follows
+    /// (X's bidirectional-follow boost). Empty when unknown.
+    pub followers: HashSet<Uuid>,
     /// Unique counted engagements per visible reel, across all viewers.
     pub reel_engagement: HashMap<Uuid, EngagementCounts>,
     /// The viewer's own counted engagements, grouped by the reel author. Empty when anonymous.
