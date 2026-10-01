@@ -60,6 +60,10 @@ async fn mobile_profile_and_discovery_routes_match_the_wire_contract() {
     .await;
     assert_eq!(profile["id"], author_id.to_string());
     assert_eq!(profile["handle"], "discovery_author");
+    assert!(profile["display_name"].is_string());
+    assert!(profile["avatar_url"].is_string());
+    assert!(profile["post_count"].is_number());
+    assert!(profile.get("displayName").is_none());
 
     let by_handle = get(
         &app,
@@ -71,14 +75,23 @@ async fn mobile_profile_and_discovery_routes_match_the_wire_contract() {
     assert_eq!(by_handle["id"], author_id.to_string());
 
     for route in [
+        "/v1/feed",
         "/v1/feed/reels",
         "/v1/explore",
         &format!("/v1/profiles/by-id/{author_id}/posts"),
     ] {
         let page = get(&app, route, &viewer_token, viewer_id).await;
-        assert_eq!(page["nextCursor"], Value::Null);
+        assert_eq!(page["next_cursor"], Value::Null);
         let items = page["items"].as_array().unwrap();
         assert!(items.iter().any(|post| post["id"] == public.id.to_string()));
+        let item = items
+            .iter()
+            .find(|post| post["id"] == public.id.to_string())
+            .unwrap();
+        assert_eq!(item["author_id"], author_id.to_string());
+        assert!(item["created_at_ms"].is_number());
+        assert!(item["viewer_has_saved"].is_boolean());
+        assert!(item.get("authorId").is_none());
         assert!(
             !items
                 .iter()

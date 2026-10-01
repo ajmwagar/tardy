@@ -110,7 +110,6 @@ pub struct TardyPost {
 }
 
 #[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct AppFeedPost {
     pub id: Uuid,
     pub author_id: Uuid,
@@ -118,7 +117,7 @@ pub struct AppFeedPost {
     pub media: Vec<serde_json::Value>,
     pub caption: String,
     pub links: Vec<serde_json::Value>,
-    pub created_at: i64,
+    pub created_at_ms: i64,
     pub like_count: i64,
     pub comment_count: i64,
     pub share_count: i64,
@@ -131,7 +130,6 @@ pub struct AppFeedPost {
 }
 
 #[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct AppAccount {
     pub id: Uuid,
     pub kind: IdentityKind,
@@ -201,7 +199,7 @@ impl PgSocialStore {
                             vec![serde_json::json!({"kind":"other","label":"Open link","url":url})]
                         })
                         .unwrap_or_default(),
-                    created_at: row
+                    created_at_ms: row
                         .try_get::<DateTime<Utc>, _>("created_at")?
                         .timestamp_millis(),
                     like_count: 0,
@@ -839,7 +837,7 @@ fn app_post_from_row(row: sqlx::postgres::PgRow) -> Result<AppFeedPost, SocialEr
         links: link
             .map(|url| vec![serde_json::json!({"kind":"other","label":"Open link","url":url})])
             .unwrap_or_default(),
-        created_at: row
+        created_at_ms: row
             .try_get::<DateTime<Utc>, _>("created_at")?
             .timestamp_millis(),
         like_count: 0,

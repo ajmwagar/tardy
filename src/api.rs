@@ -1418,7 +1418,7 @@ async fn feed(
     let viewer = optional_authenticated_actor(&state, &headers).await?;
     if let Some(social) = &state.social {
         let items = social.app_feed(viewer, query.limit as i64).await?;
-        return Ok(Json(serde_json::json!({"items":items,"nextCursor":null})).into_response());
+        return Ok(Json(serde_json::json!({"items":items,"next_cursor":null})).into_response());
     }
     let candidates = state.store.feed_candidates(viewer)?;
     let now = now_ms()?;
@@ -1455,7 +1455,7 @@ async fn reels_feed(
     let items = social_store(&state)?
         .app_posts(viewer, None, query.limit as i64)
         .await?;
-    Ok(Json(serde_json::json!({"items":items,"nextCursor":null})))
+    Ok(Json(serde_json::json!({"items":items,"next_cursor":null})))
 }
 
 /// Discovery is intentionally deterministic until the consented reranker is available:
@@ -1472,7 +1472,7 @@ async fn explore_feed(
     let items = social_store(&state)?
         .app_posts(viewer, None, query.limit as i64)
         .await?;
-    Ok(Json(serde_json::json!({"items":items,"nextCursor":null})))
+    Ok(Json(serde_json::json!({"items":items,"next_cursor":null})))
 }
 
 async fn hyper_tardy_feed(
@@ -1624,7 +1624,7 @@ async fn get_profile_posts(
     let items = social_store(&state)?
         .app_posts(viewer, Some(id), query.limit as i64)
         .await?;
-    Ok(Json(serde_json::json!({"items":items,"nextCursor":null})))
+    Ok(Json(serde_json::json!({"items":items,"next_cursor":null})))
 }
 
 async fn update_privacy(
