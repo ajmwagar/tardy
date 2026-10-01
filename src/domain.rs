@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
@@ -113,6 +114,39 @@ pub struct EngagementReceipt {
     pub occurred_at_ms: TimestampMs,
     /// False when this profile already contributed this signal for the reel.
     pub counted: bool,
+}
+
+/// Unique, counted engagements of each kind (one per profile per reel per kind).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EngagementCounts {
+    pub views: u64,
+    pub completed_views: u64,
+    pub likes: u64,
+    pub shares: u64,
+}
+
+impl EngagementCounts {
+    pub fn record(&mut self, kind: EngagementKind) {
+        match kind {
+            EngagementKind::View => self.views += 1,
+            EngagementKind::CompletedView => self.completed_views += 1,
+            EngagementKind::Like => self.likes += 1,
+            EngagementKind::Share => self.shares += 1,
+        }
+    }
+}
+
+/// Read-only facts a feed ranker may use beyond the candidates themselves. Built by the
+/// store after the trust boundary, so it only describes reels the viewer can already see.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RankingSignals {
+    /// Profiles the viewer follows. `None` when the store has no follow graph, which
+    /// rankers must treat as "in-network unknown" rather than "follows nobody".
+    pub followed_profiles: Option<HashSet<Uuid>>,
+    /// Unique counted engagements per visible reel, across all viewers.
+    pub reel_engagement: HashMap<Uuid, EngagementCounts>,
+    /// The viewer's own counted engagements, grouped by the reel author. Empty when anonymous.
+    pub viewer_history_by_author: HashMap<Uuid, EngagementCounts>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
