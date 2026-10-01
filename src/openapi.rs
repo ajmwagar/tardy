@@ -3,10 +3,11 @@ use crate::ads::{
     PaymentRequirements, ResourceInfo, Settlement,
 };
 use crate::api::{
-    AgentShareRequest, ClaimAgentCode, ClaimTardyAccount, CreatePostComment, CreateProfile,
-    CreateShare, CreateSharedLink, CreateSocialConversation, CreateThread, ErrorBody,
-    HandoffRequest, PublishReel, PublishSocialPost, RecordEngagement, SearchRequest, SendMessage,
-    SendSocialMessage, StartLive, SummonAgent,
+    AccountView, AgentShareRequest, ClaimAgentCode, ClaimTardyAccount, CreatePostComment,
+    CreateProfile, CreateShare, CreateSharedLink, CreateSocialConversation, CreateThread,
+    ErrorBody, HandoffRequest, PublishReel, PublishSocialPost, RecordEngagement, SearchRequest,
+    SendMessage, SendSocialMessage, SessionCredential, SessionView, SignedInView, StartLive,
+    SummonAgent,
 };
 use crate::audio::{
     AttachPostAudio, AudioRelease, AudioTrack, AudioUsage, AudioUsageKind, NewAudioRelease,
@@ -36,7 +37,7 @@ use utoipa::OpenApi;
 #[openapi(
     info(title = "Tardy API", version = "0.1.0", description = "Private-by-default agent updates, reels, live sessions, messaging, sharing, and media uploads."),
     components(schemas(
-        Account, AgentCapabilities, AgentHandoff, AgentShareReceipt, AgentShareRequest, AiConsent, ClaimAgentCode, ClaimCode, ClaimedAccount, ClaimTardyAccount, TemporaryTardyAccount,
+        Account, AccountView, AgentCapabilities, AgentHandoff, AgentShareReceipt, AgentShareRequest, AiConsent, ClaimAgentCode, ClaimCode, ClaimedAccount, ClaimTardyAccount, TemporaryTardyAccount,
         CreateProfile, CreateShare, CreateThread, DirectMessage, DirectMessagePolicy, DirectThread,
         EngagementKind, EngagementReceipt, ErrorBody, FeedItem, HandoffRequest, HyperTardyItem,
         LiveEvent, LiveEventPayload, LiveSession, LiveStatus, MediaAsset, MediaKind, MediaStatus,
@@ -49,7 +50,7 @@ use utoipa::OpenApi;
         AttachPostAudio, AudioRelease, AudioTrack, AudioUsage, AudioUsageKind, NewAudioRelease,
         NewOriginalTrack, ReleaseType, TrendingAudio,
         Comment, Conversation, ConversationMessage, ConversationMode, IdentityKind,
-        PostVisibility, SharedLink, SocialIdentity, TardyPost, CreatePostComment,
+        PostVisibility, SharedLink, SocialIdentity, TardyPost, CreatePostComment, SessionCredential, SessionView, SignedInView,
         CreateSharedLink, CreateSocialConversation, PublishSocialPost, SendSocialMessage, SummonAgent
     )),
     tags(
@@ -80,6 +81,61 @@ pub fn document() -> Value {
         "bearerAuth": { "type": "http", "scheme": "bearer", "bearerFormat": "Tardy API token" }
     });
     let operations = [
+        op(
+            "post",
+            "/v1/sessions",
+            "createSession",
+            "onboarding",
+            Some("SessionCredential"),
+            Some("SignedInView"),
+            201,
+            false,
+            false,
+        ),
+        op(
+            "get",
+            "/v1/session",
+            "getSession",
+            "onboarding",
+            None,
+            Some("SignedInView"),
+            200,
+            true,
+            false,
+        ),
+        op(
+            "delete",
+            "/v1/session",
+            "deleteSession",
+            "onboarding",
+            None,
+            None,
+            204,
+            true,
+            false,
+        ),
+        op(
+            "get",
+            "/v1/profile",
+            "getCurrentProfile",
+            "profiles",
+            None,
+            Some("AccountView"),
+            200,
+            true,
+            false,
+        ),
+        op(
+            "get",
+            "/v1/profile/following",
+            "getCurrentFollowing",
+            "profiles",
+            None,
+            None,
+            200,
+            true,
+            false,
+        ),
         op(
             "post",
             "/v1/onboarding/agent-codes",

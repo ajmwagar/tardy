@@ -2,6 +2,7 @@ use crate::ads::{
     AdPaymentProcessor, AdsError, CampaignReport, FundingIntent, NewCampaign, PaymentRequired,
     PaymentRequirements, PgAdsStore, ResourceInfo, X402_VERSION,
 };
+use crate::apple_auth::{AppleAuthError, AppleAuthenticator};
 use crate::audio::{
     AttachPostAudio, AudioError, AudioRelease, AudioUsage, NewAudioRelease, NewOriginalTrack,
     PgAudioStore, TrendingAudio,
@@ -13,7 +14,7 @@ use crate::domain::{
 use crate::media::{MediaError, MediaService, UploadIntent};
 use crate::metrics::Metrics;
 use crate::onboarding::{AccountRegistry, OnboardingError, TemporaryTardyAccount};
-use crate::pg_accounts::{PgAccountError, PgAccountStore};
+use crate::pg_accounts::{HumanProfile, HumanSession, PgAccountError, PgAccountStore};
 use crate::push::{NotificationPreference, PgPushStore, PushDevice, PushError, RegisterPushDevice};
 use crate::ranking::FeedRanker;
 use crate::search::{SearchError, SearchService};
@@ -50,6 +51,7 @@ pub struct AppState {
     pub subscriptions: Option<Arc<PgSubscriptionStore>>,
     pub social: Option<Arc<PgSocialStore>>,
     pub audio: Option<Arc<PgAudioStore>>,
+    pub apple_auth: Option<Arc<AppleAuthenticator>>,
 }
 
 pub struct AdsRuntime {
@@ -77,6 +79,7 @@ impl AppState {
             subscriptions: None,
             social: None,
             audio: None,
+            apple_auth: None,
         })
     }
 
@@ -98,6 +101,7 @@ impl AppState {
             subscriptions: None,
             social: None,
             audio: None,
+            apple_auth: None,
         })
     }
 
@@ -119,6 +123,7 @@ impl AppState {
             subscriptions: None,
             social: None,
             audio: None,
+            apple_auth: None,
         })
     }
 
@@ -152,6 +157,11 @@ impl AppState {
         self
     }
 
+    pub fn with_apple_auth(mut self, value: AppleAuthenticator) -> Self {
+        self.apple_auth = Some(Arc::new(value));
+        self
+    }
+
     pub async fn purge_expired_unclaimed_tardies(&self) -> Result<usize, ApiError> {
         let expired = purge_accounts(self, now_ms()?).await?;
         if !expired.is_empty() {
@@ -169,7 +179,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/metrics", get(metrics_endpoint))
         .route("/openapi.json", get(openapi_endpoint))
         .route("/llms.txt", get(llms_txt))
-        .route("/v1/session", get(current_session))
+        .route("/v1/sessions", post(create_session))
+        .route("/v1/session", get(current_session).delete(delete_session))
+        .route("/v1/profile", get(current_profile))
+        .route("/v1/profile/following", get(current_following))
         .route("/v1/profiles", post(create_profile))
         .route("/v1/profiles/{handle}", get(get_profile))
         .route(
@@ -263,15 +276,174 @@ pub fn router(state: Arc<AppState>) -> Router {
 /// Session restoration is an explicit route even before the provider exchange lands.
 /// This matters to clients carrying an old development token: they receive 401 and can
 /// clear the keychain instead of mistaking a missing route for a server outage.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(tag = "provider", rename_all = "snake_case")]
+pub(crate) enum SessionCredential {
+    Apple {
+        identity_token: String,
+        authorization_code: String,
+        nonce: String,
+        full_name: Option<String>,
+    },
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct SessionView {
+    token: String,
+    account_id: Uuid,
+    provider: String,
+    expires_at_ms: u64,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct AccountView {
+    id: Uuid,
+    kind: &'static str,
+    handle: String,
+    display_name: String,
+    avatar_url: String,
+    bio: String,
+    verified: bool,
+    followers: u64,
+    following: u64,
+    post_count: u64,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct SignedInView {
+    session: SessionView,
+    account: AccountView,
+    onboarded_at_ms: Option<u64>,
+}
+
+async fn create_session(
+    State(state): State<Arc<AppState>>,
+    Json(credential): Json<SessionCredential>,
+) -> Result<(StatusCode, Json<SignedInView>), ApiError> {
+    let accounts = state
+        .pg_accounts
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("PostgreSQL accounts are not configured"))?;
+    let session = match credential {
+        SessionCredential::Apple {
+            identity_token,
+            authorization_code,
+            nonce,
+            full_name,
+        } => {
+            if authorization_code.trim().is_empty() {
+                return Err(ApiError::bad_request(
+                    "Apple authorization code is required",
+                ));
+            }
+            let verifier = state.apple_auth.as_ref().ok_or_else(|| ApiError {
+                status: StatusCode::SERVICE_UNAVAILABLE,
+                message: "Sign in with Apple is not configured".into(),
+            })?;
+            let identity = verifier.verify(&identity_token, &nonce).await?;
+            accounts
+                .sign_in_apple(
+                    &identity.subject,
+                    identity.email.as_deref(),
+                    full_name.as_deref(),
+                    &identity.assertion_digest,
+                    now_ms()?,
+                )
+                .await?
+        }
+    };
+    Ok((StatusCode::CREATED, Json(signed_in_view(session))))
+}
+
 async fn current_session(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    authenticated_account(&state, &headers).await?;
-    Err(ApiError {
-        status: StatusCode::NOT_IMPLEMENTED,
-        message: "session serialization is not implemented yet".into(),
-    })
+) -> Result<Json<SignedInView>, ApiError> {
+    let token = bearer_token(&headers)?
+        .ok_or_else(|| ApiError::unauthorized("bearer token is required"))?;
+    let accounts = state
+        .pg_accounts
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("PostgreSQL accounts are not configured"))?;
+    let session = accounts
+        .resume_human_session(token, now_ms()?)
+        .await
+        .map_err(|_| ApiError::unauthorized("invalid bearer token"))?;
+    Ok(Json(signed_in_view(session)))
+}
+
+async fn delete_session(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    let token = bearer_token(&headers)?
+        .ok_or_else(|| ApiError::unauthorized("bearer token is required"))?;
+    state
+        .pg_accounts
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("PostgreSQL accounts are not configured"))?
+        .revoke_human_session(token, now_ms()?)
+        .await
+        .map_err(|_| ApiError::unauthorized("invalid bearer token"))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn current_profile(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<AccountView>, ApiError> {
+    let account = authenticated_account(&state, &headers).await?;
+    let profile = state
+        .pg_accounts
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("PostgreSQL accounts are not configured"))?
+        .human_profile_for_account(account)
+        .await?;
+    Ok(Json(account_view(profile)))
+}
+
+async fn current_following(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<Uuid>>, ApiError> {
+    let account = authenticated_account(&state, &headers).await?;
+    Ok(Json(
+        state
+            .pg_accounts
+            .as_ref()
+            .ok_or_else(|| ApiError::internal("PostgreSQL accounts are not configured"))?
+            .following_profile_ids(account)
+            .await?,
+    ))
+}
+
+fn signed_in_view(value: HumanSession) -> SignedInView {
+    let onboarded_at_ms = value.profile.onboarded_at_ms;
+    SignedInView {
+        session: SessionView {
+            token: value.token,
+            account_id: value.profile.profile_id,
+            provider: value.provider,
+            expires_at_ms: value.expires_at_ms,
+        },
+        account: account_view(value.profile),
+        onboarded_at_ms,
+    }
+}
+
+fn account_view(value: HumanProfile) -> AccountView {
+    AccountView {
+        id: value.profile_id,
+        kind: "human",
+        handle: value.handle,
+        display_name: value.display_name,
+        avatar_url: value.avatar_url,
+        bio: value.bio,
+        verified: false,
+        followers: 0,
+        following: 0,
+        post_count: 0,
+    }
 }
 
 async fn create_feed_subscription(
@@ -1871,9 +2043,24 @@ impl From<PgAccountError> for ApiError {
                 message: value.to_string(),
             },
             PgAccountError::InvalidEmail => Self::bad_request(value.to_string()),
+            PgAccountError::AssertionReplayed => Self::unauthorized(value.to_string()),
             PgAccountError::Database(_) | PgAccountError::Timestamp => {
                 Self::internal(value.to_string())
             }
+        }
+    }
+}
+
+impl From<AppleAuthError> for ApiError {
+    fn from(value: AppleAuthError) -> Self {
+        match value {
+            AppleAuthError::InvalidToken | AppleAuthError::InvalidNonce => {
+                Self::unauthorized(value.to_string())
+            }
+            AppleAuthError::Unavailable(_) => Self {
+                status: StatusCode::BAD_GATEWAY,
+                message: value.to_string(),
+            },
         }
     }
 }

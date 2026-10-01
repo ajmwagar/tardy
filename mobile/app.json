@@ -10,6 +10,7 @@
     "ios": {
       "icon": "./assets/expo.icon",
       "bundleIdentifier": "dev.fpl.tardy",
+      "usesAppleSignIn": true,
       "supportsTablet": false,
       "config": {
         "usesNonExemptEncryption": false
@@ -38,6 +39,7 @@
         }
       ],
       "expo-video",
+      "expo-apple-authentication",
       "expo-secure-store",
       "expo-notifications",
       [

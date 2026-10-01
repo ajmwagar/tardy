@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use tardy::ads::{HttpX402Facilitator, PaymentRequirements, PgAdsStore};
 use tardy::api::AdsRuntime;
+use tardy::apple_auth::AppleAuthenticator;
 use tardy::audio::PgAudioStore;
 use tardy::pg_accounts::PgAccountStore;
 use tardy::push::PgPushStore;
@@ -30,6 +31,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     state = state.with_pg_accounts(PgAccountStore::new(pool.clone()));
     state = state.with_social_store(PgSocialStore::new(pool.clone()));
     state = state.with_audio_store(PgAudioStore::new(pool.clone()));
+    if let Ok(client_id) = std::env::var("APPLE_CLIENT_ID") {
+        state = state.with_apple_auth(AppleAuthenticator::new(client_id)?);
+    } else {
+        tracing::warn!("APPLE_CLIENT_ID is unset; Sign in with Apple is disabled");
+    }
     let subscription_base_url = state.public_base_url.clone();
     state = state.with_subscriptions(PgSubscriptionStore::new(
         pool.clone(),

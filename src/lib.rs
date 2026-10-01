@@ -1,5 +1,6 @@
 pub mod ads;
 pub mod api;
+pub mod apple_auth;
 pub mod audio;
 pub mod audio_policy;
 pub mod domain;
