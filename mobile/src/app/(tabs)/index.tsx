@@ -9,7 +9,6 @@ import { BreakingTicker } from '@/components/breaking-ticker';
 import { openFaultMenu } from '@/components/fault-menu';
 import { EmptyState, ErrorState, FeedSkeleton, InlineRetry, PostSkeleton } from '@/components/states';
 import { StoriesRow } from '@/components/stories-row';
-import { IconButton } from '@/components/ui';
 import { Wordmark } from '@/components/wordmark';
 import type { Post, StoryGroup } from '@/data/types';
 import { api, ensureAccounts, loadFeedPage, loadTrending, logEngagement, reportError, useStore } from '@/state/store';
@@ -121,9 +120,7 @@ export default function HomeScreen() {
         <Pressable onLongPress={openFaultMenu} accessibilityRole="header" accessibilityLabel="Tardy">
           <Wordmark />
         </Pressable>
-        <View style={styles.headerIcons}>
-          <IconButton icon="plus.circle.fill" size={28} color={colors.primary} label="New post" style={styles.edgeButton} />
-        </View>
+        {/* "New post" returns when there's a create-post flow; no dead buttons in the meantime. */}
       </View>
       <BreakingTicker posts={trending} />
 
@@ -183,6 +180,4 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
   header: { height: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14 },
-  headerIcons: { flexDirection: 'row', gap: 20 },
-  edgeButton: { marginRight: -8 },
 });

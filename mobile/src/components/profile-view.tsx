@@ -24,8 +24,30 @@ function Stat({ value, label }: { value: number; label: string }) {
   );
 }
 
+/** The existing DM thread with this account, if any (there is no create-thread API yet). */
+function useThreadWith(accountId: string, enabled: boolean): string | null {
+  const [threadId, setThreadId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!enabled) return;
+    let live = true;
+    api.threads().then(
+      (threads) => {
+        if (live) setThreadId(threads.find((t) => t.participantIds.includes(accountId))?.id ?? null);
+      },
+      () => {
+        // No thread lookup means no Message button, which is the safe fallback.
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [accountId, enabled]);
+  return threadId;
+}
+
 function Header({ account, isMe }: { account: Account; isMe: boolean }) {
   const following = useIsFollowing(account.id);
+  const threadId = useThreadWith(account.id, !isMe);
   return (
     <View style={styles.header}>
       <View style={styles.topRow}>
@@ -59,8 +81,13 @@ function Header({ account, isMe }: { account: Account; isMe: boolean }) {
             <Text style={following ? styles.secondaryText : styles.primaryText}>{following ? 'Following' : 'Follow'}</Text>
           </PressableScale>
         )}
-        {!isMe && (
-          <PressableScale style={[styles.button, styles.secondaryButton]} scaleTo={0.97}>
+        {!isMe && threadId && (
+          <PressableScale
+            style={[styles.button, styles.secondaryButton]}
+            scaleTo={0.97}
+            accessibilityRole="button"
+            accessibilityLabel={`Message ${account.handle}`}
+            onPress={() => router.push({ pathname: '/messages/[threadId]', params: { threadId } })}>
             <Text style={styles.secondaryText}>Message</Text>
           </PressableScale>
         )}
