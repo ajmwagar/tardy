@@ -1,0 +1,23 @@
+xai-value-model (vendored)
+
+This directory contains a copy of the `xai-value-model` crate from
+https://github.com/xai-org/x-algorithm at commit
+b79b947ce9283c786822274ef8fe208c33c585b2, Copyright X Corp. / xAI,
+licensed under the Apache License, Version 2.0 (see LICENSE in this directory).
+
+Why vendored instead of a git dependency: upstream publishes the crate's source
+files without a Cargo.toml (no package manifest in xai-value-model/ and no
+workspace manifest that includes it), so Cargo cannot resolve it as a git
+dependency. Its lib.rs also declares `mod proto;`, which imports
+`xai_vm_ranker_proto`, a crate that is not published.
+
+Modifications (Apache-2.0 section 4(b)):
+- Added Cargo.toml (this repository's manifest; deps md5 and rustc-hash).
+- src/lib.rs: removed `mod proto;` (gRPC proto conversions), added a header,
+  and marked the upstream modules `#[rustfmt::skip]` so they stay byte-identical.
+- src/inputs.rs, src/phoenix_scores.rs, src/scoring.rs, src/weights.rs are
+  unmodified upstream files.
+
+To update: re-download those four files and lib.rs at a newer commit, drop
+`mod proto;`, bump the commit hash here and in src/lib.rs, and run
+`cargo test` (the parity tests in src/ranking/x_value_model.rs pin the math).
