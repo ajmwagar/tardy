@@ -14,7 +14,8 @@ export const colors = {
   separator: '#26262F',
   text: '#F7F7FA',
   textSecondary: '#A1A1AE',
-  textTertiary: '#6E6E7A',
+  /** Timestamps, placeholders, model names. Kept at WCAG AA (4.5:1) on bg and surface; see the theme test. */
+  textTertiary: '#80808C',
   /** Tardy yellow: thumbs up, primary buttons, the verified seal. */
   primary: '#FFC21A',
   onPrimary: '#14110A',
@@ -99,4 +100,21 @@ export function compact(n: number): string {
  */
 export function countLabel(label: string, count: number | undefined): string {
   return count === undefined ? label : `${label}, ${count.toLocaleString('en-US')}`;
+}
+
+/** WCAG 2.x relative luminance of a #RRGGBB color. */
+function luminance(hex: string): number {
+  const match = /^#([0-9a-f]{6})$/i.exec(hex);
+  if (!match) throw new Error(`Not a #RRGGBB color: "${hex}"`);
+  const [r, g, b] = [0, 2, 4].map((i) => {
+    const v = parseInt(match[1].slice(i, i + 2), 16) / 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+/** WCAG contrast ratio between two opaque #RRGGBB colors, from 1 to 21. */
+export function contrastRatio(foreground: string, background: string): number {
+  const [a, b] = [luminance(foreground), luminance(background)];
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
 }
