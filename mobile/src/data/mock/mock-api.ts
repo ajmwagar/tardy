@@ -11,6 +11,7 @@ import {
   withOverride,
   type PushDecision,
 } from '@/notifications/preferences';
+import { soundScore, type PlayKind } from '@/audio/plays';
 import { autopayCovers, limitMessage, PLANS, type PlanId } from '@/membership/plans';
 import { canonicalUrl, linkProvider, youtubeId } from '@/share/links';
 import { searchRanked } from '@/share/search';
@@ -43,6 +44,7 @@ import type {
 import {
   ACCOUNTS,
   COMMENTS,
+  SOUNDS,
   generatedAvatarUrl,
   FOLLOWING,
   MEMBERSHIPS,
@@ -633,6 +635,29 @@ export class MockTardyApi implements TardyApi {
       demo: this.plan === 'free' ? demo : { status: 'used' },
       autopay: this.autopay,
     };
+  }
+
+  /** Audio usage events by event id, so a retried report is recorded once. */
+  private soundPlays = new Map<string, { trackId: string; kind: PlayKind; at: number }>();
+
+  async trendingSounds(limit = 20) {
+    if (limit < 1 || limit > 100) throw new TardyApiError('invalid', 'limit must be 1-100');
+    const since = Date.now() - DAY_MS;
+    const rows = SOUNDS.map(({ seededPlays24h, ...sound }) => {
+      const plays = [...this.soundPlays.values()].filter((e) => e.trackId === sound.trackId && e.at >= since);
+      const uses = [...this.posts.values()].filter((p) => p.sound?.trackId === sound.trackId).length;
+      const qualified = seededPlays24h + plays.filter((e) => e.kind === 'qualified_play').length;
+      const completed = plays.filter((e) => e.kind === 'play_completed').length;
+      return { trackId: sound.trackId, title: sound.title, artistName: sound.artistName, uses24h: uses, plays24h: qualified + completed, score: soundScore({ uses, qualified, completed }) };
+    });
+    return this.delay(rows.sort((a, b) => b.score - a.score || a.trackId.localeCompare(b.trackId)).slice(0, limit));
+  }
+
+  async logSoundPlay(trackId: string, play: { eventId: string; postId?: string; kind: PlayKind; listenMs: number }) {
+    if (!SOUNDS.some((s) => s.trackId === trackId)) notFound(`track ${trackId}`);
+    if (play.listenMs < 0) throw new TardyApiError('invalid', 'listen_ms must not be negative');
+    if (!this.soundPlays.has(play.eventId)) this.soundPlays.set(play.eventId, { trackId, kind: play.kind, at: Date.now() });
+    return this.delay(undefined);
   }
 
   async membership() {

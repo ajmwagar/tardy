@@ -2,8 +2,10 @@ import { FlashList, type ViewToken } from '@shopify/flash-list';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useIsFocused } from 'expo-router';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+import { useSoundPlays } from '@/audio/use-sound-plays';
 
 import { DoubleTapLike } from '@/components/double-tap-like';
 import { BreakingTicker } from '@/components/breaking-ticker';
@@ -37,6 +39,7 @@ const Reel = memo(function Reel({ post, active, height }: { post: Post; active: 
   const muted = useStore((s) => s.muted);
   const [expanded, setExpanded] = useState(false);
   const media = post.media[0];
+  useSoundPlays(post, active, muted);
 
   const openProfile = () => author && router.push({ pathname: '/profile/[handle]', params: { handle: author.handle } });
   const share = () => router.push({ pathname: '/share', params: { postId: post.id } });
@@ -126,6 +129,18 @@ const Reel = memo(function Reel({ post, active, height }: { post: Post; active: 
         <Text style={styles.caption} numberOfLines={expanded ? 6 : 1} onPress={() => setExpanded((e) => !e)}>
           {post.caption}
         </Text>
+        {post.sound && (
+          <Pressable
+            style={styles.sound}
+            onPress={() => router.push({ pathname: '/sounds', params: { trackId: post.sound!.trackId } })}
+            accessibilityRole="button"
+            accessibilityLabel={`Sound: ${post.sound.title} by ${post.sound.artistName}. See trending sounds`}>
+            <Icon name="music.note" size={12} color="#fff" />
+            <Text style={styles.soundText} numberOfLines={1}>
+              {post.sound.title} · {post.sound.attribution ?? post.sound.artistName}
+            </Text>
+          </Pressable>
+        )}
         <View style={styles.metaRow}>
           {post.status && <StatusPill value={post.status} compact />}
           <StyleChip style={post.style} variant="overlay" />
@@ -285,6 +300,8 @@ const styles = StyleSheet.create({
   follow: { borderRadius: 999, paddingHorizontal: 12, paddingVertical: 4, backgroundColor: colors.primary },
   followText: { color: colors.onPrimary, fontSize: 12, fontWeight: '800' },
   caption: { color: '#fff', fontSize: 14, lineHeight: 19, ...shadow },
+  sound: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start', maxWidth: '85%' },
+  soundText: { color: '#fff', fontSize: 13, fontWeight: '600', ...shadow },
   metaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, alignItems: 'center' },
   chip: {
     flexDirection: 'row',

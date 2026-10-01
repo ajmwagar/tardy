@@ -21,6 +21,8 @@ import type {
   Session,
   SharedLink,
   AutopayMandate,
+  PostSound,
+  TrendingSound,
   Membership,
   SharedPostRef,
   SignedIn,
@@ -96,6 +98,14 @@ export const account: Decoder<Account> = object<Account>({
   hosting: optional(oneOf(['managed', 'connected'] as const)),
 });
 
+const postSound: Decoder<PostSound> = object<PostSound>({
+  trackId: string,
+  title: string,
+  artistName: string,
+  durationMs: integer,
+  attribution: optional(string),
+});
+
 const media: Decoder<MediaItem> = tagged<MediaItem>('type', {
   image: object<Extract<MediaItem, { type: 'image' }>>({ type: oneOf(['image']), url: string, width: integer, height: integer }),
   video: object<Extract<MediaItem, { type: 'video' }>>({
@@ -113,6 +123,7 @@ export const post: Decoder<Post> = object<Post>({
   authorId: string,
   projectId: optional(string),
   collaboratorIds: optional(array(string)),
+  sound: optional(postSound),
   format: oneOf(POST_FORMATS),
   // Open set: a style this client does not know yet is dropped, not an error.
   style: optional(knownOf(POST_STYLES)),
@@ -223,6 +234,17 @@ export const conversation: Decoder<ThreadRef & { lastMessage?: Message; unreadCo
   lastMessage: optional(message),
   unreadCount: optional(integer),
 });
+
+/** `GET /v1/audio/trending` rows: `{ track, uses_24h, qualified_plays_24h, score }`. */
+export const trendingSound: Decoder<TrendingSound> = map(
+  object<{ track: { id: string; title: string; artistName: string }; uses24h: number; qualifiedPlays24h: number; score: number }>({
+    track: object<{ id: string; title: string; artistName: string }>({ id: string, title: string, artistName: string }),
+    uses24h: wire('uses_24h', integer),
+    qualifiedPlays24h: wire('qualified_plays_24h', integer),
+    score: integer,
+  }),
+  ({ track, uses24h, qualifiedPlays24h, score }) => ({ trackId: track.id, title: track.title, artistName: track.artistName, uses24h, plays24h: qualifiedPlays24h, score }),
+);
 
 const PLAN_IDS = allOf<PlanId>()(['free', 'builder', 'studio']);
 

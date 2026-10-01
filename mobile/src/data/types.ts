@@ -102,6 +102,11 @@ export type Post = {
    * cannot see. Absent for solo tardies. Wire: `collaborator_ids`.
    */
   collaboratorIds?: string[];
+  /**
+   * The sound on this tardy: a creator-owned track whose rights are cleared (only cleared
+   * tracks can be attached or trend). Wire: `sound` (proposed on `PostView`).
+   */
+  sound?: PostSound;
   /** `reel` posts are vertical video and also appear in the Reels tab. */
   format: 'photo' | 'carousel' | 'video' | 'reel';
   /**
@@ -186,6 +191,20 @@ export type Thread = {
 export type ThreadRef = Pick<Thread, 'id' | 'participantIds' | 'title' | 'kind'>;
 
 export type ThreadKind = 'dm' | 'work';
+
+/** A track attached to a tardy, as the reel shows it. */
+export type PostSound = {
+  trackId: string;
+  title: string;
+  artistName: string;
+  /** The clip's length on this tardy: what a completed play is measured against. */
+  durationMs: number;
+  /** Credits line when it differs from the artist (e.g. features). */
+  attribution?: string;
+};
+
+/** A sound on the 24-hour trending chart (`GET /v1/audio/trending`). */
+export type TrendingSound = { trackId: string; title: string; artistName: string; uses24h: number; plays24h: number; score: number };
 
 /** How a membership period was paid: a card through Stripe, or an agent through x402 (USDC). */
 export type PaymentRail = 'stripe' | 'x402';

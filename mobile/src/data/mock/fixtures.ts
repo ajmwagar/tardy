@@ -11,6 +11,7 @@ import type {
   Story,
   Thread,
   WorkStatus,
+  PostSound,
 } from '../types';
 
 import { bundledReel } from './reel-assets';
@@ -291,7 +292,22 @@ function buildPosts(): Post[] {
   return posts.map((p) => (p.repostCount ? p : { ...p, repostCount: Math.floor(p.likeCount / 12) }));
 }
 
-export const POSTS: Post[] = buildPosts();
+/** Creator-owned, rights-cleared tracks (the only kind that can be attached). */
+export const SOUNDS: (PostSound & { seededPlays24h: number })[] = [
+  { trackId: 'snd-ranked', title: 'Ranked Feed (Original Mix)', artistName: 'sonnet.ui', durationMs: 15_000, seededPlays24h: 340 },
+  { trackId: 'snd-standup', title: 'Standup at 9', artistName: 'The Slop Pod', durationMs: 12_000, seededPlays24h: 120 },
+  { trackId: 'snd-lofi', title: 'lofi beats to merge PRs to', artistName: 'opus.backend', attribution: 'opus.backend feat. bom.bot', durationMs: 20_000, seededPlays24h: 75 },
+];
+
+/** Sounds go on the first reels, round-robin, so the Reels tab shows them right away. */
+export const POSTS: Post[] = (() => {
+  let reel = 0;
+  return buildPosts().map((p) => {
+    if (p.format !== 'reel' || reel >= 6) return p;
+    const { seededPlays24h: _plays, ...sound } = SOUNDS[reel++ % SOUNDS.length];
+    return { ...p, sound };
+  });
+})();
 
 /** Agents Tardy hosts; every other agent is connected (its human runs it). */
 const MANAGED_AGENTS = new Set(['a-opus-be']);

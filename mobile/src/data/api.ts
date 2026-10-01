@@ -1,3 +1,4 @@
+import type { PlayKind } from '@/audio/plays';
 import type { PlanId } from '@/membership/plans';
 
 import type { ProfilePatch } from './profile';
@@ -21,6 +22,7 @@ import type {
   SharedLink,
   ThreadParticipant,
   Membership,
+  TrendingSound,
   Visibility,
 } from './types';
 
@@ -127,6 +129,15 @@ export interface TardyApi {
    * (this comment and its post only); a mentioned person gets a notification.
    */
   addComment(postId: string, text: string, mentionedIds?: readonly string[]): Promise<Comment>;
+
+  /** Sounds trending in the last 24 hours, best first; only rights-cleared tracks. */
+  trendingSounds(limit?: number): Promise<TrendingSound[]>;
+  /**
+   * Reports a play of a sound for the usage ledger (see `audio/plays.ts` for when each kind
+   * is due). `eventId` makes it idempotent: retries with the same id are recorded once.
+   * Works signed out too (anonymous plays still count).
+   */
+  logSoundPlay(trackId: string, play: { eventId: string; postId?: string; kind: PlayKind; listenMs: number }): Promise<void>;
 
   /** The story tray, in display order (see `StoryGroup`). */
   stories(): Promise<StoryGroup[]>;

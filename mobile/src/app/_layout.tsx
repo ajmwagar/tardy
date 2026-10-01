@@ -85,6 +85,16 @@ export default function RootLayout() {
               contentStyle: { backgroundColor: colors.surface },
             }}
           />
+          <Stack.Screen
+            name="sounds"
+            options={{
+              presentation: 'formSheet',
+              sheetAllowedDetents: [0.5, 1],
+              sheetGrabberVisible: true,
+              sheetCornerRadius: 16,
+              contentStyle: { backgroundColor: colors.surface },
+            }}
+          />
           <Stack.Screen name="stories/[authorId]" options={{ presentation: 'fullScreenModal', animation: 'fade' }} />
           <Stack.Screen name="post/[postId]" />
           <Stack.Screen

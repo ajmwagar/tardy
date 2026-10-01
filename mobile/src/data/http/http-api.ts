@@ -19,11 +19,13 @@ import type {
   StoryGroup,
   Thread,
   ThreadParticipant,
+  TrendingSound,
   ThreadRef,
   Visibility,
 } from '../types';
 import { array, isoToMs, snakeKeys, TardyWireError, type Decoder } from './codec';
 import * as W from './wire';
+import type { PlayKind } from '@/audio/plays';
 import type { PlanId } from '@/membership/plans';
 import { conversationPlan, sameMembers } from '@/share/conversation-plan';
 import { tardyUrl } from '@/share/links';
@@ -459,6 +461,16 @@ export class HttpTardyApi implements TardyApi {
 
   generateAvatar(): Promise<Account> {
     return this.request('POST', '/v1/profile/avatar/generate', { decode: W.account });
+  }
+
+  trendingSounds(limit = 20): Promise<TrendingSound[]> {
+    return this.request('GET', '/v1/audio/trending', { query: { limit: String(limit) }, decode: array(W.trendingSound), auth: 'none' });
+  }
+
+  async logSoundPlay(trackId: string, play: { eventId: string; postId?: string; kind: PlayKind; listenMs: number }): Promise<void> {
+    await this.request('POST', `/v1/audio/tracks/${segment(trackId)}/usage`, {
+      body: { event_id: play.eventId, kind: play.kind, listen_ms: play.listenMs, ...(play.postId && { post_id: play.postId }) },
+    });
   }
 
   membership(): Promise<Membership> {
