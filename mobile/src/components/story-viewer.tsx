@@ -9,6 +9,7 @@ import { scheduleOnRN } from 'react-native-worklets';
 import { openWebCheckout } from '@/config';
 import type { Story, StoryGroup } from '@/data/types';
 import { markStoriesSeen, useAccount } from '@/state/store';
+import { BOOSTED_LABEL, isGroupBoosted } from '@/stories/boost';
 import { nextPosition, previousPosition, storyDurationMs, tapAction, type StoryPosition } from '@/stories/playback';
 import { colors, radius, timeAgo } from '@/theme';
 
@@ -201,6 +202,9 @@ function StoryHeader({
   const insets = useSafeAreaInsets();
   const author = useAccount(group.authorId);
   const story = group.stories[index];
+  // Paid placement is disclosed in words, not only by the red ring in the tray.
+  const [now] = useState(Date.now);
+  const boosted = isGroupBoosted(group, now);
   return (
     <View pointerEvents={hidden ? 'none' : 'box-none'} style={[styles.header, { paddingTop: insets.top + 6, opacity: hidden ? 0 : 1 }]}>
       <View style={styles.segments}>
@@ -215,6 +219,11 @@ function StoryHeader({
         <View style={styles.nameLine}>
           <NameLine account={author} style={styles.shadowText} />
           <Text style={[styles.time, styles.shadowText]}>{timeAgo(story.createdAt)}</Text>
+          {boosted && (
+            <View style={styles.boostedTag} accessibilityLabel="Boosted story">
+              <Text style={styles.boostedText}>{BOOSTED_LABEL}</Text>
+            </View>
+          )}
         </View>
         <PressableScale onPress={onClose} accessibilityRole="button" accessibilityLabel="Close stories">
           <Icon name="xmark" size={22} color="#fff" weight="semibold" />
@@ -251,6 +260,8 @@ const styles = StyleSheet.create({
   authorRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 2 },
   nameLine: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
   time: { color: 'rgba(255,255,255,0.75)', fontSize: 13, fontWeight: '500' },
+  boostedTag: { paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4, backgroundColor: colors.overlay },
+  boostedText: { color: colors.text, fontSize: 11, fontWeight: '700' },
   shadowText: { textShadowColor: 'rgba(0,0,0,0.5)', textShadowRadius: 4, textShadowOffset: { width: 0, height: 1 } },
 
   boostHost: { alignSelf: 'flex-start', marginLeft: 2 },

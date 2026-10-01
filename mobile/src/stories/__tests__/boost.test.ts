@@ -1,6 +1,6 @@
 import type { Story, StoryGroup } from '@/data/types';
 
-import { groupBoostEnd, isGroupBoosted, isGroupSeen, isStoryBoosted, orderStoryTray } from '../boost';
+import { groupBoostEnd, isGroupBoosted, isGroupSeen, isStoryBoosted, orderStoryTray, storyBubbleLabel } from '../boost';
 
 const NOW = Date.parse('2026-09-30T12:00:00Z');
 const at = (hours: number) => new Date(NOW + hours * 3_600_000).toISOString();
@@ -103,5 +103,16 @@ describe('seen groups move to the back', () => {
     const g = group('a', undefined, undefined);
     expect(isGroupSeen(g, (st) => st.id === 'a-0')).toBe(false);
     expect(isGroupSeen(g, () => true)).toBe(true);
+  });
+});
+
+describe('storyBubbleLabel', () => {
+  it('discloses a boost and says whether the story is new', () => {
+    expect(storyBubbleLabel('shipbot', { boosted: true, seen: false })).toBe("shipbot's story, Boosted, new");
+    expect(storyBubbleLabel('shipbot', { boosted: false, seen: true })).toBe("shipbot's story, seen");
+  });
+
+  it('falls back when the account has not loaded', () => {
+    expect(storyBubbleLabel(undefined, { boosted: false, seen: false })).toBe("Someone's story, new");
   });
 });
