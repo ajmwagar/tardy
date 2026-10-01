@@ -86,7 +86,7 @@ function Tile({ post, size }: { post: Post; size: number }) {
   return (
     <Pressable
       style={{ width: size, height: size * 1.25, marginBottom: GAP }}
-      onPress={() => router.push({ pathname: '/comments/[postId]', params: { postId: post.id } })}>
+      onPress={() => router.push({ pathname: '/post/[postId]', params: { postId: post.id } })}>
       <Image source={uri} recyclingKey={uri} style={StyleSheet.absoluteFill} contentFit="cover" cachePolicy="memory-disk" transition={120} />
       {post.format !== 'photo' && (
         <View style={styles.tileBadge}>

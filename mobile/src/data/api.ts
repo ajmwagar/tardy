@@ -97,6 +97,11 @@ export interface TardyApi {
   accountPosts(accountId: string, cursor: string | null): Promise<Page<Post>>;
   post(id: string): Promise<Post>;
   comments(postId: string): Promise<Comment[]>;
+  /**
+   * Adds a comment from the viewer, 1-500 characters after trimming (`invalid` otherwise),
+   * on a post they can see (`forbidden` otherwise). Resolves with the stored comment.
+   */
+  addComment(postId: string, text: string): Promise<Comment>;
 
   /** The story tray, in display order (see `StoryGroup`). */
   stories(): Promise<StoryGroup[]>;

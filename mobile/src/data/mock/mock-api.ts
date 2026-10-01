@@ -17,6 +17,7 @@ import { TardyApiError, type TardyApi } from '../api';
 import type {
   Account,
   AuthCredential,
+  Comment,
   EngagementAction,
   Message,
   NotificationKind,
@@ -101,6 +102,7 @@ export class MockTardyApi implements TardyApi {
   private following: Set<string>;
   private history: EngagementAction[] = [];
   private messageLog: Message[] = [...MESSAGES];
+  private commentLog: Comment[] = [...COMMENTS];
   /** Per (viewer, thread): index into the thread's messages of the last one read. */
   private threadReadThrough = new Map<string, number>();
   /** Per viewer: notifications at or before this time are read. */
@@ -347,7 +349,24 @@ export class MockTardyApi implements TardyApi {
 
   async comments(postId: string) {
     this.visiblePost(postId);
-    return this.delay(COMMENTS.filter((c) => c.postId === postId && this.canSeeAccountId(c.authorId)));
+    return this.delay(this.commentLog.filter((c) => c.postId === postId && this.canSeeAccountId(c.authorId)));
+  }
+
+  async addComment(postId: string, text: string) {
+    const post = this.visiblePost(postId);
+    const body = text.trim();
+    if (body.length === 0 || body.length > 500) throw new TardyApiError('invalid', 'Comments are 1 to 500 characters.');
+    const comment: Comment = {
+      id: `${postId}-c${this.commentLog.length}`,
+      postId,
+      authorId: this.viewerId,
+      text: body,
+      createdAt: new Date().toISOString(),
+      likeCount: 0,
+    };
+    this.commentLog.push(comment);
+    this.posts.set(postId, { ...post, commentCount: post.commentCount + 1 });
+    return this.delay(comment);
   }
 
   async stories() {
