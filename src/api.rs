@@ -305,7 +305,7 @@ pub(crate) struct SessionView {
     token: String,
     account_id: Uuid,
     provider: String,
-    expires_at: u64,
+    expires_at_ms: u64,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -326,7 +326,7 @@ pub(crate) struct AccountView {
 pub(crate) struct SignedInView {
     session: SessionView,
     account: AccountView,
-    onboarded_at: Option<u64>,
+    onboarded_at_ms: Option<u64>,
 }
 
 async fn create_session(
@@ -471,16 +471,16 @@ async fn list_profiles(
 }
 
 fn signed_in_view(value: HumanSession) -> SignedInView {
-    let onboarded_at = value.profile.onboarded_at_ms;
+    let onboarded_at_ms = value.profile.onboarded_at_ms;
     SignedInView {
         session: SessionView {
             token: value.token,
             account_id: value.profile.profile_id,
             provider: value.provider,
-            expires_at: value.expires_at_ms,
+            expires_at_ms: value.expires_at_ms,
         },
         account: account_view(value.profile),
-        onboarded_at,
+        onboarded_at_ms,
     }
 }
 
