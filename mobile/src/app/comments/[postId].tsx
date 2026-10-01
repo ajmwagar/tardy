@@ -129,11 +129,16 @@ export default function CommentsScreen() {
           maxLength={MAX_LENGTH}
           multiline
         />
-        {draft.trim() ? (
-          <PressableScale style={styles.send} onPress={send} disabled={sending}>
-            <Icon name="arrow.up" size={16} color={colors.onPrimary} weight="bold" />
-          </PressableScale>
-        ) : null}
+        {/* Always laid out (dimmed when empty) so the input doesn't jump wider and narrower. */}
+        <PressableScale
+          style={[styles.send, !draft.trim() && styles.sendDisabled]}
+          onPress={send}
+          disabled={!draft.trim() || sending}
+          accessibilityRole="button"
+          accessibilityLabel="Post comment"
+          accessibilityState={{ disabled: !draft.trim() || sending, busy: sending }}>
+          <Icon name="arrow.up" size={16} color={colors.onPrimary} weight="bold" />
+        </PressableScale>
       </View>
     </KeyboardAvoidingView>
   );
@@ -171,4 +176,5 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   send: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.primary },
+  sendDisabled: { opacity: 0.35 },
 });

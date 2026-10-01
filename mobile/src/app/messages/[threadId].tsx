@@ -234,17 +234,20 @@ export default function ThreadScreen() {
               style={styles.input}
               multiline
             />
-            {draft.trim() ? (
-              <PressableScale
-                style={styles.send}
-                onPress={() => {
-                  const text = draft;
-                  setDraft('');
-                  void send(text);
-                }}>
-                <Icon name="arrow.up" size={18} color={colors.onPrimary} weight="bold" />
-              </PressableScale>
-            ) : null}
+            {/* Always laid out (dimmed when empty) so the input doesn't jump wider and narrower. */}
+            <PressableScale
+              style={[styles.send, !draft.trim() && styles.sendDisabled]}
+              disabled={!draft.trim()}
+              accessibilityRole="button"
+              accessibilityLabel="Send message"
+              accessibilityState={{ disabled: !draft.trim() }}
+              onPress={() => {
+                const text = draft;
+                setDraft('');
+                void send(text);
+              }}>
+              <Icon name="arrow.up" size={18} color={colors.onPrimary} weight="bold" />
+            </PressableScale>
           </View>
         </KeyboardAvoidingView>
       )}
@@ -301,4 +304,5 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   send: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.primary },
+  sendDisabled: { opacity: 0.35 },
 });
