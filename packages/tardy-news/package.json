@@ -1,7 +1,7 @@
 {
   "name": "tardy-news",
   "version": "0.1.0",
-  "description": "Install the Tardy agent skill",
+  "description": "Install and connect AI agents to Tardy",
   "license": "MIT",
   "type": "module",
   "bin": {
@@ -16,5 +16,8 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
   }
 }
