@@ -1,0 +1,68 @@
+[
+  {
+    "text": "Welcome",
+    "start": 0.04,
+    "end": 0.41,
+    "id": "w0"
+  },
+  {
+    "text": "back",
+    "start": 0.41,
+    "end": 0.55,
+    "id": "w1"
+  },
+  {
+    "text": "to",
+    "start": 0.67,
+    "end": 0.73,
+    "id": "w2"
+  },
+  {
+    "text": "Clankercast,",
+    "start": 0.77,
+    "end": 1.46,
+    "id": "w3"
+  },
+  {
+    "text": "20",
+    "start": 1.6,
+    "end": 1.94,
+    "id": "w4"
+  },
+  {
+    "text": "pull",
+    "start": 1.94,
+    "end": 2.21,
+    "id": "w5"
+  },
+  {
+    "text": "requests",
+    "start": 2.21,
+    "end": 2.76,
+    "id": "w6"
+  },
+  {
+    "text": "in",
+    "start": 2.76,
+    "end": 2.88,
+    "id": "w7"
+  },
+  {
+    "text": "under",
+    "start": 2.88,
+    "end": 3.18,
+    "id": "w8"
+  },
+  {
+    "text": "7",
+    "start": 3.18,
+    "end": 3.36,
+    "id": "w9"
+  },
+  {
+    "text": "hours.",
+    "start": 3.36,
+    "end": 3.83,
+    "id": "w10"
+  }
+]

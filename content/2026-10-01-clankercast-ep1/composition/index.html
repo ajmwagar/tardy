@@ -1,0 +1,735 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1080, height=1920" />
+    <title>Clankercast ep. 1</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      /* Brand: mobile/src/theme/index.ts. SF Rounded is copied locally for the render and gitignored. */
+      @font-face {
+        font-family: "TardyRounded";
+        src: url("assets/fonts/SFNSRounded.ttf") format("truetype");
+        font-weight: 100 1000;
+      }
+      :root {
+        --bg: #0a0a0d;
+        --surface: #15151b;
+        --separator: #26262f;
+        --text: #f7f7fa;
+        --text2: #a1a1ae;
+        --primary: #ffc21a;
+        --on-primary: #14110a;
+        --alarm: #ff2d3d;
+        --shipped: #2be07b;
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        width: 1080px;
+        height: 1920px;
+        overflow: hidden;
+        background: var(--bg);
+      }
+      #root {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: var(--bg);
+        font-family: "TardyRounded", sans-serif;
+        font-weight: 900;
+        color: var(--text);
+      }
+      .layer {
+        position: absolute;
+        inset: 0;
+      }
+
+      /* ---- top half: the studio, shot like a podcast clip ----------------------------- */
+      #stage {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 1080px;
+        height: 946px;
+        overflow: hidden;
+      }
+      #cam {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 1536px;
+        height: 1024px;
+        transform-origin: 0 0;
+      }
+      #studio-img {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 1536px;
+        height: 1024px;
+      }
+      /* LED faces on the blank visors, placed in source-image pixels */
+      .led {
+        position: absolute;
+        width: 90px;
+        height: 60px;
+        margin: -30px 0 0 -45px;
+      }
+      #led-servo {
+        left: 446px;
+        top: 364px;
+        transform: perspective(300px) rotateY(24deg);
+      }
+      #led-torque {
+        left: 1030px;
+        top: 372px;
+        transform: perspective(300px) rotateY(-24deg);
+      }
+      .led i {
+        position: absolute;
+        display: block;
+        border-radius: 3px;
+      }
+      #led-servo i {
+        background: #f7f7fa;
+        box-shadow: 0 0 6px #f7f7fa, 0 0 14px rgba(247, 247, 250, 0.7);
+      }
+      #led-torque i {
+        background: #ffc21a;
+        box-shadow: 0 0 6px #ffc21a, 0 0 14px rgba(255, 194, 26, 0.7);
+      }
+      #shade {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 360px;
+        background: linear-gradient(to bottom, rgba(10, 10, 13, 0), rgba(10, 10, 13, 0.92));
+      }
+      #bug {
+        position: absolute;
+        left: 48px;
+        top: 236px;
+        display: flex;
+        gap: 12px;
+      }
+      #bug span {
+        display: block;
+        padding: 8px 18px;
+        border-radius: 999px;
+        background: rgba(10, 10, 13, 0.78);
+        border: 2px solid rgba(255, 194, 26, 0.5);
+        font-size: 30px;
+        letter-spacing: 0.06em;
+      }
+      #bug .rec {
+        width: 14px;
+        height: 14px;
+        padding: 0;
+        margin: 15px 0 0 4px;
+        border: 0;
+        border-radius: 50%;
+        background: var(--alarm);
+      }
+      #captions {
+        position: absolute;
+        left: 50px;
+        right: 50px;
+        top: 700px;
+        height: 220px;
+        display: flex;
+        flex-wrap: wrap;
+        align-content: center;
+        justify-content: center;
+        column-gap: 16px;
+        row-gap: 4px;
+        font-size: 76px;
+        line-height: 96px;
+        letter-spacing: -0.02em;
+        text-align: center;
+      }
+      #captions .w {
+        display: inline-block;
+        padding: 0 12px;
+        border-radius: 20px;
+        color: var(--text);
+        text-shadow: 0 4px 18px rgba(0, 0, 0, 0.9);
+      }
+      #captions .w.todo {
+        color: var(--text2);
+      }
+      #captions .w.now {
+        color: var(--on-primary);
+        background: var(--primary);
+        text-shadow: none;
+      }
+      #divider {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 946px;
+        height: 8px;
+        background: var(--primary);
+      }
+
+      /* ---- bottom half: the mega ramp and the receipts --------------------------------- */
+      #ramp {
+        position: absolute;
+        left: 0;
+        top: 954px;
+        width: 1080px;
+        height: 966px;
+      }
+      #hud {
+        position: absolute;
+        left: 40px;
+        top: 976px;
+        padding: 8px 18px;
+        border-radius: 14px;
+        background: rgba(10, 10, 13, 0.82);
+        border: 2px solid var(--separator);
+        font-family: monospace;
+        font-weight: 700;
+        font-size: 32px;
+      }
+      #hud b {
+        color: var(--primary);
+      }
+      .card {
+        position: absolute;
+        left: 40px;
+        top: 1050px;
+        max-width: 840px;
+        padding: 20px 28px;
+        border-radius: 28px;
+        background: rgba(21, 21, 27, 0.95);
+        border: 2px solid var(--separator);
+        opacity: 0;
+      }
+      .meta {
+        display: block;
+        margin-bottom: 12px;
+        font-family: monospace;
+        font-weight: 700;
+        font-size: 30px;
+        color: var(--primary);
+      }
+      .title {
+        display: block;
+        font-size: 44px;
+        line-height: 52px;
+      }
+      .huge {
+        display: block;
+        font-size: 112px;
+        line-height: 130px;
+        letter-spacing: -0.04em;
+      }
+      .row {
+        display: flex;
+        align-items: baseline;
+        gap: 18px;
+      }
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 10px;
+      }
+      .chip {
+        display: block;
+        padding: 4px 16px;
+        border-radius: 14px;
+        font-family: monospace;
+        font-weight: 700;
+        font-size: 34px;
+        background: var(--alarm);
+        color: var(--on-primary);
+      }
+      .check {
+        display: flex;
+        gap: 20px;
+        font-family: monospace;
+        font-weight: 700;
+        font-size: 40px;
+        line-height: 58px;
+      }
+      .check b {
+        display: block;
+        min-width: 220px;
+      }
+      code {
+        display: block;
+        font-family: monospace;
+        font-weight: 700;
+        font-size: 29px;
+        line-height: 44px;
+        white-space: pre;
+      }
+      #wm {
+        display: flex;
+        align-items: baseline;
+        font-size: 120px;
+        line-height: 120px;
+        letter-spacing: -0.05em;
+      }
+      #wm .dot {
+        display: inline-block;
+        width: 28px;
+        height: 28px;
+        margin-left: 6px;
+        border-radius: 50%;
+        background: var(--alarm);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="30" data-width="1080" data-height="1920">
+      <div id="top" class="layer clip" data-start="0" data-duration="30" data-track-index="0">
+        <div id="stage">
+          <div id="cam" data-layout-allow-overflow>
+            <img id="studio-img" src="assets/studio.jpg" alt="" />
+            <div id="led-servo" class="led"></div>
+            <div id="led-torque" class="led"></div>
+          </div>
+          <div id="shade"></div>
+        </div>
+        <div id="bug"><span class="rec"></span><span>CLANKERCAST</span><span>EP. 1</span></div>
+        <div id="captions"></div>
+        <div id="divider"></div>
+      </div>
+
+      <canvas id="ramp" class="clip" width="1080" height="966" data-start="0" data-duration="30" data-track-index="1"></canvas>
+
+      <div id="overlay" class="layer clip" data-start="0" data-duration="30" data-track-index="2">
+        <div id="hud">PR <b id="hud-n">20/20</b> · <span id="hud-pr">#7 · 10:49 UTC</span></div>
+
+        <div id="c-hook" class="card">
+          <span class="meta">03:50 → 10:49 UTC</span>
+          <div class="row"><span class="huge" style="color: #ffc21a">20 PRs</span><span class="title">in 6h 59m</span></div>
+        </div>
+        <div id="c-reviews" class="card">
+          <span class="meta">APPROVING REVIEWS</span>
+          <div class="row"><span class="huge" style="color: #ff2d3d">0</span><span class="title">of 20 PRs</span></div>
+        </div>
+        <div id="c-pr1" class="card">
+          <span class="meta">#1 · 03:50 UTC</span>
+          <span class="title">Tardy iOS app (Expo)</span>
+          <span class="huge" style="color: #ffc21a">+23,055</span>
+        </div>
+        <div id="c-red" class="card">
+          <span class="meta">MERGED WITH A RED CHECK</span>
+          <span class="title">6 PRs</span>
+          <div class="chips"><span class="chip">#10</span><span class="chip">#15</span><span class="chip">#16</span><span class="chip">#17</span><span class="chip">#18</span><span class="chip">#20</span></div>
+        </div>
+        <div id="c-checks" class="card">
+          <span class="meta">CI ON THE 16 PRs THAT RAN IT</span>
+          <div class="check"><b>container</b><span style="color: #ff2d3d">✗ 4 red</span></div>
+          <div class="check"><b>rust</b><span style="color: #ff2d3d">✗ 2 red</span></div>
+          <div class="check"><b>mobile</b><span style="color: #2be07b">✓ 16 / 16</span></div>
+        </div>
+        <div id="c-bug" class="card" style="background: #ff2d3d; border-color: #ff2d3d">
+          <span class="title" style="color: #14110a">BUG: 2 videos playing at once</span>
+        </div>
+        <div id="c-diff" class="card">
+          <span class="meta">#11 · 07:33 UTC · +12 −6</span>
+          <code>+ const focused = useIsFocused();</code>
+          <code>+ const playingId = focused ? activeId : null;</code>
+        </div>
+        <div id="c-end" class="card">
+          <div id="wm"><span>tardy</span><span class="dot"></span></div>
+          <span class="meta">CLANKERCAST · STAY TARDY.</span>
+        </div>
+      </div>
+
+      <!-- sound: brag's bundled bed (Sascha Ende, CC BY 4.0) under StableVoice Chatterbox hosts, Kenney SFX -->
+      <audio id="bed" src="assets/music/bed.mp3" data-start="0" data-duration="30" data-track-index="10" data-volume="1"
+        data-automation='{"version":1,"lanes":[{"target":"volume","points":[{"t":0,"v":0.13},{"t":27.9,"v":0.13},{"t":28.3,"v":0.4},{"t":30,"v":0.13}]}]}'></audio>
+      <audio id="vo-00" src="assets/vo/00-servo.wav" data-start="0.40" data-duration="3.91" data-track-index="11" data-volume="1"></audio>
+      <audio id="vo-01" src="assets/vo/01-torque.wav" data-start="4.66" data-duration="2.66" data-track-index="12" data-volume="1"></audio>
+      <audio id="vo-02" src="assets/vo/02-servo.wav" data-start="7.67" data-duration="3.90" data-track-index="11" data-volume="1"></audio>
+      <audio id="vo-03" src="assets/vo/03-torque.wav" data-start="11.92" data-duration="1.85" data-track-index="12" data-volume="1"></audio>
+      <audio id="vo-04" src="assets/vo/04-servo.wav" data-start="14.12" data-duration="4.50" data-track-index="11" data-volume="1"></audio>
+      <audio id="vo-05" src="assets/vo/05-torque.wav" data-start="18.97" data-duration="2.78" data-track-index="12" data-volume="1"></audio>
+      <audio id="vo-06" src="assets/vo/06-servo.wav" data-start="22.10" data-duration="1.47" data-track-index="11" data-volume="1"></audio>
+      <audio id="vo-07" src="assets/vo/07-torque.wav" data-start="23.92" data-duration="1.95" data-track-index="12" data-volume="1"></audio>
+      <audio id="vo-08" src="assets/vo/08-servo.wav" data-start="26.22" data-duration="1.55" data-track-index="11" data-volume="1"></audio>
+      <audio id="sfx-l0" src="assets/sfx/land.ogg" data-start="2.625" data-duration="0.57" data-track-index="13" data-volume="0.2"></audio>
+      <audio id="sfx-l1" src="assets/sfx/land.ogg" data-start="5.625" data-duration="0.57" data-track-index="13" data-volume="0.2"></audio>
+      <audio id="sfx-l2" src="assets/sfx/land.ogg" data-start="8.625" data-duration="0.57" data-track-index="13" data-volume="0.2"></audio>
+      <audio id="sfx-l3" src="assets/sfx/land.ogg" data-start="11.625" data-duration="0.57" data-track-index="13" data-volume="0.2"></audio>
+      <audio id="sfx-l4" src="assets/sfx/land.ogg" data-start="14.625" data-duration="0.57" data-track-index="13" data-volume="0.2"></audio>
+      <audio id="sfx-l5" src="assets/sfx/land.ogg" data-start="17.625" data-duration="0.57" data-track-index="13" data-volume="0.2"></audio>
+      <audio id="sfx-l6" src="assets/sfx/land.ogg" data-start="20.625" data-duration="0.57" data-track-index="13" data-volume="0.2"></audio>
+      <audio id="sfx-l7" src="assets/sfx/land.ogg" data-start="23.625" data-duration="0.57" data-track-index="13" data-volume="0.2"></audio>
+      <audio id="sfx-l8" src="assets/sfx/land.ogg" data-start="26.625" data-duration="0.57" data-track-index="13" data-volume="0.2"></audio>
+      <audio id="sfx-l9" src="assets/sfx/land.ogg" data-start="29.4" data-duration="0.57" data-track-index="13" data-volume="0.2"></audio>
+    </div>
+
+    <script src="data/voice.js"></script>
+    <script>
+      // Pure function of t: one proxy tween drives render(t), so every frame is reproducible.
+      const DUR = 30;
+
+      // What each host says, as displayed (whisper gives the timing, the script gives the words).
+      const DISPLAY = {
+        "00-servo": "Welcome back to Clankercast! 20 pull requests in under 7 hours.",
+        "01-torque": "And zero reviews. Not one approval.",
+        "02-servo": "Pull request number one was the iPhone app. 23,000 lines!",
+        "03-torque": "Six of them merged with a red check.",
+        "04-servo": "Four container builds, two Rust. The app's checks? Green every time they ran.",
+        "05-torque": "Okay. And the bug where two videos played at once?",
+        "06-servo": "Fixed in 12 lines.",
+        "07-torque": "Heh. Fine. That's actually clean.",
+        "08-servo": "Clankercast. Stay tardy.",
+      };
+
+      // Receipt cards in the bottom half, one per claim (facts.md).
+      const CARDS = [
+        ["c-hook", 0, 4.5],
+        ["c-reviews", 4.66, 7.55],
+        ["c-pr1", 7.67, 11.8],
+        ["c-red", 11.92, 14.0],
+        ["c-checks", 14.12, 18.85],
+        ["c-bug", 18.97, 21.98],
+        ["c-diff", 22.1, 26.1],
+        ["c-end", 26.22, 29.4],
+        ["c-hook", 29.45, 30.01], // back to frame 0 for the loop
+      ];
+
+      // Ramp gates = the 20 merged PRs in merge order, colored by CI (facts.md).
+      const GATES = [
+        [1, "03:50", "none"], [3, "04:09", "none"], [4, "05:25", "none"], [6, "05:43", "none"],
+        [2, "05:56", "green"], [8, "07:22", "green"], [9, "07:26", "green"], [11, "07:33", "green"],
+        [10, "07:59", "red"], [15, "08:00", "red"], [18, "08:17", "red"], [20, "08:29", "red"],
+        [21, "08:31", "green"], [16, "08:32", "red"], [13, "08:32", "green"], [14, "08:32", "green"],
+        [12, "08:32", "green"], [17, "08:32", "red"], [19, "08:33", "green"], [7, "10:49", "green"],
+      ];
+      const GATE_COLOR = { none: "#80808C", green: "#2BE07B", red: "#FF2D3D" };
+
+      const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+      const smooth = (x) => { x = clamp(x, 0, 1); return x * x * (3 - 2 * x); };
+      const easeOutBack = (x) => { x = clamp(x, 0, 1); const c = 1.7; return 1 + (c + 1) * Math.pow(x - 1, 3) + c * Math.pow(x - 1, 2); };
+      const $ = (id) => document.getElementById(id);
+
+      // Captions: display words take whisper's timings one-to-one. A count mismatch is a script bug.
+      const LINES = window.VOICE.map((v) => {
+        const words = DISPLAY[v.id].split(" ");
+        if (words.length !== v.words.length) throw new Error(`${v.id}: ${words.length} display words vs ${v.words.length} timed`);
+        const timed = words.map((w, i) => [w, v.start + v.words[i][1], v.start + v.words[i][2]]);
+        // chunk: break after sentence punctuation once a chunk has 3+ words, or at 8 words
+        const chunks = [];
+        let cur = [];
+        timed.forEach((w) => {
+          cur.push(w);
+          if (cur.length >= 8 || (cur.length >= 3 && /[.!?]$/.test(w[0]))) { chunks.push(cur); cur = []; }
+        });
+        if (cur.length) chunks.push(cur);
+        return { ...v, chunks };
+      });
+      const activeLine = (t) => LINES.find((L) => t >= L.start && t < L.start + L.dur) || null;
+      const lastLine = (t) => { let r = null; for (const L of LINES) if (t >= L.start) r = L; return r; };
+      function level(who, t) {
+        for (const L of LINES) {
+          if (L.who !== who || t < L.start || t >= L.start + L.dur) continue;
+          const db = L.rms[clamp(Math.floor((t - L.start) * 30), 0, L.rms.length - 1)];
+          return clamp((db + 42) / 26, 0, 1);
+        }
+        return 0;
+      }
+
+      // ---- top half -------------------------------------------------------------------------
+      const S0 = 946 / 1024; // wide: image height fits the stage
+      const SHOT = {
+        wide: { s: S0, fx: 768, fy: 512, sx: 540, sy: 473 },
+        servo: { s: S0 * 1.75, fx: 450, fy: 470, sx: 540, sy: 520 },
+        torque: { s: S0 * 1.75, fx: 1040, fy: 470, sx: 540, sy: 520 },
+        two: { s: S0 * 1.14, fx: 745, fy: 480, sx: 540, sy: 500 },
+      };
+      const SHOT_OF = { "00-servo": "wide", "07-torque": "two", "08-servo": "wide" };
+      function drawCamera(t) {
+        const L = lastLine(t);
+        const shot = SHOT[(L && (SHOT_OF[L.id] || L.who)) || "wide"];
+        const since = L ? t - L.start : t;
+        const s = shot.s * (1 + 0.035 * smooth(since / 4)); // slow push-in within each shot
+        let tx = shot.sx - shot.fx * s, ty = shot.sy - shot.fy * s;
+        tx = clamp(tx, 1080 - 1536 * s, 0);
+        ty = clamp(ty, 946 - 1024 * s, 0);
+        $("cam").style.transform = `translate(${tx.toFixed(1)}px, ${ty.toFixed(1)}px) scale(${s.toFixed(4)})`;
+      }
+
+      // LED faces: eyes + a 7-bar mouth driven by the host's own voice level
+      for (const who of ["servo", "torque"]) {
+        const el = $(`led-${who}`);
+        el.innerHTML = '<i class="e"></i><i class="e"></i>' + "<i></i>".repeat(7);
+      }
+      function drawLeds(t) {
+        const L = activeLine(t);
+        for (const who of ["servo", "torque"]) {
+          const lv = level(who, t);
+          const talking = L && L.who === who;
+          const bars = $(`led-${who}`).children;
+          const blink = ((t + (who === "torque" ? 1.3 : 0)) % 3.75) < 0.12; // 3.75 s divides 30: loop-safe
+          for (let k = 0; k < 2; k++) {
+            const e = bars[k];
+            e.style.left = `${18 + k * 34}px`;
+            e.style.top = "8px";
+            e.style.width = "20px";
+            e.style.height = blink ? "2px" : "7px";
+            e.style.opacity = talking ? 1 : 0.75;
+          }
+          for (let k = 0; k < 7; k++) {
+            const b = bars[2 + k];
+            const wobble = 0.55 + 0.45 * Math.abs(Math.sin(t * 23 + k * 1.7));
+            const h = talking ? 3 + 24 * lv * wobble * (1 - Math.abs(k - 3) / 5) : 3;
+            b.style.left = `${14 + k * 9}px`;
+            b.style.top = `${40 - h / 2}px`;
+            b.style.width = "5px";
+            b.style.height = `${h.toFixed(1)}px`;
+            b.style.opacity = talking ? 1 : 0.6;
+          }
+        }
+      }
+
+      let shownChunk = null;
+      function drawCaptions(t) {
+        let chunk = null;
+        LINES.forEach((L, i) => {
+          const next = LINES[i + 1] ? LINES[i + 1].start : DUR;
+          L.chunks.forEach((c, j) => {
+            const from = c[0][1] - 0.06;
+            const to = L.chunks[j + 1] ? L.chunks[j + 1][0][1] - 0.06 : Math.min(next - 0.02, c[c.length - 1][2] + 0.9);
+            if (t >= from && t < to) chunk = c;
+          });
+        });
+        const box = $("captions");
+        if (chunk !== shownChunk) {
+          box.innerHTML = chunk ? chunk.map((w) => `<span class="w">${w[0]}</span>`).join("") : "";
+          shownChunk = chunk;
+        }
+        if (!chunk) return;
+        chunk.forEach((w, i) => {
+          const now = t >= w[1] && t < w[2] + 0.04;
+          box.children[i].className = "w" + (now ? " now" : t < w[1] ? " todo" : "");
+          box.children[i].style.transform = `scale(${(now ? 1 + 0.07 * (1 - smooth((t - w[1]) / 0.18)) : 1).toFixed(3)})`;
+        });
+      }
+
+      function drawCards(t) {
+        const seen = {};
+        for (const [id, from, to] of CARDS) {
+          const on = t >= from && t < to;
+          if (on) seen[id] = t - from;
+          else if (!(id in seen)) seen[id] = null;
+        }
+        for (const id in seen) {
+          const el = $(id);
+          const k = seen[id];
+          el.style.opacity = k === null ? 0 : 1;
+          el.style.transform = k === null || id === "c-hook" && t < 1 ? "none" : `translateY(${(36 * (1 - easeOutBack(k / 0.3))).toFixed(1)}px) scale(${(0.94 + 0.06 * easeOutBack(k / 0.3)).toFixed(3)})`;
+        }
+      }
+
+      // ---- bottom half: the mega ramp --------------------------------------------------------
+      // Pseudo-3D racer. One period of the course is 200 units: a long drop, a runout with two PR
+      // gates, a kicker, a gap, a landing. SPEED x DUR = 10 periods, so the last frame is the first.
+      const cv = $("ramp");
+      const ctx = cv.getContext("2d");
+      const W = 1080, H = 966, HOR = 440, F = 420, CAM_H = 2.6, CAR_Z = 5;
+      const P = 200, DROP = 36, SPEED = (P * 10) / DUR, SEG = 2, ROAD = 6.4;
+      const KICK0 = 125, GAP0 = 145, GAP1 = 175;
+      const GATE_Z = [60, 110];
+
+      function local(z) {
+        const zp = ((z % P) + P) % P;
+        let y;
+        if (zp < 90) y = -DROP * smooth(zp / 90);
+        else if (zp < KICK0) y = -DROP;
+        else if (zp < GAP0) y = -DROP + 6 * smooth((zp - KICK0) / (GAP0 - KICK0));
+        else if (zp < GAP1) y = -DROP + 6 - 2 * ((zp - GAP0) / (GAP1 - GAP0)); // camera path across the gap
+        else y = -DROP + 4 - 4 * smooth((zp - GAP1) / (P - GAP1));
+        return { zp, y: y - DROP * Math.floor(z / P), gap: zp >= GAP0 && zp < GAP1 };
+      }
+      // seeded city lights far below the ramp
+      const LIGHTS = [];
+      { let seed = 11; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+        for (let i = 0; i < 220; i++) LIGHTS.push([rnd() * W, HOR + 40 + Math.pow(rnd(), 0.7) * (H - HOR - 40), rnd()]); }
+
+      function drawRamp(t) {
+        const zc = SPEED * t; // car z
+        const camZ = zc - CAR_Z;
+        const camY = local(zc).y + CAM_H;
+        const weave = 0.5 * Math.sin((2 * Math.PI * t) / 6);
+        const camX = weave * 0.5;
+        const landT = ((zc % P) - GAP1) / SPEED; // seconds since the last landing in this period
+        const shake = landT >= 0 && landT < 0.25 ? Math.sin(landT * 80) * 10 * (1 - landT / 0.25) : 0;
+        // the camera pitches with the ramp, like footage from a chase cam
+        const slope = (local(zc + 14).y - local(zc - 2).y) / 16;
+        const th = Math.atan(slope) * 0.9, cs = Math.cos(th), sn = Math.sin(th);
+        const proj = (x, y, z) => {
+          const dy = y - camY, dz = z - camZ;
+          const yv = dy * cs - dz * sn, zv = Math.max(0.3, dy * sn + dz * cs);
+          const s = F / zv;
+          return [W / 2 + (x - camX) * s, HOR - yv * s + shake, s];
+        };
+
+        // sky and the city below
+        const g = ctx.createLinearGradient(0, 0, 0, H);
+        g.addColorStop(0, "#22222B");
+        g.addColorStop(0.3, "#15151B");
+        g.addColorStop(1, "#0A0A0D");
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, W, H);
+        for (const [x, y, r] of LIGHTS) {
+          ctx.fillStyle = r > 0.8 ? "rgba(255,194,26,0.9)" : r > 0.5 ? "rgba(247,247,250,0.35)" : "rgba(255,194,26,0.35)";
+          ctx.fillRect(x, y, r > 0.8 ? 3 : 2, r > 0.8 ? 3 : 2);
+        }
+
+        // collect road segments and gates, draw far to near
+        const items = [];
+        const z0 = Math.floor(camZ / SEG) * SEG + SEG;
+        for (let z = z0; z < camZ + 150; z += SEG) {
+          const a = local(z), b = local(z + SEG);
+          if (a.gap || b.gap) {
+            if (!a.gap && b.gap) items.push({ z, kind: "lip", y: a.y });
+            continue;
+          }
+          items.push({ z, kind: "seg", ya: a.y, yb: b.y, n: Math.round(z / SEG) });
+          if (local(z - SEG).gap) items.push({ z, kind: "edge", y: a.y });
+        }
+        for (let k = Math.floor(camZ / P) - 1; k < Math.floor(camZ / P) + 2; k++) {
+          GATE_Z.forEach((gz, j) => {
+            const z = k * P + gz;
+            if (z > camZ + 1 && z < camZ + 150) items.push({ z, kind: "gate", idx: (((2 * k + j) % 20) + 20) % 20 });
+          });
+        }
+        items.sort((p, q) => q.z - p.z);
+        for (const it of items) {
+          if (it.kind === "seg") {
+            const n1 = proj(-ROAD / 2, it.ya, it.z), n2 = proj(ROAD / 2, it.ya, it.z);
+            const f1 = proj(-ROAD / 2, it.yb, it.z + SEG), f2 = proj(ROAD / 2, it.yb, it.z + SEG);
+            const r = 0.45;
+            const rn1 = proj(-ROAD / 2 - r, it.ya, it.z), rn2 = proj(ROAD / 2 + r, it.ya, it.z);
+            const rf1 = proj(-ROAD / 2 - r, it.yb, it.z + SEG), rf2 = proj(ROAD / 2 + r, it.yb, it.z + SEG);
+            const quad = (a, b, c, d, col) => { ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.lineTo(c[0], c[1]); ctx.lineTo(d[0], d[1]); ctx.fill(); };
+            // underside so the ramp reads as a structure in the air
+            const u1 = proj(-ROAD / 2, it.ya - 1.2, it.z), u2 = proj(ROAD / 2, it.ya - 1.2, it.z);
+            quad(rn1, rn2, u2, u1, "#15151B");
+            if (it.n % 10 === 0) { // support pillars down into the dark
+              for (const px of [-ROAD / 2 + 0.5, ROAD / 2 - 0.5]) {
+                const a = proj(px - 0.35, it.ya - 1.2, it.z), b = proj(px + 0.35, it.ya - 1.2, it.z), c = proj(px + 0.35, it.ya - 60, it.z), d = proj(px - 0.35, it.ya - 60, it.z);
+                quad(a, b, c, d, "#15151B");
+              }
+            }
+            const stripe = Math.floor(it.n / 2) % 2;
+            quad(rn1, rf1, f1, n1, stripe ? "#FFC21A" : "#14110A");
+            quad(n2, f2, rf2, rn2, stripe ? "#FFC21A" : "#14110A");
+            quad(n1, f1, f2, n2, stripe ? "#26262F" : "#22222B");
+            if (it.n % 4 === 0) { // center dashes
+              const c1 = proj(-0.08, it.ya, it.z), c2 = proj(0.08, it.ya, it.z), c3 = proj(0.08, it.yb, it.z + SEG), c4 = proj(-0.08, it.yb, it.z + SEG);
+              quad(c1, c2, c3, c4, "#A1A1AE");
+            }
+          } else if (it.kind === "lip" || it.kind === "edge") {
+            const a = proj(-ROAD / 2 - 0.45, it.y, it.z + (it.kind === "lip" ? SEG : 0)), b = proj(ROAD / 2 + 0.45, it.y, it.z + (it.kind === "lip" ? SEG : 0));
+            const c = proj(ROAD / 2 + 0.45, it.y - 2.5, it.z), d = proj(-ROAD / 2 - 0.45, it.y - 2.5, it.z);
+            ctx.fillStyle = "#15151B"; ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.lineTo(c[0], c[1]); ctx.lineTo(d[0], d[1]); ctx.fill();
+            ctx.strokeStyle = "#FFC21A"; ctx.lineWidth = Math.max(2, a[2] * 0.12); ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+          } else if (it.kind === "gate") {
+            const [pr, , ci] = GATES[it.idx];
+            const y = local(it.z).y;
+            const col = GATE_COLOR[ci];
+            const half = ROAD / 2 + 0.7;
+            const lb = proj(-half, y, it.z), lt = proj(-half, y + 4.4, it.z), rb = proj(half, y, it.z), rt = proj(half, y + 4.4, it.z);
+            const w = Math.max(2, lb[2] * 0.35);
+            ctx.fillStyle = col;
+            ctx.fillRect(lt[0] - w / 2, lt[1], w, lb[1] - lt[1]);
+            ctx.fillRect(rt[0] - w / 2, rt[1], w, rb[1] - rt[1]);
+            const bh = Math.max(4, lb[2] * 0.9);
+            ctx.fillRect(lt[0] - w / 2, lt[1], rt[0] - lt[0] + w, bh);
+            if (bh > 14) {
+              ctx.fillStyle = ci === "none" ? "#F7F7FA" : "#14110A";
+              ctx.font = `900 ${(bh * 0.8).toFixed(1)}px TardyRounded`;
+              ctx.textAlign = "center"; ctx.textBaseline = "middle";
+              ctx.fillText(`#${pr}`, (lt[0] + rt[0]) / 2, lt[1] + bh * 0.52);
+            }
+          }
+        }
+
+        // speed streaks, 0.5 s cycle (60 per loop)
+        ctx.strokeStyle = "rgba(247,247,250,0.18)";
+        ctx.lineWidth = 3;
+        for (let i = 0; i < 10; i++) {
+          const ph = ((t * 2 + i * 0.37) % 1);
+          const ang = (i / 10) * Math.PI * 2 + 0.3;
+          const r0 = 120 + ph * 520, r1 = r0 + 60 + ph * 120;
+          ctx.beginPath();
+          ctx.moveTo(W / 2 + Math.cos(ang) * r0, HOR + 120 + Math.sin(ang) * r0 * 0.6);
+          ctx.lineTo(W / 2 + Math.cos(ang) * r1, HOR + 120 + Math.sin(ang) * r1 * 0.6);
+          ctx.stroke();
+        }
+
+        // the car: tardy yellow, from behind
+        const r = local(zc);
+        let cy = r.y;
+        let pitch = 0;
+        if (r.gap) {
+          const u = r.zp - GAP0;
+          const takeoff = -DROP + 6 - DROP * Math.floor(zc / P);
+          cy = takeoff + 0.2667 * u - 0.0111 * u * u;
+          pitch = -0.08 + 0.16 * (u / 30);
+        }
+        const bounce = r.gap ? 0 : 0.04 * Math.sin(t * 40);
+        const base = proj(weave, r.gap ? cy - 6 : r.y, zc);
+        const body = proj(weave, cy + 0.35 + bounce, zc);
+        const k = body[2];
+        if (!r.gap) { ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.beginPath(); ctx.ellipse(base[0], base[1], k * 1.15, k * 0.22, 0, 0, Math.PI * 2); ctx.fill(); }
+        ctx.save();
+        ctx.translate(body[0], body[1]);
+        ctx.rotate(pitch * 0.4 + weave * 0.03);
+        const rr = (x, y, w, h, rad, col) => { ctx.fillStyle = col; ctx.beginPath(); ctx.roundRect(x, y, w, h, rad); ctx.fill(); };
+        rr(-k * 1.05, -k * 0.05, k * 0.38, k * 0.42, k * 0.08, "#0A0A0D"); // wheels
+        rr(k * 0.67, -k * 0.05, k * 0.38, k * 0.42, k * 0.08, "#0A0A0D");
+        rr(-k * 0.72, -k * 0.95, k * 1.44, k * 0.5, k * 0.18, "#FFC21A"); // cabin
+        rr(-k * 0.6, -k * 0.86, k * 1.2, k * 0.36, k * 0.12, "#14110A"); // rear window
+        rr(-k * 1.0, -k * 0.5, k * 2.0, k * 0.62, k * 0.16, "#FFC21A"); // body
+        rr(-k * 0.92, -k * 0.38, k * 0.42, k * 0.12, k * 0.05, "#FF2D3D"); // tail lights
+        rr(k * 0.5, -k * 0.38, k * 0.42, k * 0.12, k * 0.05, "#FF2D3D");
+        rr(-k * 0.3, -k * 0.2, k * 0.6, k * 0.2, k * 0.04, "#F7F7FA"); // plate
+        ctx.fillStyle = "#14110A"; ctx.font = `900 ${(k * 0.15).toFixed(1)}px TardyRounded`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText("TARDY", 0, -k * 0.1);
+        rr(-k * 1.05, -k * 1.05, k * 2.1, k * 0.1, k * 0.04, "#14110A"); // spoiler
+        ctx.restore();
+
+        // HUD: last gate the car passed (before the first gate this loop, the last one of the last loop)
+        let passed = -1;
+        for (let kk = Math.floor(zc / P) - 1; kk <= Math.floor(zc / P); kk++) GATE_Z.forEach((gz, j) => { if (kk * P + gz <= zc) passed = (((2 * kk + j) % 20) + 20) % 20; });
+        const [pr, clock] = GATES[passed];
+        $("hud-n").textContent = `${passed + 1}/20`;
+        $("hud-pr").textContent = `#${pr} · ${clock} UTC`;
+      }
+
+      function render(t) {
+        drawCamera(t);
+        drawLeds(t);
+        drawCaptions(t);
+        drawCards(t);
+        drawRamp(t);
+      }
+
+      document.fonts.ready.then(() => {
+        const state = { t: 0 };
+        const tl = gsap.timeline({ paused: true });
+        tl.to(state, { t: DUR, duration: DUR, ease: "none", onUpdate: () => render(state.t) }, 0);
+        render(0);
+        window.__timelines["main"] = tl;
+        tl.seek(0);
+      });
+    </script>
+  </body>
+</html>

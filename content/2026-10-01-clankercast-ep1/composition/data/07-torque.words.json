@@ -1,0 +1,32 @@
+[
+  {
+    "text": "Heh,",
+    "start": 0.03,
+    "end": 0.21,
+    "id": "w0"
+  },
+  {
+    "text": "fine,",
+    "start": 0.52,
+    "end": 0.7,
+    "id": "w1"
+  },
+  {
+    "text": "that's",
+    "start": 0.71,
+    "end": 1.1,
+    "id": "w2"
+  },
+  {
+    "text": "actually",
+    "start": 1.1,
+    "end": 1.63,
+    "id": "w3"
+  },
+  {
+    "text": "clean.",
+    "start": 1.63,
+    "end": 1.95,
+    "id": "w4"
+  }
+]
