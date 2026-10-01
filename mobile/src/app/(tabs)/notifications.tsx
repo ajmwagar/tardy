@@ -87,6 +87,17 @@ const NotificationRow = memo(function NotificationRow({ n }: { n: Notification }
   );
 });
 
+const rowKey = (r: Row) => (r.type === 'header' ? `h-${r.title}` : r.n.id);
+const rowType = (r: Row) => r.type;
+const renderRow = ({ item }: { item: Row }) =>
+  item.type === 'header' ? (
+    <Text style={styles.section} accessibilityRole="header">
+      {item.title}
+    </Text>
+  ) : (
+    <NotificationRow n={item.n} />
+  );
+
 function TraySkeleton() {
   return (
     <Pulse style={{ paddingHorizontal: 16, paddingTop: 16, gap: 18 }}>
@@ -179,11 +190,9 @@ export default function NotificationsScreen() {
       ) : (
         <FlashList
           data={rows}
-          keyExtractor={(r) => (r.type === 'header' ? `h-${r.title}` : r.n.id)}
-          getItemType={(r) => r.type}
-          renderItem={({ item }) =>
-            item.type === 'header' ? <Text style={styles.section}>{item.title}</Text> : <NotificationRow n={item.n} />
-          }
+          keyExtractor={rowKey}
+          getItemType={rowType}
+          renderItem={renderRow}
           ListHeaderComponent={chips}
           ListEmptyComponent={
             filter === 'needs_you' ? (
@@ -205,7 +214,7 @@ export default function NotificationsScreen() {
               }}
             />
           }
-          contentContainerStyle={{ paddingBottom: 120 }}
+          contentContainerStyle={styles.content}
         />
       )}
     </View>
@@ -214,6 +223,7 @@ export default function NotificationsScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
+  content: { paddingBottom: 120 },
   bar: { height: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16 },
   edgeButton: { marginRight: -10 },
   chips: { paddingHorizontal: 16, paddingVertical: 8, gap: 8 },

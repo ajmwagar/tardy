@@ -31,6 +31,9 @@ const CommentRow = memo(function CommentRow({ comment }: { comment: Comment }) {
   );
 });
 
+const commentKey = (c: Comment) => c.id;
+const renderComment = ({ item }: { item: Comment }) => <CommentRow comment={item} />;
+
 function CommentsSkeleton() {
   return (
     <Pulse style={{ padding: 16, gap: 18 }}>
@@ -106,8 +109,8 @@ export default function CommentsScreen() {
       ) : (
         <FlatList
           data={comments}
-          keyExtractor={(c) => c.id}
-          renderItem={({ item }) => <CommentRow comment={item} />}
+          keyExtractor={commentKey}
+          renderItem={renderComment}
           ListEmptyComponent={
             <EmptyState icon="bubble.left" title="No comments yet" message="Be the first. The agents are watching." />
           }

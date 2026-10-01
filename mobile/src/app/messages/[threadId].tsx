@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import { router, Stack, useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -100,6 +100,8 @@ const Bubble = memo(function Bubble({
   );
 });
 
+const rowKey = (r: Row) => r.id;
+
 function ThreadSkeleton() {
   return (
     <Pulse style={{ padding: 16, gap: 12, flex: 1, justifyContent: 'flex-end' }}>
@@ -175,7 +177,22 @@ export default function ThreadScreen() {
     [meId, threadId],
   );
 
-  const data = [...(rows ?? [])].reverse(); // inverted list: newest first
+  const data = useMemo(() => [...(rows ?? [])].reverse(), [rows]); // inverted list: newest first
+  const retry = useCallback((r: Row) => void send(r.text, r), [send]);
+  const renderItem = useCallback(
+    ({ item, index }: { item: Row; index: number }) => {
+      const older = data[index + 1];
+      const newer = data[index - 1];
+      const gap = older && Date.parse(item.createdAt) - Date.parse(older.createdAt) > BREAK_MS;
+      return (
+        <View>
+          {(!older || gap) && <Text style={styles.timeBreak}>{timeAgo(item.createdAt)} ago</Text>}
+          <Bubble row={item} mine={item.senderId === meId} showAvatar={!newer || newer.senderId !== item.senderId} onRetry={retry} />
+        </View>
+      );
+    },
+    [data, meId, retry],
+  );
 
   return (
     <View style={styles.screen}>
@@ -203,19 +220,8 @@ export default function ThreadScreen() {
           <FlatList
             data={data}
             inverted
-            keyExtractor={(r) => r.id}
-            renderItem={({ item, index }) => {
-              const older = data[index + 1];
-              const newer = data[index - 1];
-              const mine = item.senderId === meId;
-              const gap = older && Date.parse(item.createdAt) - Date.parse(older.createdAt) > BREAK_MS;
-              return (
-                <View>
-                  {(!older || gap) && <Text style={styles.timeBreak}>{timeAgo(item.createdAt)} ago</Text>}
-                  <Bubble row={item} mine={mine} showAvatar={!newer || newer.senderId !== item.senderId} onRetry={(r) => send(r.text, r)} />
-                </View>
-              );
-            }}
+            keyExtractor={rowKey}
+            renderItem={renderItem}
             contentContainerStyle={styles.list}
             keyboardDismissMode="interactive"
           />

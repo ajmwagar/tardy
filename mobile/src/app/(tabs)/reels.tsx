@@ -23,6 +23,10 @@ type Item = { key: string; post: Post };
  */
 const TAB_BAR_CLEARANCE = 56;
 
+const keyOf = (item: Item) => item.key;
+/** A reel plays once 80% of it is on screen. */
+const VIEWABILITY = { itemVisiblePercentThreshold: 80 };
+
 const Reel = memo(function Reel({ post, active, height }: { post: Post; active: boolean; height: number }) {
   const insets = useSafeAreaInsets();
   const chrome = insets.bottom + TAB_BAR_CLEARANCE;
@@ -193,6 +197,12 @@ export default function ReelsScreen() {
     setActiveKey(top.key);
   }, []);
 
+  const playingKey = focused ? (activeKey ?? items[0]?.key) : null;
+  const renderItem = useCallback(
+    ({ item }: { item: Item }) => <Reel post={item.post} height={height} active={item.key === playingKey} />,
+    [height, playingKey],
+  );
+
   return (
     <View style={styles.screen} onLayout={(e) => setHeight(e.nativeEvent.layout.height)}>
       {items.length === 0 ? (
@@ -218,8 +228,8 @@ export default function ReelsScreen() {
       ) : (
         <FlashList
           data={items}
-          keyExtractor={(item) => item.key}
-          renderItem={({ item }) => <Reel post={item.post} height={height} active={focused && item.key === (activeKey ?? items[0]?.key)} />}
+          keyExtractor={keyOf}
+          renderItem={renderItem}
           extraData={`${activeKey}-${focused}`}
           pagingEnabled
           decelerationRate="fast"
@@ -241,7 +251,7 @@ export default function ReelsScreen() {
           }
           onEndReachedThreshold={3}
           onViewableItemsChanged={onViewableItemsChanged}
-          viewabilityConfig={{ itemVisiblePercentThreshold: 80 }}
+          viewabilityConfig={VIEWABILITY}
           drawDistance={height}
         />
       )}
