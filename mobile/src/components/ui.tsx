@@ -185,23 +185,29 @@ export function StatusPill({ value, compact = false }: { value: WorkStatus; comp
   );
 }
 
-/** Pressable that springs down slightly on touch: the tactile feel of IG's buttons. */
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+
+/**
+ * Pressable that springs down slightly on touch: the tactile feel of IG's buttons. The
+ * style (and the scale) sit on the pressable itself, so layout props like `flex: 1` work.
+ */
 export function PressableScale({
   children,
   style,
   scaleTo = 0.9,
   ...props
-}: PressableProps & { children: ReactNode; style?: StyleProp<ViewStyle>; scaleTo?: number }) {
+}: Omit<PressableProps, 'style'> & { children: ReactNode; style?: StyleProp<ViewStyle>; scaleTo?: number }) {
   const scale = useSharedValue(1);
   const animated = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
   return (
-    <Pressable
+    <AnimatedPressable
       hitSlop={8}
       onPressIn={() => scale.set(withSpring(scaleTo, { duration: 120 }))}
       onPressOut={() => scale.set(withSpring(1, { duration: 220 }))}
-      {...props}>
-      <Animated.View style={[style, animated]}>{children}</Animated.View>
-    </Pressable>
+      {...props}
+      style={[style, animated]}>
+      {children}
+    </AnimatedPressable>
   );
 }
 
