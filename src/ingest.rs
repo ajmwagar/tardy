@@ -1,4 +1,4 @@
-use mlua::{Function, Lua, LuaSerdeExt, StdLib, Table};
+use mlua::{Function, Lua, LuaSerdeExt, SerializeOptions, StdLib, Table};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -222,8 +222,14 @@ impl Ingestor {
         let root: Table = lua.load(&self.script).set_name("sources.lua").eval()?;
         let transforms: Table = root.get("transforms")?;
         let transform: Function = transforms.get(source.transform.as_str())?;
+        // Lua has no native null value.  mlua's default maps `None` to a
+        // truthy NULL userdata, which defeats idioms such as
+        // `item.summary or ""` in a transform.  Missing optional fields must
+        // cross this deliberately narrow boundary as Lua nil instead.
+        let item =
+            lua.to_value_with(item, SerializeOptions::new().serialize_none_to_null(false))?;
         let plan: TransformPlan =
-            lua.from_value(transform.call((lua.to_value(item)?, lua.to_value(&source.rights)?))?)?;
+            lua.from_value(transform.call((item, lua.to_value(&source.rights)?))?)?;
         if !matches!(
             plan.carousel.format.as_str(),
             "headline_source_v1" | "release_notes_v1"
@@ -573,6 +579,30 @@ mod tests {
                 .contains("https://example.test/release")
         );
         assert_eq!(plan.capabilities.len(), 2);
+    }
+
+    #[test]
+    fn lua_treats_missing_optional_source_fields_as_nil() {
+        let ingestor = Ingestor::bundled().unwrap();
+        let source = ingestor
+            .sources()
+            .unwrap()
+            .into_iter()
+            .find(|source| source.id == "hacker-news-top")
+            .unwrap();
+        let item = NormalizedItem {
+            source_id: source.id.clone(),
+            external_id: "43".into(),
+            title: "A link without a summary".into(),
+            canonical_url: "https://example.test/link".into(),
+            author: None,
+            published_at_ms: None,
+            summary: None,
+            facts: BTreeMap::new(),
+        };
+
+        let plan = ingestor.transform(&source, &item).unwrap();
+        assert!(plan.llm.unwrap().prompt.ends_with("Source summary: "));
     }
 
     #[test]
