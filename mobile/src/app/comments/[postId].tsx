@@ -1,12 +1,14 @@
 import { router, useLocalSearchParams } from 'expo-router';
-import { memo, useCallback, useEffect, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { FlatList, KeyboardAvoidingView, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { EmptyState, ErrorState, Pulse, SkeletonBlock } from '@/components/states';
-import { Avatar, Icon, NameLine, PressableScale } from '@/components/ui';
+import { ReactionChips, ReactionPicker, type ReactionAnchor } from '@/components/reactions';
+import { Avatar, haptic, Icon, NameLine, PressableScale } from '@/components/ui';
 import { TardyApiError } from '@/data/api';
 import type { Account, Comment } from '@/data/types';
+import { applyReaction, nextReaction, reactionOf, type ReactionKind } from '@/reactions/reactions';
 import { completeMention, mentionQuery, resolveMentions } from '@/share/mentions';
 import { api, cacheAccounts, ensureAccounts, logEngagement, reportError, useAccount, useStore } from '@/state/store';
 import { colors, timeAgo } from '@/theme';
@@ -15,11 +17,26 @@ const MAX_LENGTH = 500;
 /** When to re-read comments after mentioning an agent, so its reply shows up. */
 const AGENT_REPLY_RECHECK_MS = 2500;
 
-const CommentRow = memo(function CommentRow({ comment }: { comment: Comment }) {
+const CommentRow = memo(function CommentRow({
+  comment,
+  me,
+  onReact,
+  onToggleReaction,
+}: {
+  comment: Comment;
+  me: string | undefined;
+  onReact: (comment: Comment, anchor: ReactionAnchor) => void;
+  onToggleReaction: (comment: Comment, kind: ReactionKind) => void;
+}) {
   const author = useAccount(comment.authorId);
+  const rowRef = useRef<View>(null);
   const openProfile = () => author && router.push({ pathname: '/profile/[handle]', params: { handle: author.handle } });
+  const longPress = () => {
+    haptic.selection();
+    rowRef.current?.measureInWindow((_x, y) => onReact(comment, { y }));
+  };
   return (
-    <View style={styles.row}>
+    <Pressable ref={rowRef} style={styles.row} onLongPress={longPress} delayLongPress={280} accessibilityActions={[{ name: 'longpress', label: 'React' }]} onAccessibilityAction={(e) => e.nativeEvent.actionName === 'longpress' && longPress()}>
       <Pressable onPress={openProfile} accessibilityRole="button" accessibilityLabel={`${author?.handle ?? 'Author'}, open profile`}>
         <Avatar account={author} size={34} />
       </Pressable>
@@ -29,13 +46,13 @@ const CommentRow = memo(function CommentRow({ comment }: { comment: Comment }) {
           <Text style={styles.time}>{timeAgo(comment.createdAt)}</Text>
         </View>
         <Text style={styles.text}>{comment.text}</Text>
+        <ReactionChips reactions={comment.reactions} me={me} onToggle={(kind) => onToggleReaction(comment, kind)} />
       </View>
-    </View>
+    </Pressable>
   );
 });
 
 const commentKey = (c: Comment) => c.id;
-const renderComment = ({ item }: { item: Comment }) => <CommentRow comment={item} />;
 
 function CommentsSkeleton() {
   return (
@@ -65,6 +82,34 @@ export default function CommentsScreen() {
   const [suggestions, setSuggestions] = useState<Account[]>([]);
   const accounts = useStore((s) => s.accounts);
   const typing = mentionQuery(draft);
+  const meId = me?.id;
+
+  // Tap-backs: applied at once, rolled back if the server refuses.
+  const [picker, setPicker] = useState<{ comment: Comment; anchor: ReactionAnchor } | null>(null);
+  const openPicker = useCallback((comment: Comment, anchor: ReactionAnchor) => setPicker({ comment, anchor }), []);
+  const toggleReaction = useCallback(
+    async (comment: Comment, kind: ReactionKind) => {
+      if (!meId) return;
+      haptic.impact();
+      const next = nextReaction(reactionOf(comment.reactions, meId), kind);
+      const patch = (reactions: Comment['reactions']) =>
+        setComments((prev) => (prev ?? []).map((c) => (c.id === comment.id ? { ...c, reactions: reactions?.length ? reactions : undefined } : c)));
+      patch(applyReaction(comment.reactions, meId, next));
+      try {
+        patch((await api.reactToComment(postId, comment.id, next)).reactions);
+      } catch (e) {
+        patch(comment.reactions);
+        reportError(`Couldn't react: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+    [meId, postId],
+  );
+  const renderComment = useCallback(
+    ({ item }: { item: Comment }) => (
+      <CommentRow comment={item} me={meId} onReact={openPicker} onToggleReaction={(c, k) => void toggleReaction(c, k)} />
+    ),
+    [meId, openPicker, toggleReaction],
+  );
 
   // Suggest accounts while an @handle is being typed. Picking one is what makes it a mention.
   useEffect(() => {
@@ -132,6 +177,15 @@ export default function CommentsScreen() {
   return (
     <KeyboardAvoidingView style={styles.screen} behavior="padding">
       <Text style={styles.title}>Comments</Text>
+      <ReactionPicker
+        anchor={picker?.anchor ?? null}
+        current={picker && meId ? reactionOf(picker.comment.reactions, meId) : null}
+        onClose={() => setPicker(null)}
+        onPick={(kind) => {
+          if (picker) void toggleReaction(picker.comment, kind);
+          setPicker(null);
+        }}
+      />
       {error && !comments ? (
         <ErrorState message="The comments wandered off." detail={error} onRetry={load} />
       ) : !comments ? (
@@ -141,6 +195,7 @@ export default function CommentsScreen() {
           data={comments}
           keyExtractor={commentKey}
           renderItem={renderComment}
+          extraData={meId}
           ListEmptyComponent={
             <EmptyState icon="bubble.left" title="No comments yet" message="Be the first. The agents are watching." />
           }
