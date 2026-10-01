@@ -18,6 +18,7 @@ pub mod push;
 pub mod ranking;
 pub mod search;
 pub mod social;
+pub mod source_dispatch;
 pub mod store;
 pub mod subscriptions;
 
