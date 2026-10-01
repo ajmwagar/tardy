@@ -38,6 +38,8 @@ type State = {
   muted: boolean;
   /** Viral posts for the breaking ticker. */
   trending: Post[];
+  /** Tab badge counts. Derived from the server's read watermarks; refresh after reads. */
+  unread: { messages: number; notifications: number };
 };
 
 const initialState = (): State => ({
@@ -48,6 +50,7 @@ const initialState = (): State => ({
   lastError: null,
   muted: true,
   trending: [],
+  unread: { messages: 0, notifications: 0 },
 });
 
 let state: State = initialState();
@@ -241,6 +244,21 @@ export async function loadTrending() {
     set(() => ({ trending: posts }));
   } catch (error) {
     set(() => ({ lastError: `Trending failed: ${error instanceof Error ? error.message : String(error)}` }));
+  }
+}
+
+/** Recomputes the tab badges from the server (the source of truth for read state). */
+export async function refreshUnread() {
+  try {
+    const [threads, notifications] = await Promise.all([api.threads(), api.notifications()]);
+    set(() => ({
+      unread: {
+        messages: threads.reduce((n, t) => n + t.unreadCount, 0),
+        notifications: notifications.filter((n) => !n.read).length,
+      },
+    }));
+  } catch (error) {
+    reportError(`Couldn't refresh badges: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 

@@ -1,21 +1,16 @@
 import { NativeTabs } from 'expo-router/unstable-native-tabs';
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 
-import { api, useAccount } from '@/state/store';
+import { refreshUnread, useAccount, useStore } from '@/state/store';
 import { colors } from '@/theme';
 
 /** Icon-only tabs: Home, Reels, Messages, Alarms (notifications), Profile. */
 export default function TabsLayout() {
   const me = useAccount('me');
-  const [unread, setUnread] = useState({ messages: 0, notifications: 0 });
+  const unread = useStore((s) => s.unread);
 
   useEffect(() => {
-    Promise.all([api.threads(), api.notifications()]).then(([threads, notifications]) =>
-      setUnread({
-        messages: threads.reduce((n, t) => n + t.unreadCount, 0),
-        notifications: notifications.filter((n) => !n.read).length,
-      }),
-    );
+    void refreshUnread();
   }, []);
 
   return (

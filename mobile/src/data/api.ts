@@ -97,8 +97,19 @@ export interface TardyApi {
   threads(): Promise<Thread[]>;
   messages(threadId: string): Promise<Message[]>;
   sendMessage(threadId: string, text: string): Promise<Message>;
+  /**
+   * Marks everything in the thread read for the viewer, up to and including `throughMessageId`.
+   * A per-thread watermark, not per-message flags: idempotent, and a stale call from another
+   * device can never un-read newer messages (the server keeps the later watermark).
+   */
+  markThreadRead(threadId: string, throughMessageId: string): Promise<void>;
 
   notifications(): Promise<Notification[]>;
+  /**
+   * Marks every notification created at or before `through` (ISO time) as read. One watermark
+   * per viewer: idempotent and order-independent (the server keeps the later value).
+   */
+  markNotificationsRead(through: string): Promise<void>;
 
   /**
    * Push delivery. The server decides what to push (preferences + privacy at delivery
