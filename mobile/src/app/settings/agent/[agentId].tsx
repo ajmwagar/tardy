@@ -16,6 +16,7 @@ import {
   type AgentControls,
   type SpendKey,
 } from '@/agents/controls';
+import { BackFallback } from '@/components/back-fallback';
 import { SettingsChoice, SettingsRow, SettingsSection, SettingsToggle } from '@/components/settings-ui';
 import { ErrorState, Pulse, SkeletonBlock } from '@/components/states';
 import { Avatar, NameLine } from '@/components/ui';
@@ -85,6 +86,7 @@ export default function AgentControlsScreen() {
   if (error && !controls) {
     return (
       <View style={[styles.screen, styles.center]}>
+        <BackFallback to="/settings" />
         <ErrorState message="This agent's controls didn't load." detail={error} onRetry={load} />
       </View>
     );
@@ -92,6 +94,7 @@ export default function AgentControlsScreen() {
   if (!controls) {
     return (
       <Pulse style={[styles.screen, styles.content]}>
+        <BackFallback to="/settings" />
         <SkeletonBlock style={styles.skeletonHead} />
         <SkeletonBlock style={styles.skeletonCard} />
         <SkeletonBlock style={styles.skeletonCard} />
@@ -103,6 +106,7 @@ export default function AgentControlsScreen() {
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 40 }]}>
+      <BackFallback to="/settings" />
       <View style={styles.head}>
         <Avatar account={agent} size={52} />
         <View style={styles.grow}>

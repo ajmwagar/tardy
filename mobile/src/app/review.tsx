@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { interpolate, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
@@ -18,7 +18,7 @@ import { api, ensureAccounts, reportError, useAccount } from '@/state/store';
 import { colors, IMAGE_TRANSITION_MS, radius } from '@/theme';
 
 const VISIBILITY_LABEL: Record<PostSuggestion['visibility'], string> = { private: 'Only you', followers: 'Followers', public: 'Public' };
-const FLY_MS = 220;
+const FLY_MS = 180;
 
 /** What the right-swipe stamp says: what happens when you say yes. */
 const YES_STAMP: Record<NonNullable<PostSuggestion['kind']>, string> = { post: 'POST', story: 'POST', comment: 'SEND', message: 'SEND', follow: 'FOLLOW' };
@@ -119,33 +119,62 @@ export default function ReviewScreen() {
     );
   }, [top, topKind, topAgent]);
 
+  // Rapid taps must each count: a tap while a card is still flying settles that card at once
+  // and sends the next one. `queueRef` is the latest queue; `flying` is the card in the air.
+  const queueRef = useRef(queue);
+  useEffect(() => {
+    queueRef.current = queue;
+  }, [queue]);
+  const flying = useRef<{ suggestion: PostSuggestion; outcome: Exclude<SwipeOutcome, null> } | null>(null);
+
   const decide = useCallback(
-    async (outcome: Exclude<SwipeOutcome, null>) => {
-      if (!top) return;
+    async (suggestion: PostSuggestion, outcome: Exclude<SwipeOutcome, null>) => {
       haptic.impact();
-      // The card has flown off; drop it now so the next one is live, put it back if the server says no.
-      setQueue((q) => (q ?? []).slice(1));
+      // Drop it now so the next card is live; put it back if the server says no.
+      setQueue((q) => (q ?? []).filter((s) => s.id !== suggestion.id));
       x.set(0);
       try {
-        const result = await api.decideSuggestion(top.id, outcome);
+        const result = await api.decideSuggestion(suggestion.id, outcome);
         if (result) setPosted((n) => n + 1);
       } catch (e) {
-        setQueue((q) => [top, ...(q ?? [])]);
-        reportError(`Couldn't ${outcome === 'approve' ? 'post' : 'drop'} that: ${e instanceof Error ? e.message : String(e)}`);
+        setQueue((q) => [suggestion, ...(q ?? [])]);
+        reportError(`Couldn't ${outcome === 'approve' ? 'do' : 'drop'} that: ${e instanceof Error ? e.message : String(e)}`);
       }
     },
-    [top, x],
+    [x],
+  );
+
+  const land = useCallback(
+    (id: string) => {
+      const pending = flying.current;
+      if (pending?.suggestion.id !== id) return;
+      flying.current = null;
+      void decide(pending.suggestion, pending.outcome);
+    },
+    [decide],
   );
 
   const fly = useCallback(
     (outcome: Exclude<SwipeOutcome, null>) => {
-      x.set(withTiming(outcome === 'approve' ? screen * 1.4 : -screen * 1.4, { duration: FLY_MS }, (done) => {
-        if (done) scheduleOnRN(decide, outcome);
-      }));
+      const pending = flying.current;
+      const next = queueRef.current?.find((s) => s.id !== pending?.suggestion.id);
+      if (pending) {
+        flying.current = null;
+        void decide(pending.suggestion, pending.outcome);
+      }
+      if (!next) return;
+      flying.current = { suggestion: next, outcome };
+      x.set(
+        withTiming(outcome === 'approve' ? screen * 1.4 : -screen * 1.4, { duration: FLY_MS }, (done) => {
+          if (done) scheduleOnRN(land, next.id);
+        }),
+      );
     },
-    [decide, screen, x],
+    [decide, land, screen, x],
   );
 
+  // The gesture's callbacks run on gestures, not during render; `fly` reads refs only then.
+  /* eslint-disable react-hooks/refs */
   const pan = Gesture.Pan()
     .enabled(!!top)
     .onUpdate((e) => {
@@ -154,10 +183,9 @@ export default function ReviewScreen() {
     .onEnd((e) => {
       const outcome = swipeOutcome(e.translationX, e.velocityX, width);
       if (outcome === null) x.set(withSpring(0));
-      else x.set(withTiming(outcome === 'approve' ? screen * 1.4 : -screen * 1.4, { duration: FLY_MS }, (done) => {
-        if (done) scheduleOnRN(decide, outcome);
-      }));
+      else scheduleOnRN(fly, outcome);
     });
+  /* eslint-enable react-hooks/refs */
 
   const cardStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: x.get() }, { rotate: `${interpolate(x.get(), [-screen, screen], [-14, 14])}deg` }],
