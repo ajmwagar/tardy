@@ -36,15 +36,6 @@ function useRing(group: StoryGroup | undefined): RingState {
 const isBoosted = (ring: RingState) => ring === 'boosted' || ring === 'boostedSeen';
 const isSeenRing = (ring: RingState) => ring === 'seen' || ring === 'boostedSeen' || ring === 'closeFriendsSeen';
 
-/** The paid-placement disclosure under a boosted bubble: the red ring alone is not one. */
-function BoostedLabel() {
-  return (
-    <Text style={styles.boosted} numberOfLines={1} maxFontSizeMultiplier={1.4}>
-      {BOOSTED_LABEL}
-    </Text>
-  );
-}
-
 const StoryBubble = memo(function StoryBubble({ group }: { group: StoryGroup }) {
   const account = useAccount(group.authorId);
   const ring = useRing(group);
@@ -61,7 +52,6 @@ const StoryBubble = memo(function StoryBubble({ group }: { group: StoryGroup }) 
       <Text style={[styles.label, seen && styles.labelSeen]} numberOfLines={1} maxFontSizeMultiplier={1.4}>
         {account?.handle}
       </Text>
-      {boosted && <BoostedLabel />}
     </PressableScale>
   );
 });
@@ -95,7 +85,6 @@ function YourStory({ group }: { group: StoryGroup | undefined }) {
       <Text style={[styles.label, styles.labelSeen]} numberOfLines={1} maxFontSizeMultiplier={1.4}>
         Your story
       </Text>
-      {isBoosted(ring) && <BoostedLabel />}
     </PressableScale>
   );
 }
@@ -147,5 +136,4 @@ const styles = StyleSheet.create({
   },
   label: { color: colors.text, fontSize: 11.5, maxWidth: 76 },
   labelSeen: { color: colors.textSecondary },
-  boosted: { position: 'absolute', bottom: -13, color: colors.textSecondary, fontSize: 10, fontWeight: '600' },
 });

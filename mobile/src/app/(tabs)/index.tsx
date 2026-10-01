@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, RefreshControl, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { useRefresh } from '@/components/use-refresh';
 import { PostCard } from '@/components/post-card';
 import { BreakingTicker } from '@/components/breaking-ticker';
 import { openFaultMenu } from '@/components/fault-menu';
@@ -30,7 +31,6 @@ export default function HomeScreen() {
   const [cursor, setCursor] = useState<string | null>(null);
   const [exhausted, setExhausted] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
   /** A failed first page (nothing to show) or next page (inline retry under what's loaded). */
   const [error, setError] = useState<{ page: 'first' | 'next'; message: string } | null>(null);
@@ -77,11 +77,14 @@ export default function HomeScreen() {
     void loadTrending();
   }, [load, loadStories]);
 
-  const refresh = useCallback(async () => {
-    setRefreshing(true);
-    await Promise.all([load(null, true), loadStories(), loadTrending()]);
-    setRefreshing(false);
-  }, [load, loadStories]);
+  // The spinner waits only for the feed; stories and the ticker catch up behind it.
+  const { refreshing, onRefresh: refresh } = useRefresh(
+    useCallback(() => {
+      void loadStories();
+      void loadTrending();
+      return load(null, true);
+    }, [load, loadStories]),
+  );
 
   // Dwell tracking: time each post spends as the most-visible item feeds ranking.
   const dwellStart = useRef<{ id: string; at: number } | null>(null);

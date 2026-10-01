@@ -4,6 +4,7 @@ import { memo, useCallback, useMemo, useState } from 'react';
 import { FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { useRefresh } from '@/components/use-refresh';
 import { EmptyState, ErrorState, Pulse, SkeletonBlock } from '@/components/states';
 import { ActivityButton } from '@/components/activity-button';
 import { ThreadAvatar } from '@/components/thread-avatar';
@@ -109,7 +110,6 @@ export default function MessagesScreen() {
   const me = useStore((s) => s.accounts.get('me'));
   const [threads, setThreads] = useState<Thread[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
   const [query, setQuery] = useState('');
   const accounts = useStore((s) => s.accounts);
   // When the list was fetched: "active now" and ages are relative to that.
@@ -134,6 +134,7 @@ export default function MessagesScreen() {
       void load();
     }, [load]),
   );
+  const { refreshing, onRefresh } = useRefresh(load);
 
   const filtered = useMemo(() => {
     if (!threads) return [];
@@ -221,15 +222,7 @@ export default function MessagesScreen() {
             )
           }
           refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              tintColor={colors.textSecondary}
-              onRefresh={async () => {
-                setRefreshing(true);
-                await load();
-                setRefreshing(false);
-              }}
-            />
+            <RefreshControl refreshing={refreshing} tintColor={colors.textSecondary} onRefresh={onRefresh} />
           }
           contentContainerStyle={styles.content}
           keyboardDismissMode="on-drag"
