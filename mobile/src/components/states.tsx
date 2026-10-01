@@ -108,6 +108,43 @@ export function ReelSkeleton({ height, bottom }: { height: number; /** Clearance
   );
 }
 
+/** Shaped like the profile grid: rows of 4:5 tiles. */
+export function GridSkeleton({ width, rows = 3 }: { width: number; rows?: number }) {
+  const { gridColumns: columns, gridGap: gap, gridTileAspect } = layout;
+  const size = (width - gap * (columns - 1)) / columns;
+  const tile = { width: size, height: size / gridTileAspect, borderRadius: 0 };
+  return (
+    <Pulse style={[styles.grid, { gap }]}>
+      {Array.from({ length: rows * columns }, (_, i) => (
+        <SkeletonBlock key={i} style={tile} />
+      ))}
+    </Pulse>
+  );
+}
+
+/** Shaped like ProfileView's header (avatar, three stats, name, bio, buttons) over its grid. */
+export function ProfileSkeleton({ width }: { width: number }) {
+  return (
+    <View accessibilityLabel="Loading profile">
+      <Pulse style={styles.profileHeader}>
+        <View style={styles.profileTop}>
+          <SkeletonBlock style={styles.profileAvatar} />
+          {[0, 1, 2].map((i) => (
+            <View key={i} style={styles.profileStat}>
+              <SkeletonBlock style={styles.profileStatValue} />
+              <SkeletonBlock style={styles.profileStatLabel} />
+            </View>
+          ))}
+        </View>
+        <SkeletonBlock style={styles.profileName} />
+        <SkeletonBlock style={styles.profileBio} />
+        <SkeletonBlock style={styles.profileButton} />
+      </Pulse>
+      <GridSkeleton width={width} rows={2} />
+    </View>
+  );
+}
+
 // MARK: empty & error
 
 type Action = { label: string; onPress: () => void };
@@ -275,6 +312,18 @@ const styles = StyleSheet.create({
   cardHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10, gap: 10 },
   cardActions: { flexDirection: 'row', alignItems: 'center', gap: 18, paddingHorizontal: 12, paddingTop: 14 },
   cardBody: { paddingHorizontal: 12, paddingTop: 12, gap: 6 },
+
+  // Mirrors ProfileView's header and grid.
+  grid: { flexDirection: 'row', flexWrap: 'wrap' },
+  profileHeader: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 16, gap: 10 },
+  profileTop: { flexDirection: 'row', alignItems: 'center', gap: 16, marginBottom: 4 },
+  profileAvatar: { width: 96, height: 96, borderRadius: 48 },
+  profileStat: { flex: 1, alignItems: 'center', gap: 6 },
+  profileStatValue: { width: 34, height: 16 },
+  profileStatLabel: { width: 50, height: 10 },
+  profileName: { width: 140, height: 14 },
+  profileBio: { width: '75%', height: 11 },
+  profileButton: { height: 36, borderRadius: radius.pill, marginTop: 6 },
 
   // Mirrors the reel overlays.
   reelRail: { position: 'absolute', right: 8, alignItems: 'center', gap: 22 },

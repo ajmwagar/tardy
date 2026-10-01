@@ -7,13 +7,13 @@ import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { EmptyState, ErrorState, Pulse, SkeletonBlock } from '@/components/states';
-import { Avatar, Icon, PressableScale } from '@/components/ui';
+import { Avatar, haptic, Icon, IconButton, PressableScale } from '@/components/ui';
 import type { Notification, NotificationKind, Post } from '@/data/types';
 import { payloadFor } from '@/notifications/payload';
 import { routeForPayload } from '@/notifications/routing';
 import { groupNotifications, readThrough, type TrayFilter } from '@/notifications/tray';
 import { api, ensureAccounts, refreshUnread, toggleFollowing, useAccount, useIsFollowing } from '@/state/store';
-import { colors, radius, status as statusStyles, timeAgo, type } from '@/theme';
+import { colors, IMAGE_TRANSITION_MS, radius, status as statusStyles, timeAgo, type } from '@/theme';
 
 /** The small badge on the actor's avatar: what kind of thing happened, at a glance. */
 const KIND_BADGE: Record<NotificationKind, { symbol: SFSymbol; color: string }> = {
@@ -27,6 +27,7 @@ const KIND_BADGE: Record<NotificationKind, { symbol: SFSymbol; color: string }> 
 };
 
 const FILTERS: { key: TrayFilter; label: string }[] = [
+  { key: 'needs_you', label: 'Needs you' },
   { key: 'all', label: 'All' },
   { key: 'work', label: 'Work' },
   { key: 'mentions', label: 'Mentions' },
@@ -43,7 +44,7 @@ function Thumb({ postId }: { postId: string }) {
   const media = post?.media[0];
   const uri = media?.type === 'video' ? media.posterUrl : media?.url;
   if (!uri) return <View style={styles.thumb} />;
-  return <Image source={uri} style={styles.thumb} contentFit="cover" cachePolicy="memory-disk" />;
+  return <Image source={uri} recyclingKey={uri} style={styles.thumb} contentFit="cover" cachePolicy="memory-disk" transition={IMAGE_TRANSITION_MS} />;
 }
 
 function FollowBack({ accountId }: { accountId: string }) {
@@ -85,6 +86,17 @@ const NotificationRow = memo(function NotificationRow({ n }: { n: Notification }
     </Pressable>
   );
 });
+
+const rowKey = (r: Row) => (r.type === 'header' ? `h-${r.title}` : r.n.id);
+const rowType = (r: Row) => r.type;
+const renderRow = ({ item }: { item: Row }) =>
+  item.type === 'header' ? (
+    <Text style={styles.section} accessibilityRole="header">
+      {item.title}
+    </Text>
+  ) : (
+    <NotificationRow n={item.n} />
+  );
 
 function TraySkeleton() {
   return (
@@ -151,7 +163,13 @@ export default function NotificationsScreen() {
           key={f.key}
           scaleTo={0.95}
           style={[styles.chip, filter === f.key && styles.chipActive]}
-          onPress={() => setFilter(f.key)}>
+          accessibilityRole="button"
+          accessibilityState={{ selected: filter === f.key }}
+          onPress={() => {
+            if (filter === f.key) return;
+            haptic.selection();
+            setFilter(f.key);
+          }}>
           <Text style={[styles.chipText, filter === f.key && styles.chipTextActive]}>{f.label}</Text>
         </PressableScale>
       ))}
@@ -161,10 +179,8 @@ export default function NotificationsScreen() {
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       <View style={styles.bar}>
-        <Text style={type.title}>Activity</Text>
-        <Pressable hitSlop={10} onPress={() => router.push('/settings')}>
-          <Icon name="slider.horizontal.3" size={22} />
-        </Pressable>
+        <Text style={type.title} numberOfLines={1} maxFontSizeMultiplier={1.3} accessibilityRole="header">Activity</Text>
+        <IconButton icon="slider.horizontal.3" size={22} label="Notification settings" onPress={() => router.push('/settings')} style={styles.edgeButton} />
       </View>
 
       {error && !list ? (
@@ -174,14 +190,14 @@ export default function NotificationsScreen() {
       ) : (
         <FlashList
           data={rows}
-          keyExtractor={(r) => (r.type === 'header' ? `h-${r.title}` : r.n.id)}
-          getItemType={(r) => r.type}
-          renderItem={({ item }) =>
-            item.type === 'header' ? <Text style={styles.section}>{item.title}</Text> : <NotificationRow n={item.n} />
-          }
+          keyExtractor={rowKey}
+          getItemType={rowType}
+          renderItem={renderRow}
           ListHeaderComponent={chips}
           ListEmptyComponent={
-            filter === 'work' ? (
+            filter === 'needs_you' ? (
+              <EmptyState icon="checkmark.circle" title="All clear" message="Nothing needs you. Your agents are self-sufficient, for now." />
+            ) : filter === 'work' ? (
               <EmptyState icon="checkmark.seal" title="No work news" message="Nothing shipped, nothing blocked. Either peace or denial." />
             ) : (
               <EmptyState icon="alarm" title="All quiet" message="No activity yet. Your agents are heads-down, allegedly." />
@@ -198,7 +214,7 @@ export default function NotificationsScreen() {
               }}
             />
           }
-          contentContainerStyle={{ paddingBottom: 120 }}
+          contentContainerStyle={styles.content}
         />
       )}
     </View>
@@ -207,7 +223,9 @@ export default function NotificationsScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
+  content: { paddingBottom: 120 },
   bar: { height: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16 },
+  edgeButton: { marginRight: -10 },
   chips: { paddingHorizontal: 16, paddingVertical: 8, gap: 8 },
   chip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: radius.pill, backgroundColor: colors.elevated },
   chipActive: { backgroundColor: colors.text },

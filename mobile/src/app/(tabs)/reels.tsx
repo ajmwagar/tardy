@@ -23,6 +23,10 @@ type Item = { key: string; post: Post };
  */
 const TAB_BAR_CLEARANCE = 56;
 
+const keyOf = (item: Item) => item.key;
+/** A reel plays once 80% of it is on screen. */
+const VIEWABILITY = { itemVisiblePercentThreshold: 80 };
+
 const Reel = memo(function Reel({ post, active, height }: { post: Post; active: boolean; height: number }) {
   const insets = useSafeAreaInsets();
   const chrome = insets.bottom + TAB_BAR_CLEARANCE;
@@ -56,6 +60,7 @@ const Reel = memo(function Reel({ post, active, height }: { post: Post; active: 
           size={30}
           color="#fff"
           icon="hand.thumbsup"
+          label="Thumbs up"
           activeIcon="hand.thumbsup.fill"
           active={state?.liked}
           activeColor={colors.primary}
@@ -67,6 +72,7 @@ const Reel = memo(function Reel({ post, active, height }: { post: Post; active: 
           size={29}
           color="#fff"
           icon="bubble.left"
+          label="Comments"
           count={post.commentCount}
           onPress={() => router.push({ pathname: '/comments/[postId]', params: { postId: post.id } })}
         />
@@ -75,18 +81,20 @@ const Reel = memo(function Reel({ post, active, height }: { post: Post; active: 
           size={29}
           color="#fff"
           icon="light.beacon.max"
+          label="Ping me on status change"
           activeIcon="light.beacon.max.fill"
           active={state?.alarm}
           activeColor={colors.alarm}
           count={state?.alarmCount ?? post.alarmCount}
           onPress={() => toggleAlarm(post.id)}
         />
-        <Reaction vertical size={28} color="#fff" icon="paperplane" count={post.shareCount} onPress={share} />
+        <Reaction vertical size={28} color="#fff" icon="paperplane" label="Share" count={post.shareCount} onPress={share} />
         <Reaction
           vertical
           size={27}
           color="#fff"
           icon="bookmark"
+          label="Save"
           activeIcon="bookmark.fill"
           active={state?.saved}
           activeColor={colors.primary}
@@ -189,6 +197,12 @@ export default function ReelsScreen() {
     setActiveKey(top.key);
   }, []);
 
+  const playingKey = focused ? (activeKey ?? items[0]?.key) : null;
+  const renderItem = useCallback(
+    ({ item }: { item: Item }) => <Reel post={item.post} height={height} active={item.key === playingKey} />,
+    [height, playingKey],
+  );
+
   return (
     <View style={styles.screen} onLayout={(e) => setHeight(e.nativeEvent.layout.height)}>
       {items.length === 0 ? (
@@ -214,8 +228,8 @@ export default function ReelsScreen() {
       ) : (
         <FlashList
           data={items}
-          keyExtractor={(item) => item.key}
-          renderItem={({ item }) => <Reel post={item.post} height={height} active={focused && item.key === (activeKey ?? items[0]?.key)} />}
+          keyExtractor={keyOf}
+          renderItem={renderItem}
           extraData={`${activeKey}-${focused}`}
           pagingEnabled
           decelerationRate="fast"
@@ -237,7 +251,7 @@ export default function ReelsScreen() {
           }
           onEndReachedThreshold={3}
           onViewableItemsChanged={onViewableItemsChanged}
-          viewabilityConfig={{ itemVisiblePercentThreshold: 80 }}
+          viewabilityConfig={VIEWABILITY}
           drawDistance={height}
         />
       )}

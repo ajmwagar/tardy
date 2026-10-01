@@ -14,7 +14,8 @@ export const colors = {
   separator: '#26262F',
   text: '#F7F7FA',
   textSecondary: '#A1A1AE',
-  textTertiary: '#6E6E7A',
+  /** Timestamps, placeholders, model names. Kept at WCAG AA (4.5:1) on bg and surface; see the theme test. */
+  textTertiary: '#80808C',
   /** Tardy yellow: thumbs up, primary buttons, the verified seal. */
   primary: '#FFC21A',
   onPrimary: '#14110A',
@@ -56,10 +57,16 @@ export function postStyleOf(style: string | undefined): { label: string; symbol:
 
 const rounded = Platform.select({ ios: 'ui-rounded', default: undefined });
 
+/** Fade-in for every remote image (expo-image `transition`), so media arrives the same way everywhere. */
+export const IMAGE_TRANSITION_MS = 150;
+
 export const radius = { card: 20, media: 16, pill: 999 } as const;
 
-/** Feed geometry shared by PostCard and its skeleton: card side gutter, media width:height. */
-export const layout = { cardGutter: 8, feedMediaAspect: 4 / 5 } as const;
+/**
+ * Geometry shared by components and their skeletons: feed card side gutter and media
+ * width:height; profile grid columns, gap and tile width:height.
+ */
+export const layout = { cardGutter: 8, feedMediaAspect: 4 / 5, gridColumns: 3, gridGap: 2, gridTileAspect: 4 / 5 } as const;
 
 export const type = StyleSheet.create({
   wordmark: { color: colors.text, fontSize: 30, fontWeight: '900', fontFamily: rounded, letterSpacing: -1.2 },
@@ -91,4 +98,29 @@ export function compact(n: number): string {
   if (n < 10_000) return n.toLocaleString('en-US');
   if (n < 1_000_000) return `${(n / 1000).toFixed(n < 100_000 ? 1 : 0).replace(/\.0$/, '')}K`;
   return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
+}
+
+/**
+ * VoiceOver label for an icon button that shows a count: "Ping me on status change, 12".
+ * The full number, not the compact one, since "1.2K" reads badly aloud.
+ */
+export function countLabel(label: string, count: number | undefined): string {
+  return count === undefined ? label : `${label}, ${count.toLocaleString('en-US')}`;
+}
+
+/** WCAG 2.x relative luminance of a #RRGGBB color. */
+function luminance(hex: string): number {
+  const match = /^#([0-9a-f]{6})$/i.exec(hex);
+  if (!match) throw new Error(`Not a #RRGGBB color: "${hex}"`);
+  const [r, g, b] = [0, 2, 4].map((i) => {
+    const v = parseInt(match[1].slice(i, i + 2), 16) / 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+/** WCAG contrast ratio between two opaque #RRGGBB colors, from 1 to 21. */
+export function contrastRatio(foreground: string, background: string): number {
+  const [a, b] = [luminance(foreground), luminance(background)];
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
 }

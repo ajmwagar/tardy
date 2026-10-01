@@ -7,7 +7,7 @@ import { isWidening, VISIBILITIES, visibilityOf } from '@/privacy/policy';
 import { api } from '@/state/store';
 import { colors, radius, type } from '@/theme';
 
-import { Icon, PressableScale } from './ui';
+import { haptic, Icon, PressableScale } from './ui';
 
 const OPTIONS: Record<Visibility, { label: string; symbol: SFSymbol }> = {
   private: { label: 'Private', symbol: 'lock.fill' },
@@ -80,7 +80,10 @@ export function VisibilityControl({ account }: { account: Account }) {
               disabled={saving}
               accessibilityRole="radio"
               accessibilityState={{ checked: v === current, disabled: saving }}
-              onPress={() => choose(v)}>
+              onPress={() => {
+                if (v !== (pending ?? current)) haptic.selection();
+                choose(v);
+              }}>
               <Icon name={OPTIONS[v].symbol} size={13} color={selected ? colors.onPrimary : colors.textSecondary} weight="semibold" />
               <Text style={[styles.segmentText, selected && styles.segmentTextSelected]}>{OPTIONS[v].label}</Text>
             </PressableScale>

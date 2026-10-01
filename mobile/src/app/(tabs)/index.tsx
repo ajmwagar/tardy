@@ -1,18 +1,22 @@
 import { FlashList, type ViewToken } from '@shopify/flash-list';
 import { router } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, RefreshControl, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Pressable, RefreshControl, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { PostCard } from '@/components/post-card';
 import { BreakingTicker } from '@/components/breaking-ticker';
 import { openFaultMenu } from '@/components/fault-menu';
-import { EmptyState, ErrorState, FeedSkeleton, InlineRetry } from '@/components/states';
+import { EmptyState, ErrorState, FeedSkeleton, InlineRetry, PostSkeleton } from '@/components/states';
 import { StoriesRow } from '@/components/stories-row';
-import { Icon, PressableScale } from '@/components/ui';
+import { Wordmark } from '@/components/wordmark';
 import type { Post, StoryGroup } from '@/data/types';
 import { api, ensureAccounts, loadFeedPage, loadTrending, logEngagement, reportError, useStore } from '@/state/store';
-import { colors, type } from '@/theme';
+import { colors } from '@/theme';
+
+const keyOf = (p: Post) => p.id;
+/** A post counts as on screen (plays video, accrues dwell) once 60% visible for 120ms. */
+const VIEWABILITY = { itemVisiblePercentThreshold: 60, minimumViewTime: 120 };
 
 const describe = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -95,36 +99,35 @@ export default function HomeScreen() {
     setPosts((prev) => prev.filter((p) => p.id !== postId));
   }, []);
 
-  const storyAuthors = new Set(stories.map((s) => s.authorId));
+  const storyAuthors = useMemo(() => new Set(stories.map((s) => s.authorId)), [stories]);
+  const renderItem = useCallback(
+    ({ item }: { item: Post }) => (
+      <PostCard
+        post={item}
+        width={width}
+        active={item.id === activeId}
+        hasStory={storyAuthors.has(item.authorId)}
+        onNotInterested={notInterested}
+      />
+    ),
+    [width, activeId, storyAuthors, notInterested],
+  );
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       <View style={styles.header}>
         {/* Long-press: dev-only fault injection menu; does nothing in production. */}
-        <Pressable style={styles.wordmarkRow} onLongPress={openFaultMenu}>
-          <Text style={type.wordmark}>tardy</Text>
-          <View style={styles.wordmarkDot} />
+        <Pressable onLongPress={openFaultMenu} accessibilityRole="header" accessibilityLabel="Tardy">
+          <Wordmark />
         </Pressable>
-        <View style={styles.headerIcons}>
-          <PressableScale>
-            <Icon name="plus.circle.fill" size={28} color={colors.primary} />
-          </PressableScale>
-        </View>
+        {/* "New post" returns when there's a create-post flow; no dead buttons in the meantime. */}
       </View>
       <BreakingTicker posts={trending} />
 
       <FlashList
         data={posts}
-        keyExtractor={(p) => p.id}
-        renderItem={({ item }) => (
-          <PostCard
-            post={item}
-            width={width}
-            active={item.id === activeId}
-            hasStory={storyAuthors.has(item.authorId)}
-            onNotInterested={notInterested}
-          />
-        )}
+        keyExtractor={keyOf}
+        renderItem={renderItem}
         extraData={activeId}
         ListHeaderComponent={<StoriesRow groups={stories} />}
         ListEmptyComponent={
@@ -154,7 +157,7 @@ export default function HomeScreen() {
               onRetry={() => void load(cursor, false)}
             />
           ) : posts.length === 0 ? null : loading && !refreshing ? (
-            <ActivityIndicator color={colors.textSecondary} style={styles.footer} />
+            <PostSkeleton width={width} />
           ) : exhausted ? (
             <EmptyState icon="alarm" title="You're all caught up" message="No new agent updates from the past 2 days. Go touch grass." />
           ) : null
@@ -165,7 +168,7 @@ export default function HomeScreen() {
         }}
         onEndReachedThreshold={1.5}
         onViewableItemsChanged={onViewableItemsChanged}
-        viewabilityConfig={{ itemVisiblePercentThreshold: 60, minimumViewTime: 120 }}
+        viewabilityConfig={VIEWABILITY}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={colors.textSecondary} />}
         showsVerticalScrollIndicator={false}
         contentInsetAdjustmentBehavior="automatic"
@@ -177,8 +180,4 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
   header: { height: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14 },
-  headerIcons: { flexDirection: 'row', gap: 20 },
-  wordmarkRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 3 },
-  wordmarkDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.alarm, marginBottom: 8 },
-  footer: { paddingVertical: 24 },
 });

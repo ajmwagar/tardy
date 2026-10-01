@@ -1,42 +1,67 @@
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, useWindowDimensions, View } from 'react-native';
 
 import { ProfileView } from '@/components/profile-view';
+import { EmptyState, ErrorState, ProfileSkeleton } from '@/components/states';
 import { TardyApiError } from '@/data/api';
 import type { Account } from '@/data/types';
 import { api } from '@/state/store';
 import { colors } from '@/theme';
 
+type Load = { status: 'loading' } | { status: 'private' } | { status: 'missing' } | { status: 'error'; detail: string } | { status: 'ready'; account: Account };
+
 export default function ProfileScreen() {
   const { handle } = useLocalSearchParams<{ handle: string }>();
-  const [account, setAccount] = useState<Account | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { width } = useWindowDimensions();
+  const [load, setLoad] = useState<Load>({ status: 'loading' });
+  /** Bumped by Retry to refetch. */
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
+    let live = true;
     api
       .accountByHandle(handle)
-      .then(setAccount)
-      .catch((e: unknown) =>
-        setError(
-          e instanceof TardyApiError && e.code === 'forbidden'
-            ? 'This profile is private.'
-            : e instanceof Error
-              ? e.message
-              : String(e),
-        ),
-      );
-  }, [handle]);
+      .then((account) => live && setLoad({ status: 'ready', account }))
+      .catch((e: unknown) => {
+        if (!live) return;
+        if (e instanceof TardyApiError && e.code === 'forbidden') setLoad({ status: 'private' });
+        else if (e instanceof TardyApiError && e.code === 'not_found') setLoad({ status: 'missing' });
+        else setLoad({ status: 'error', detail: e instanceof Error ? e.message : String(e) });
+      });
+    return () => {
+      live = false;
+    };
+  }, [handle, attempt]);
+
+  const retry = () => {
+    setLoad({ status: 'loading' });
+    setAttempt((a) => a + 1);
+  };
 
   return (
     <View style={styles.screen}>
       <Stack.Screen options={{ headerTitle: handle }} />
-      {error ? (
-        <Text style={styles.error}>{error}</Text>
-      ) : account ? (
-        <ProfileView account={account} isMe={account.id === 'me'} />
+      {load.status === 'ready' ? (
+        <ProfileView account={load.account} isMe={load.account.id === 'me'} />
+      ) : load.status === 'private' ? (
+        <EmptyState
+          icon="lock.fill"
+          title="This profile is private"
+          message="Only its owners can see it. Whatever it's building, it's keeping quiet."
+          action={{ label: 'Go back', onPress: () => router.back() }}
+        />
+      ) : load.status === 'missing' ? (
+        <EmptyState
+          icon="person.crop.circle.badge.questionmark"
+          title="No one by that name"
+          message={`There's no @${handle} on Tardy. Maybe it was renamed.`}
+          action={{ label: 'Go back', onPress: () => router.back() }}
+        />
+      ) : load.status === 'error' ? (
+        <ErrorState message="This profile didn't load. It might be mid-deploy." detail={load.detail} onRetry={retry} />
       ) : (
-        <ActivityIndicator color={colors.textSecondary} style={{ marginTop: 40 }} />
+        <ProfileSkeleton width={width} />
       )}
     </View>
   );
@@ -44,5 +69,4 @@ export default function ProfileScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
-  error: { color: colors.alarm, textAlign: 'center', marginTop: 40 },
 });

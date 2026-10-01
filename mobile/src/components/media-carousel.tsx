@@ -4,7 +4,7 @@ import { FlatList, StyleSheet, Text, View, type NativeScrollEvent, type NativeSy
 
 import type { MediaItem } from '@/data/types';
 import { logEngagement, toggleMuted, useStore } from '@/state/store';
-import { colors, layout } from '@/theme';
+import { colors, IMAGE_TRANSITION_MS, layout } from '@/theme';
 
 import { DoubleTapLike } from './double-tap-like';
 import { Icon } from './ui';
@@ -54,7 +54,7 @@ export const MediaCarousel = memo(function MediaCarousel({
             style={StyleSheet.absoluteFill}
             contentFit="cover"
             cachePolicy="memory-disk"
-            transition={150}
+            transition={IMAGE_TRANSITION_MS}
             priority={i === 0 ? 'high' : 'normal'}
           />
         ) : (
@@ -102,11 +102,14 @@ export const MediaCarousel = memo(function MediaCarousel({
   );
 });
 
-/** Instagram's dot row under a carousel; the active dot is blue. */
+/**
+ * The dot row under a carousel, in its own line between the media and the action row (the
+ * action row is full now that it shows counts). Active dot in Tardy yellow.
+ */
 export function CarouselDots({ count, index }: { count: number; index: number }) {
   if (count < 2) return null;
   return (
-    <View style={styles.dots}>
+    <View style={styles.dots} accessibilityLabel={`Photo ${index + 1} of ${count}`}>
       {Array.from({ length: count }, (_, i) => (
         <View key={i} style={[styles.dot, i === index && styles.dotActive]} />
       ))}
@@ -136,7 +139,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: 'rgba(18,18,18,0.75)',
   },
-  dots: { flexDirection: 'row', gap: 4, justifyContent: 'center', position: 'absolute', left: 0, right: 0, top: 16 },
+  dots: { flexDirection: 'row', gap: 4, justifyContent: 'center', paddingTop: 10 },
   dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.textTertiary },
   dotActive: { backgroundColor: colors.primary },
 });

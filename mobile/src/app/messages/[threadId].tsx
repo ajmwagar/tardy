@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import { router, Stack, useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -9,7 +9,7 @@ import { Avatar, Icon, NameLine, PressableScale, StatusPill } from '@/components
 import { TardyApiError } from '@/data/api';
 import type { Message, Post, Thread } from '@/data/types';
 import { api, ensureAccounts, refreshUnread, reportError, useAccount, useStore } from '@/state/store';
-import { colors, radius, timeAgo } from '@/theme';
+import { colors, IMAGE_TRANSITION_MS, radius, timeAgo } from '@/theme';
 
 /** Bounded polling while the thread is open (server push for DMs comes later). */
 const POLL_MS = 3000;
@@ -58,7 +58,7 @@ function SharedPostCard({ message }: { message: Message }) {
         <Avatar account={author} size={22} />
         <NameLine account={author} />
       </View>
-      <Image source={uri} style={styles.sharedMedia} contentFit="cover" cachePolicy="memory-disk" />
+      <Image source={uri} recyclingKey={uri} style={styles.sharedMedia} contentFit="cover" cachePolicy="memory-disk" transition={IMAGE_TRANSITION_MS} />
       <View style={styles.sharedBody}>
         {post.status && <StatusPill value={post.status} compact />}
         <Text style={styles.sharedCaption} numberOfLines={2}>
@@ -99,6 +99,8 @@ const Bubble = memo(function Bubble({
     </View>
   );
 });
+
+const rowKey = (r: Row) => r.id;
 
 function ThreadSkeleton() {
   return (
@@ -175,7 +177,22 @@ export default function ThreadScreen() {
     [meId, threadId],
   );
 
-  const data = [...(rows ?? [])].reverse(); // inverted list: newest first
+  const data = useMemo(() => [...(rows ?? [])].reverse(), [rows]); // inverted list: newest first
+  const retry = useCallback((r: Row) => void send(r.text, r), [send]);
+  const renderItem = useCallback(
+    ({ item, index }: { item: Row; index: number }) => {
+      const older = data[index + 1];
+      const newer = data[index - 1];
+      const gap = older && Date.parse(item.createdAt) - Date.parse(older.createdAt) > BREAK_MS;
+      return (
+        <View>
+          {(!older || gap) && <Text style={styles.timeBreak}>{timeAgo(item.createdAt)} ago</Text>}
+          <Bubble row={item} mine={item.senderId === meId} showAvatar={!newer || newer.senderId !== item.senderId} onRetry={retry} />
+        </View>
+      );
+    },
+    [data, meId, retry],
+  );
 
   return (
     <View style={styles.screen}>
@@ -184,6 +201,8 @@ export default function ThreadScreen() {
           headerTitle: () => (
             <Pressable
               style={styles.titleRow}
+              accessibilityRole="button"
+              accessibilityLabel={`${otherAccount?.handle ?? 'Conversation'}, open profile`}
               onPress={() => otherAccount && router.push({ pathname: '/profile/[handle]', params: { handle: otherAccount.handle } })}>
               <Avatar account={otherAccount} size={28} />
               <View>
@@ -203,19 +222,8 @@ export default function ThreadScreen() {
           <FlatList
             data={data}
             inverted
-            keyExtractor={(r) => r.id}
-            renderItem={({ item, index }) => {
-              const older = data[index + 1];
-              const newer = data[index - 1];
-              const mine = item.senderId === meId;
-              const gap = older && Date.parse(item.createdAt) - Date.parse(older.createdAt) > BREAK_MS;
-              return (
-                <View>
-                  {(!older || gap) && <Text style={styles.timeBreak}>{timeAgo(item.createdAt)} ago</Text>}
-                  <Bubble row={item} mine={mine} showAvatar={!newer || newer.senderId !== item.senderId} onRetry={(r) => send(r.text, r)} />
-                </View>
-              );
-            }}
+            keyExtractor={rowKey}
+            renderItem={renderItem}
             contentContainerStyle={styles.list}
             keyboardDismissMode="interactive"
           />
@@ -228,17 +236,20 @@ export default function ThreadScreen() {
               style={styles.input}
               multiline
             />
-            {draft.trim() ? (
-              <PressableScale
-                style={styles.send}
-                onPress={() => {
-                  const text = draft;
-                  setDraft('');
-                  void send(text);
-                }}>
-                <Icon name="arrow.up" size={18} color={colors.onPrimary} weight="bold" />
-              </PressableScale>
-            ) : null}
+            {/* Always laid out (dimmed when empty) so the input doesn't jump wider and narrower. */}
+            <PressableScale
+              style={[styles.send, !draft.trim() && styles.sendDisabled]}
+              disabled={!draft.trim()}
+              accessibilityRole="button"
+              accessibilityLabel="Send message"
+              accessibilityState={{ disabled: !draft.trim() }}
+              onPress={() => {
+                const text = draft;
+                setDraft('');
+                void send(text);
+              }}>
+              <Icon name="arrow.up" size={18} color={colors.onPrimary} weight="bold" />
+            </PressableScale>
           </View>
         </KeyboardAvoidingView>
       )}
@@ -295,4 +306,5 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   send: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.primary },
+  sendDisabled: { opacity: 0.35 },
 });

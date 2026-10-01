@@ -5,7 +5,7 @@ import { FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { EmptyState, ErrorState, Pulse, SkeletonBlock } from '@/components/states';
-import { Avatar, Icon, NameLine } from '@/components/ui';
+import { Avatar, Icon, NameLine, PressableScale } from '@/components/ui';
 import type { Thread } from '@/data/types';
 import { api, ensureAccounts, refreshUnread, useAccount, useStore } from '@/state/store';
 import { colors, timeAgo, type } from '@/theme';
@@ -19,12 +19,18 @@ function isActive(thread: Thread, me: string | undefined, now: number) {
   return thread.lastMessage.senderId !== me && now - Date.parse(thread.lastMessage.createdAt) < ACTIVE_WINDOW_MS;
 }
 
+const threadKey = (t: Thread) => t.id;
 const openThread = (thread: Thread) => router.push({ pathname: '/messages/[threadId]', params: { threadId: thread.id } });
 
 const ActiveBubble = memo(function ActiveBubble({ thread, me }: { thread: Thread; me: string | undefined }) {
   const account = useAccount(other(thread, me));
   return (
-    <Pressable style={styles.active} onPress={() => openThread(thread)}>
+    <PressableScale
+      style={styles.active}
+      scaleTo={0.95}
+      onPress={() => openThread(thread)}
+      accessibilityRole="button"
+      accessibilityLabel={`${account?.handle ?? 'Someone'}, active now`}>
       <View>
         <Avatar account={account} size={58} />
         <View style={styles.presence} />
@@ -32,7 +38,7 @@ const ActiveBubble = memo(function ActiveBubble({ thread, me }: { thread: Thread
       <Text style={styles.activeLabel} numberOfLines={1}>
         {account?.handle}
       </Text>
-    </Pressable>
+    </PressableScale>
   );
 });
 
@@ -120,6 +126,10 @@ export default function MessagesScreen() {
 
   const active = useMemo(() => (threads ?? []).filter((t) => isActive(t, me?.id, now)), [threads, me?.id, now]);
 
+  const meId = me?.id;
+  const renderThread = useCallback(({ item }: { item: Thread }) => <ThreadRow thread={item} me={meId} now={now} />, [meId, now]);
+  const renderActive = useCallback(({ item }: { item: Thread }) => <ActiveBubble thread={item} me={meId} />, [meId]);
+
   const header = (
     <View>
       <View style={styles.search}>
@@ -141,8 +151,8 @@ export default function MessagesScreen() {
           <FlatList
             data={active}
             horizontal
-            keyExtractor={(t) => t.id}
-            renderItem={({ item }) => <ActiveBubble thread={item} me={me?.id} />}
+            keyExtractor={threadKey}
+            renderItem={renderActive}
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.activeRow}
           />
@@ -155,7 +165,7 @@ export default function MessagesScreen() {
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       <View style={styles.bar}>
-        <Text style={type.title}>{me?.handle ?? 'messages'}</Text>
+        <Text style={type.title} numberOfLines={1} maxFontSizeMultiplier={1.3} accessibilityRole="header">{me?.handle ?? 'messages'}</Text>
         <Icon name="square.and.pencil" size={24} />
       </View>
 
@@ -166,8 +176,8 @@ export default function MessagesScreen() {
       ) : (
         <FlashList
           data={filtered}
-          keyExtractor={(t) => t.id}
-          renderItem={({ item }) => <ThreadRow thread={item} me={me?.id} now={now} />}
+          keyExtractor={threadKey}
+          renderItem={renderThread}
           ListHeaderComponent={header}
           ListEmptyComponent={
             query ? (
@@ -191,7 +201,7 @@ export default function MessagesScreen() {
               }}
             />
           }
-          contentContainerStyle={{ paddingBottom: 120 }}
+          contentContainerStyle={styles.content}
           keyboardDismissMode="on-drag"
         />
       )}
@@ -201,6 +211,7 @@ export default function MessagesScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
+  content: { paddingBottom: 120 },
   bar: { height: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16 },
   search: {
     flexDirection: 'row',

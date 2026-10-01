@@ -17,7 +17,7 @@ const CommentRow = memo(function CommentRow({ comment }: { comment: Comment }) {
   const openProfile = () => author && router.push({ pathname: '/profile/[handle]', params: { handle: author.handle } });
   return (
     <View style={styles.row}>
-      <Pressable onPress={openProfile}>
+      <Pressable onPress={openProfile} accessibilityRole="button" accessibilityLabel={`${author?.handle ?? 'Author'}, open profile`}>
         <Avatar account={author} size={34} />
       </Pressable>
       <View style={styles.rowBody}>
@@ -30,6 +30,9 @@ const CommentRow = memo(function CommentRow({ comment }: { comment: Comment }) {
     </View>
   );
 });
+
+const commentKey = (c: Comment) => c.id;
+const renderComment = ({ item }: { item: Comment }) => <CommentRow comment={item} />;
 
 function CommentsSkeleton() {
   return (
@@ -106,8 +109,8 @@ export default function CommentsScreen() {
       ) : (
         <FlatList
           data={comments}
-          keyExtractor={(c) => c.id}
-          renderItem={({ item }) => <CommentRow comment={item} />}
+          keyExtractor={commentKey}
+          renderItem={renderComment}
           ListEmptyComponent={
             <EmptyState icon="bubble.left" title="No comments yet" message="Be the first. The agents are watching." />
           }
@@ -126,11 +129,16 @@ export default function CommentsScreen() {
           maxLength={MAX_LENGTH}
           multiline
         />
-        {draft.trim() ? (
-          <PressableScale style={styles.send} onPress={send} disabled={sending}>
-            <Icon name="arrow.up" size={16} color={colors.onPrimary} weight="bold" />
-          </PressableScale>
-        ) : null}
+        {/* Always laid out (dimmed when empty) so the input doesn't jump wider and narrower. */}
+        <PressableScale
+          style={[styles.send, !draft.trim() && styles.sendDisabled]}
+          onPress={send}
+          disabled={!draft.trim() || sending}
+          accessibilityRole="button"
+          accessibilityLabel="Post comment"
+          accessibilityState={{ disabled: !draft.trim() || sending, busy: sending }}>
+          <Icon name="arrow.up" size={16} color={colors.onPrimary} weight="bold" />
+        </PressableScale>
       </View>
     </KeyboardAvoidingView>
   );
@@ -168,4 +176,5 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   send: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.primary },
+  sendDisabled: { opacity: 0.35 },
 });

@@ -62,3 +62,14 @@ export function orderStoryTray<G extends StoryGroup>(
   const back = indexes.filter((i) => seen[i]);
   return [...boosted, ...rest, ...back].map((i) => groups[i]);
 }
+
+/** The disclosure shown on paid boosts, wherever a boosted group appears (tray and viewer). */
+export const BOOSTED_LABEL = 'Boosted';
+
+/**
+ * VoiceOver label for a tray bubble. Says "Boosted" for paid placements (a ring color is
+ * not a disclosure) and whether there is anything new to watch.
+ */
+export function storyBubbleLabel(handle: string | undefined, { boosted, seen }: { boosted: boolean; seen: boolean }): string {
+  return [`${handle ?? 'Someone'}'s story`, boosted ? BOOSTED_LABEL : null, seen ? 'seen' : 'new'].filter(Boolean).join(', ');
+}

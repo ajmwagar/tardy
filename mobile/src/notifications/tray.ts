@@ -1,11 +1,18 @@
 import type { Notification, NotificationKind } from '@/data/types';
 
-/** Tray filter chips. `work` is the reason Tardy exists, so it gets its own chip. */
-export type TrayFilter = 'all' | 'work' | 'mentions';
+/**
+ * Tray filter chips. `needs_you` is work only a human can unblock (blocked, review requested);
+ * `work` is the reason Tardy exists, so it gets its own chip too.
+ */
+export type TrayFilter = 'needs_you' | 'all' | 'work' | 'mentions';
 
 export const WORK_KINDS: ReadonlySet<NotificationKind> = new Set(['shipped', 'blocked', 'review_requested']);
 
+/** Work notifications that are waiting on a person, not an agent. */
+export const NEEDS_YOU_KINDS: ReadonlySet<NotificationKind> = new Set(['blocked', 'review_requested']);
+
 const MATCHES: Record<TrayFilter, (n: Notification) => boolean> = {
+  needs_you: (n) => NEEDS_YOU_KINDS.has(n.kind),
   all: () => true,
   work: (n) => WORK_KINDS.has(n.kind),
   mentions: (n) => n.kind === 'mention' || n.kind === 'comment',
@@ -41,4 +48,14 @@ export function readThrough(list: readonly Notification[]): string | null {
   let newest: string | null = null;
   for (const n of list) if (!newest || Date.parse(n.createdAt) > Date.parse(newest)) newest = n.createdAt;
   return newest;
+}
+
+/**
+ * Tab badge text for an unread count: nothing at zero, "99+" past 99. Return undefined
+ * (not "0") for zero: NativeTabs ignores `hidden` whenever the badge has text, so a "0"
+ * would stay on screen.
+ */
+export function badgeText(count: number): string | undefined {
+  if (count <= 0) return undefined;
+  return count > 99 ? '99+' : String(count);
 }

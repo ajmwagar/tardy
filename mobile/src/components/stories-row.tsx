@@ -1,14 +1,14 @@
 import { router } from 'expo-router';
 import { memo, useCallback, useMemo, useState } from 'react';
-import { ActionSheetIOS, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActionSheetIOS, FlatList, StyleSheet, Text, View } from 'react-native';
 
 import { openWebCheckout } from '@/config';
 import type { Story, StoryGroup } from '@/data/types';
 import { useAccount, useStore } from '@/state/store';
-import { isGroupBoosted, isGroupSeen, orderStoryTray } from '@/stories/boost';
+import { BOOSTED_LABEL, isGroupBoosted, isGroupSeen, orderStoryTray, storyBubbleLabel } from '@/stories/boost';
 import { colors } from '@/theme';
 
-import { Avatar, Hairline, Icon, type RingState } from './ui';
+import { Avatar, Hairline, Icon, PressableScale, type RingState } from './ui';
 
 const openViewer = (authorId: string) => router.push({ pathname: '/stories/[authorId]', params: { authorId } });
 
@@ -21,24 +21,47 @@ function useIsSeen(): (story: Story) => boolean {
 /**
  * Red for a live paid boost, grey otherwise; both darken once watched. Expiry is checked
  * against the time the bubble mounted; the tray reloads (and the server reorders it) on refresh.
+ * No group (you have no stories): no ring.
  */
-function useRing(group: StoryGroup): RingState {
-  const seen = isGroupSeen(group, useIsSeen());
+function useRing(group: StoryGroup | undefined): RingState {
+  const isSeen = useIsSeen();
   const [now] = useState(Date.now);
+  if (!group) return 'none';
+  const seen = isGroupSeen(group, isSeen);
   if (isGroupBoosted(group, now)) return seen ? 'boostedSeen' : 'boosted';
   return seen ? 'seen' : 'unseen';
+}
+
+const isBoosted = (ring: RingState) => ring === 'boosted' || ring === 'boostedSeen';
+const isSeenRing = (ring: RingState) => ring === 'seen' || ring === 'boostedSeen';
+
+/** The paid-placement disclosure under a boosted bubble: the red ring alone is not one. */
+function BoostedLabel() {
+  return (
+    <Text style={styles.boosted} numberOfLines={1} maxFontSizeMultiplier={1.4}>
+      {BOOSTED_LABEL}
+    </Text>
+  );
 }
 
 const StoryBubble = memo(function StoryBubble({ group }: { group: StoryGroup }) {
   const account = useAccount(group.authorId);
   const ring = useRing(group);
+  const boosted = isBoosted(ring);
+  const seen = isSeenRing(ring);
   return (
-    <Pressable style={styles.bubble} onPress={() => openViewer(group.authorId)}>
+    <PressableScale
+      style={styles.bubble}
+      scaleTo={0.95}
+      onPress={() => openViewer(group.authorId)}
+      accessibilityRole="button"
+      accessibilityLabel={storyBubbleLabel(account?.handle, { boosted, seen })}>
       <Avatar account={account} size={66} ring={ring} />
-      <Text style={[styles.label, (ring === 'seen' || ring === 'boostedSeen') && styles.labelSeen]} numberOfLines={1}>
+      <Text style={[styles.label, seen && styles.labelSeen]} numberOfLines={1} maxFontSizeMultiplier={1.4}>
         {account?.handle}
       </Text>
-    </Pressable>
+      {boosted && <BoostedLabel />}
+    </PressableScale>
   );
 });
 
@@ -49,32 +72,35 @@ function openYourStoryMenu() {
   });
 }
 
-function YourStoryAvatar({ group }: { group: StoryGroup }) {
-  const me = useAccount('me');
-  return <Avatar account={me} size={66} ring={useRing(group)} />;
-}
-
 /** Your bubble: opens your stories when you have some; long-press to boost them. */
 function YourStory({ group }: { group: StoryGroup | undefined }) {
   const me = useAccount('me');
+  const ring = useRing(group);
   return (
-    <Pressable
+    <PressableScale
       style={styles.bubble}
+      scaleTo={0.95}
       onPress={group ? () => openViewer('me') : undefined}
       onLongPress={openYourStoryMenu}
       accessibilityRole="button"
-      accessibilityLabel="Your story"
+      accessibilityLabel={isBoosted(ring) ? `Your story, ${BOOSTED_LABEL}` : 'Your story'}
       accessibilityHint="Long-press to boost your story">
       <View style={styles.yourStory}>
-        {group ? <YourStoryAvatar group={group} /> : <Avatar account={me} size={70} />}
+        {group ? <Avatar account={me} size={66} ring={ring} /> : <Avatar account={me} size={70} />}
         <View style={styles.plus}>
           <Icon name="plus" size={12} color="#fff" weight="bold" />
         </View>
       </View>
-      <Text style={[styles.label, styles.labelSeen]}>Your story</Text>
-    </Pressable>
+      <Text style={[styles.label, styles.labelSeen]} numberOfLines={1} maxFontSizeMultiplier={1.4}>
+        Your story
+      </Text>
+      {isBoosted(ring) && <BoostedLabel />}
+    </PressableScale>
   );
 }
+
+const renderBubble = ({ item }: { item: StoryGroup }) => <StoryBubble group={item} />;
+const keyOf = (g: StoryGroup) => g.authorId;
 
 export const StoriesRow = memo(function StoriesRow({ groups: serverOrder }: { groups: StoryGroup[] }) {
   // Re-apply the server's ordering rule with what was watched here, so a group moves to the
@@ -83,15 +109,16 @@ export const StoriesRow = memo(function StoriesRow({ groups: serverOrder }: { gr
   const [now] = useState(Date.now);
   const groups = useMemo(() => orderStoryTray(serverOrder, now, isSeen), [serverOrder, now, isSeen]);
   const mine = groups.find((g) => g.authorId === 'me');
+  const others = useMemo(() => (mine ? groups.filter((g) => g !== mine) : groups), [groups, mine]);
   return (
     <View>
       <FlatList
-        data={mine ? groups.filter((g) => g !== mine) : groups}
+        data={others}
         horizontal
         showsHorizontalScrollIndicator={false}
-        keyExtractor={(g) => g.authorId}
+        keyExtractor={keyOf}
         ListHeaderComponent={<YourStory group={mine} />}
-        renderItem={({ item }) => <StoryBubble group={item} />}
+        renderItem={renderBubble}
         contentContainerStyle={styles.row}
       />
       <Hairline />
@@ -100,7 +127,8 @@ export const StoriesRow = memo(function StoriesRow({ groups: serverOrder }: { gr
 });
 
 const styles = StyleSheet.create({
-  row: { paddingHorizontal: 8, paddingVertical: 10, gap: 4 },
+  // The bottom padding holds the Boosted line, so a boost arriving never changes the tray's height.
+  row: { paddingHorizontal: 8, paddingTop: 10, paddingBottom: 14, gap: 4 },
   bubble: { width: 82, alignItems: 'center', gap: 5 },
   yourStory: { width: 78, height: 78, alignItems: 'center', justifyContent: 'center' },
   plus: {
@@ -118,4 +146,5 @@ const styles = StyleSheet.create({
   },
   label: { color: colors.text, fontSize: 11.5, maxWidth: 76 },
   labelSeen: { color: colors.textSecondary },
+  boosted: { position: 'absolute', bottom: -13, color: colors.textSecondary, fontSize: 10, fontWeight: '600' },
 });

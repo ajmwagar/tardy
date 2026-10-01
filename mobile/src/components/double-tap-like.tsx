@@ -1,4 +1,3 @@
-import * as Haptics from 'expo-haptics';
 import type { ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -7,7 +6,7 @@ import Animated, { useAnimatedStyle, useSharedValue, withSequence, withSpring, w
 import { setLiked } from '@/state/store';
 import { colors } from '@/theme';
 
-import { Icon } from './ui';
+import { haptic, Icon } from './ui';
 
 /**
  * Wraps media so a double tap gives the post a thumbs up with a pop; a single tap is
@@ -30,7 +29,7 @@ export function DoubleTapLike({
   const burst = () => {
     scale.value = withSequence(withSpring(1.15, { duration: 260 }), withSpring(1, { duration: 120 }), withTiming(0.9, { duration: 360 }));
     opacity.value = withSequence(withTiming(1, { duration: 80 }), withTiming(1, { duration: 520 }), withTiming(0, { duration: 180 }));
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    haptic.impact();
     void setLiked(postId, true);
   };
 

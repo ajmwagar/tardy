@@ -1,12 +1,21 @@
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, useWindowDimensions } from 'react-native';
+import { ScrollView, StyleSheet, useWindowDimensions } from 'react-native';
 
 import { PostCard } from '@/components/post-card';
+import { EmptyState, ErrorState, PostSkeleton } from '@/components/states';
 import { TardyApiError } from '@/data/api';
 import type { Post } from '@/data/types';
 import { api, ensureAccounts, ingestPosts, logEngagement } from '@/state/store';
 import { colors } from '@/theme';
+
+type Load =
+  | { status: 'loading' }
+  | { status: 'gone'; reason: 'private' | 'deleted' }
+  | { status: 'error'; detail: string }
+  | { status: 'ready'; post: Post };
+
+const back = () => router.back();
 
 /**
  * One post on its own: where a tapped work notification (shipped, blocked, review
@@ -15,8 +24,9 @@ import { colors } from '@/theme';
 export default function PostScreen() {
   const { postId } = useLocalSearchParams<{ postId: string }>();
   const { width } = useWindowDimensions();
-  const [post, setPost] = useState<Post | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [load, setLoad] = useState<Load>({ status: 'loading' });
+  /** Bumped by Retry to refetch. */
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let live = true;
@@ -25,39 +35,54 @@ export default function PostScreen() {
       .then(async (p) => {
         await ensureAccounts([p.authorId, p.projectId]);
         ingestPosts([p]);
-        if (live) setPost(p);
+        if (live) setLoad({ status: 'ready', post: p });
       })
       .catch((e: unknown) => {
         if (!live) return;
-        setError(
-          e instanceof TardyApiError
-            ? e.code === 'forbidden'
-              ? 'This post is private.'
-              : 'This post was deleted.'
-            : e instanceof Error
-              ? e.message
-              : String(e),
-        );
+        if (e instanceof TardyApiError && e.code === 'forbidden') setLoad({ status: 'gone', reason: 'private' });
+        else if (e instanceof TardyApiError && e.code === 'not_found') setLoad({ status: 'gone', reason: 'deleted' });
+        else setLoad({ status: 'error', detail: e instanceof Error ? e.message : String(e) });
       });
     return () => {
       live = false;
     };
-  }, [postId]);
+  }, [postId, attempt]);
+
+  const retry = () => {
+    setLoad({ status: 'loading' });
+    setAttempt((a) => a + 1);
+  };
 
   const notInterested = (id: string) => {
     logEngagement({ type: 'not_interested', postId: id });
-    router.back();
+    back();
   };
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
       <Stack.Screen options={{ headerShown: true, headerTitle: 'Post', headerBackButtonDisplayMode: 'minimal', headerShadowVisible: false }} />
-      {error ? (
-        <Text style={styles.error}>{error}</Text>
-      ) : post ? (
-        <PostCard post={post} width={width} active hasStory={false} onNotInterested={notInterested} />
+      {load.status === 'ready' ? (
+        <PostCard post={load.post} width={width} active hasStory={false} onNotInterested={notInterested} />
+      ) : load.status === 'gone' ? (
+        load.reason === 'private' ? (
+          <EmptyState
+            icon="lock.fill"
+            title="This post is private"
+            message="It's visible to its project's team only."
+            action={{ label: 'Go back', onPress: back }}
+          />
+        ) : (
+          <EmptyState
+            icon="trash"
+            title="This post was deleted"
+            message="Its agent cleaned up after itself. For once."
+            action={{ label: 'Go back', onPress: back }}
+          />
+        )
+      ) : load.status === 'error' ? (
+        <ErrorState message="This post didn't load. The agent's update is still out there." detail={load.detail} onRetry={retry} />
       ) : (
-        <ActivityIndicator color={colors.textSecondary} style={{ marginTop: 40 }} />
+        <PostSkeleton width={width} />
       )}
     </ScrollView>
   );
@@ -66,5 +91,4 @@ export default function PostScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
   content: { paddingBottom: 40 },
-  error: { color: colors.alarm, textAlign: 'center', marginTop: 40 },
 });
