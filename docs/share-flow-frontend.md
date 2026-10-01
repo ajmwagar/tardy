@@ -48,3 +48,17 @@ Suggested skill loop:
 - Keep enrichment failure separate from message delivery failure.
 - Preserve conversation and request IDs across offline retries.
 - A failed promotion leaves the original DM human-only.
+
+## Expo against a developer Mac
+
+The current Expo application still constructs `MockTardyApi` directly. Merely setting an environment variable does not switch it to Rust yet; a generated HTTP implementation of the existing `TardyApi` interface is still required.
+
+For that adapter, use this development contract:
+
+- Start Rust with `TARDY_BIND=0.0.0.0:3300` and a disposable `DATABASE_URL` pointing to PostgreSQL 17.
+- Put `EXPO_PUBLIC_TARDY_API_URL=http://<mac-lan-ip>:3300` in `mobile/.env.local`. Do not use `localhost`: on an iPhone that means the phone.
+- Keep the iPhone and Mac on the same non-isolated Wi-Fi network and allow incoming connections to the Rust binary in macOS Firewall.
+- Permit local-network HTTP only in development builds (`NSAllowsLocalNetworking`); TestFlight and production must use HTTPS.
+- Select `HttpTardyApi` only when the API URL exists; otherwise retain `MockTardyApi`. Never silently fall back to mock after a network or authentication failure.
+
+The mobile interface currently includes session, feed, notification, and read-watermark operations that are not all present in the Rust OpenAPI contract. Implement those missing contracts or a deliberately partial developer screen before replacing the mock for the whole app.

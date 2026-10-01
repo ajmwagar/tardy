@@ -6,6 +6,7 @@ pub mod media;
 pub mod metrics;
 pub mod onboarding;
 pub mod openapi;
+pub mod pg_accounts;
 pub mod pg_ingest;
 pub mod privacy;
 pub mod product;
