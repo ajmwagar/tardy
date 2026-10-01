@@ -169,6 +169,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/metrics", get(metrics_endpoint))
         .route("/openapi.json", get(openapi_endpoint))
         .route("/llms.txt", get(llms_txt))
+        .route("/v1/session", get(current_session))
         .route("/v1/profiles", post(create_profile))
         .route("/v1/profiles/{handle}", get(get_profile))
         .route(
@@ -257,6 +258,20 @@ pub fn router(state: Arc<AppState>) -> Router {
         .layer(middleware::from_fn(move |request, next| {
             crate::metrics::track(metrics.clone(), request, next)
         }))
+}
+
+/// Session restoration is an explicit route even before the provider exchange lands.
+/// This matters to clients carrying an old development token: they receive 401 and can
+/// clear the keychain instead of mistaking a missing route for a server outage.
+async fn current_session(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authenticated_account(&state, &headers).await?;
+    Err(ApiError {
+        status: StatusCode::NOT_IMPLEMENTED,
+        message: "session serialization is not implemented yet".into(),
+    })
 }
 
 async fn create_feed_subscription(
