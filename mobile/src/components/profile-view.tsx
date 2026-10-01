@@ -48,7 +48,7 @@ function Header({ account, isMe }: { account: Account; isMe: boolean }) {
 
       <View style={styles.buttons}>
         {isMe ? (
-          <PressableScale style={[styles.button, styles.secondaryButton]} scaleTo={0.97}>
+          <PressableScale style={[styles.button, styles.secondaryButton]} scaleTo={0.97} onPress={() => router.push('/edit-profile')}>
             <Text style={styles.secondaryText}>Edit profile</Text>
           </PressableScale>
         ) : (

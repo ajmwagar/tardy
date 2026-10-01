@@ -1,3 +1,4 @@
+import type { ProfilePatch } from './profile';
 import type {
   Account,
   AuthCredential,
@@ -71,6 +72,11 @@ export interface TardyApi {
   suggestedFollows(): Promise<Account[]>;
   /** Claims a handle for the viewer. `invalid` if malformed, `conflict` if taken. */
   setHandle(handle: string): Promise<Account>;
+  /**
+   * Updates the viewer's display name and/or bio; omitted fields stay as they are.
+   * `invalid` if a field breaks the rules in `data/profile.ts`. Handles change via `setHandle`.
+   */
+  updateProfile(patch: ProfilePatch): Promise<Account>;
   /** Marks first-launch setup done; resolves with `onboardedAt` set. */
   completeOnboarding(): Promise<SignedIn>;
 

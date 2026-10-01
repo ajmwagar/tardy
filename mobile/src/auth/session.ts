@@ -127,6 +127,17 @@ export function createAuth(deps: AuthDeps) {
       }
     },
 
+    /**
+     * Developer bypass for testing: the normal `signIn`, then `completeOnboarding` with the
+     * defaults, landing on the feed in one tap. No new credential type and no server
+     * special case, so it only works where `signIn` itself succeeds without a real provider
+     * (the mock backend); callers decide whether to offer it.
+     */
+    async signInForDevelopment(provider: AuthProvider = 'github'): Promise<void> {
+      await this.signIn(provider);
+      if (state.status === 'onboarding') await this.completeOnboarding();
+    },
+
     /** Finishes onboarding. Rejects (staying in onboarding) if the server refuses. */
     async completeOnboarding(): Promise<void> {
       if (state.status !== 'onboarding') throw new Error(`Can't finish onboarding from ${state.status}`);
