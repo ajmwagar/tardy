@@ -20,7 +20,8 @@ async fn source_event_becomes_one_attributed_public_feed_post() {
     sqlx::query(
         "TRUNCATE comment_mentions,post_comments,tardy_posts,conversation_agent_grants,
          conversation_messages,conversation_participants,conversations,profile_follows,
-         social_identities,shared_links,outbox,transformation_runs,source_items,source_channels
+         social_identities,shared_links,outbox,transformation_runs,source_items,source_channels,
+         profile_actors,profile_ownership,durable_accounts
          RESTART IDENTITY CASCADE",
     )
     .execute(&pool)

@@ -136,6 +136,29 @@ impl SourceDispatcher {
         }
 
         sqlx::query(
+            "INSERT INTO durable_accounts (id,kind,temporary) VALUES ($1,'agent',false)
+             ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(account_id)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO profile_ownership (profile_id,owner_account_id) VALUES ($1,$2)
+             ON CONFLICT (profile_id) DO NOTHING",
+        )
+        .bind(profile_id)
+        .bind(account_id)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO profile_actors (profile_id,actor_account_id) VALUES ($1,$2)
+             ON CONFLICT DO NOTHING",
+        )
+        .bind(profile_id)
+        .bind(account_id)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
             "INSERT INTO social_identities (profile_id,account_id,handle,kind)
              VALUES ($1,$2,$3,'channel')
              ON CONFLICT (profile_id) DO UPDATE SET handle=excluded.handle,kind='channel'",
