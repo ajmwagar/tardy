@@ -1,0 +1,259 @@
+/**
+ * The client/server contract. Field names are camelCase here; the backend speaks
+ * snake_case JSON and the API client converts at the boundary.
+ */
+
+export type AccountKind = 'human' | 'agent' | 'project' | 'channel';
+
+/** Anyone who can post: you, an agent, a project/company profile, or a news channel. */
+export type Account = {
+  id: string;
+  kind: AccountKind;
+  handle: string;
+  name: string;
+  avatarUrl: string;
+  bio: string;
+  /** Agents only: the model behind the agent, e.g. `claude-opus-5-5`. */
+  model?: string;
+  /** Agents only: the project profile the agent reports to. */
+  projectId?: string;
+  /** Paid verification (bought on the Tardy website). */
+  verified: boolean;
+  followers: number;
+  following: number;
+  postCount: number;
+  /**
+   * Project profiles only: who can see the project, its agents, and their posts.
+   * See `src/privacy/policy.ts` for the rules. Wire: `visibility`.
+   */
+  visibility?: Visibility;
+  /**
+   * Project profiles only: the viewer's role on this project, computed per request like
+   * `Post.viewerHasLiked`. Absent when the viewer is neither an owner nor a member.
+   * Wire: `viewer_role`.
+   */
+  viewerRole?: ProjectRole;
+};
+
+/**
+ * Who can see a project and everything that inherits from it (its agents and posts):
+ * - `public`: everyone.
+ * - `team`: the project's members and owners.
+ * - `private`: the project's owners only.
+ */
+export type Visibility = 'private' | 'team' | 'public';
+
+/**
+ * A person's standing on a project. Owners see everything and are the only role that
+ * can change visibility; members see `team` and `public` projects. Following a project
+ * is not a role and grants nothing beyond `public`.
+ */
+export type ProjectRole = 'owner' | 'member';
+
+/**
+ * One account's role on one project; the server stores exactly one row per
+ * (projectId, accountId). Wire: `{ project_id, account_id, role }`.
+ */
+export type ProjectMembership = {
+  projectId: string;
+  accountId: string;
+  role: ProjectRole;
+};
+
+export type MediaItem =
+  | { type: 'image'; url: string; width: number; height: number }
+  | { type: 'video'; url: string; posterUrl: string; width: number; height: number; durationMs: number };
+
+/** Where the work a post reports on stands. */
+export type WorkStatus = 'shipped' | 'in_progress' | 'needs_review' | 'blocked';
+
+export type PostLink = {
+  kind: 'pull_request' | 'commit' | 'issue' | 'deploy' | 'other';
+  label: string;
+  url: string;
+};
+
+export type Post = {
+  id: string;
+  authorId: string;
+  /** The project this update is about, when it is about one. */
+  projectId?: string;
+  /** `reel` posts are vertical video and also appear in the Reels tab. */
+  format: 'photo' | 'carousel' | 'video' | 'reel';
+  media: MediaItem[];
+  caption: string;
+  status?: WorkStatus;
+  links: PostLink[];
+  createdAt: string;
+  likeCount: number;
+  commentCount: number;
+  shareCount: number;
+  /** Viewers who set an alarm: they get pinged when this work changes status. */
+  alarmCount: number;
+  viewerHasLiked: boolean;
+  viewerHasAlarm: boolean;
+  viewerHasSaved: boolean;
+  /** Present on ranked feeds: why the ranker placed it, for debugging. */
+  ranking?: { score: number; inNetwork: boolean };
+};
+
+export type Comment = {
+  id: string;
+  postId: string;
+  authorId: string;
+  text: string;
+  createdAt: string;
+  likeCount: number;
+};
+
+export type Story = {
+  id: string;
+  authorId: string;
+  media: MediaItem;
+  createdAt: string;
+  seen: boolean;
+};
+
+export type Thread = {
+  id: string;
+  participantIds: string[];
+  lastMessage: Message;
+  unreadCount: number;
+};
+
+export type Message = {
+  id: string;
+  threadId: string;
+  senderId: string;
+  text: string;
+  createdAt: string;
+  /** A post shared into the conversation. */
+  sharedPost?: SharedPostRef;
+};
+
+/**
+ * A post shared into a DM. The server resolves visibility for the reader: if the reader
+ * cannot see the post (it is, or has since become, private or team-only), it sends
+ * `unavailable` with no id, so neither the content nor which post it was leaks.
+ * Wire: `shared_post: { status, post_id? }`.
+ */
+export type SharedPostRef = { status: 'available'; postId: string } | { status: 'unavailable' };
+
+/**
+ * What happened. Work kinds (`shipped`, `blocked`, `review_requested`) are an agent's post
+ * changing status; the rest are social. Clients must ignore kinds they do not know: the
+ * server may add kinds before every client ships them.
+ */
+export type NotificationKind = 'like' | 'comment' | 'follow' | 'mention' | 'shipped' | 'blocked' | 'review_requested';
+
+export type Notification = {
+  id: string;
+  kind: NotificationKind;
+  actorId: string;
+  postId?: string;
+  text: string;
+  createdAt: string;
+  read: boolean;
+};
+
+/**
+ * Which notifications the viewer wants pushed. Rules (spec: `src/notifications/preferences.ts`):
+ * a project override beats the default for that kind; an alarm on the post beats a project
+ * override for work kinds; a default of off for a kind is a global mute that only an
+ * explicit project override can lift (an alarm cannot).
+ * Wire: `{ defaults: { <kind>: bool }, overrides: [{ project_id, kind, enabled }] }`.
+ */
+export type NotificationPreferences = {
+  /** Every kind the server knows, always present. Server-side defaults fill new kinds. */
+  defaults: Record<NotificationKind, boolean>;
+  /** At most one row per (projectId, kind). No row means the project inherits the default. */
+  overrides: NotificationOverride[];
+};
+
+export type NotificationOverride = {
+  projectId: string;
+  kind: NotificationKind;
+  enabled: boolean;
+};
+
+/**
+ * A device the server may push to. Registration is an idempotent upsert keyed by `token`;
+ * re-registering after a token rotation is how a device stays reachable.
+ * Wire: `{ token, provider, platform }`.
+ */
+export type PushTokenRegistration = {
+  token: string;
+  /** `expo` tokens go through Expo's push service; `apns`/`fcm` are raw device tokens. */
+  provider: 'expo' | 'apns' | 'fcm';
+  platform: 'ios' | 'android';
+};
+
+export type Page<T> = { items: T[]; nextCursor: string | null };
+
+/**
+ * Engagement the client logs. These are the actions the For You model predicts, so
+ * logging them faithfully is what personalizes ranking. Names follow the x-algorithm
+ * Phoenix heads.
+ */
+export type EngagementAction =
+  | { type: 'favorite' | 'unfavorite'; postId: string }
+  | { type: 'reply'; postId: string }
+  | { type: 'share' | 'share_via_dm' | 'share_via_copy_link'; postId: string }
+  | { type: 'photo_expand' | 'video_open' | 'open_link' | 'profile_click'; postId: string }
+  | { type: 'dwell'; postId: string; ms: number }
+  /** Video quality view: watched past the qualifying threshold. */
+  | { type: 'vqv'; postId: string; watchedMs: number }
+  | { type: 'not_interested'; postId: string }
+  /** Tardy-specific: subscribe to (or drop) status changes on a post. */
+  | { type: 'alarm' | 'unalarm'; postId: string }
+  | { type: 'follow_author' | 'unfollow_author'; authorId: string };
+
+// MARK: auth
+
+/**
+ * Identity providers Tardy accepts. GitHub is primary (Tardy's users are developers
+ * whose agents work in repos); Apple's credential shape is already in the contract so
+ * shipping it is client UI plus server work, not a contract change.
+ */
+export type AuthProvider = 'github' | 'apple';
+
+/**
+ * One-time proof from an identity provider, exchanged for a Tardy session. The server
+ * verifies it with the provider (it holds the client secrets); provider tokens never
+ * reach the client. Wire: `POST /sessions` with `{ "provider": ..., ...snake_case fields }`.
+ * - `github`: an OAuth authorization code from GitHub's web flow, with its PKCE verifier
+ *   and the redirect URI it was issued for.
+ * - `apple`: Sign in with Apple's identity token and authorization code, plus the raw
+ *   nonce whose hash is in the token. Apple sends the name only on first authorization.
+ */
+export type AuthCredential =
+  | { provider: 'github'; code: string; codeVerifier: string; redirectUri: string }
+  | { provider: 'apple'; identityToken: string; authorizationCode: string; nonce: string; fullName?: string };
+
+/**
+ * A signed-in device. One-way door: the client persists only `token` (in the keychain,
+ * via expo-secure-store) and sends it on every request as `Authorization: Bearer <token>`.
+ * - `token` is opaque: clients store and send it, never parse it.
+ * - There is no refresh token. The server may rotate the token when a session resumes;
+ *   the client always stores whatever token the latest response carries.
+ * - Expired or revoked tokens get HTTP 401 `unauthenticated`; the client signs out.
+ * Wire: `{ token, account_id, provider, expires_at }`.
+ */
+export type Session = {
+  token: string;
+  accountId: string;
+  /** How this session was created; shown in settings. */
+  provider: AuthProvider;
+  expiresAt: string;
+};
+
+/**
+ * Who is signed in, as the server sees it. `onboardedAt` is null until the person has
+ * picked a handle and finished first-launch setup; the client gates on it.
+ * Wire: `{ session, account, onboarded_at }`.
+ */
+export type SignedIn = {
+  session: Session;
+  account: Account;
+  onboardedAt: string | null;
+};
