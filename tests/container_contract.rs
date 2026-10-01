@@ -2,7 +2,11 @@
 fn dockerfile_keeps_the_runtime_minimal_and_non_root() {
     let dockerfile = include_str!("../Dockerfile");
     assert!(dockerfile.contains("FROM rust:1.88-alpine3.22 AS builder"));
-    assert!(dockerfile.contains("cargo build --locked --release --bins"));
+    assert!(dockerfile.contains("cargo build --locked --release"));
+    for binary in ["tardy", "ingest-worker", "push-worker", "webhook-worker"] {
+        assert!(dockerfile.contains(&format!("--bin {binary}")));
+    }
+    assert!(!dockerfile.contains("--bins"));
     assert!(dockerfile.contains("COPY ingest ./ingest"));
     assert!(dockerfile.contains("COPY migrations ./migrations"));
     assert!(dockerfile.contains("/usr/local/bin/tardy-ingest-worker"));
