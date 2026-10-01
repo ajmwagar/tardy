@@ -92,3 +92,11 @@ export function compact(n: number): string {
   if (n < 1_000_000) return `${(n / 1000).toFixed(n < 100_000 ? 1 : 0).replace(/\.0$/, '')}K`;
   return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
 }
+
+/**
+ * VoiceOver label for an icon button that shows a count: "Ping me on status change, 12".
+ * The full number, not the compact one, since "1.2K" reads badly aloud.
+ */
+export function countLabel(label: string, count: number | undefined): string {
+  return count === undefined ? label : `${label}, ${count.toLocaleString('en-US')}`;
+}

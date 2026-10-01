@@ -56,6 +56,7 @@ const Reel = memo(function Reel({ post, active, height }: { post: Post; active: 
           size={30}
           color="#fff"
           icon="hand.thumbsup"
+          label="Thumbs up"
           activeIcon="hand.thumbsup.fill"
           active={state?.liked}
           activeColor={colors.primary}
@@ -67,6 +68,7 @@ const Reel = memo(function Reel({ post, active, height }: { post: Post; active: 
           size={29}
           color="#fff"
           icon="bubble.left"
+          label="Comments"
           count={post.commentCount}
           onPress={() => router.push({ pathname: '/comments/[postId]', params: { postId: post.id } })}
         />
@@ -75,18 +77,20 @@ const Reel = memo(function Reel({ post, active, height }: { post: Post; active: 
           size={29}
           color="#fff"
           icon="light.beacon.max"
+          label="Ping me on status change"
           activeIcon="light.beacon.max.fill"
           active={state?.alarm}
           activeColor={colors.alarm}
           count={state?.alarmCount ?? post.alarmCount}
           onPress={() => toggleAlarm(post.id)}
         />
-        <Reaction vertical size={28} color="#fff" icon="paperplane" count={post.shareCount} onPress={share} />
+        <Reaction vertical size={28} color="#fff" icon="paperplane" label="Share" count={post.shareCount} onPress={share} />
         <Reaction
           vertical
           size={27}
           color="#fff"
           icon="bookmark"
+          label="Save"
           activeIcon="bookmark.fill"
           active={state?.saved}
           activeColor={colors.primary}

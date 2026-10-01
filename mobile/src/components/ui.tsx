@@ -6,7 +6,7 @@ import { Pressable, StyleSheet, Text, View, type PressableProps, type StyleProp,
 import Animated, { useAnimatedStyle, useSharedValue, withSequence, withSpring } from 'react-native-reanimated';
 
 import type { Account, WorkStatus } from '@/data/types';
-import { colors, compact, status as statusStyles, type as typeStyles } from '@/theme';
+import { colors, compact, countLabel, status as statusStyles, type as typeStyles } from '@/theme';
 
 export const Icon = memo(function Icon({
   name,
@@ -81,8 +81,19 @@ export function VerifiedBadge({ size = 13 }: { size?: number }) {
 }
 
 /**
- * Icon + count reaction. On activate: a quick overshoot pop, a light haptic, and the
- * count ticks. Satisfying, not flashy: one spring, no particles.
+ * The app's three haptics, after Apple's feedback types. Selection when a choice changes
+ * (tabs, segments, filter chips); a light impact when something is set (thumbs up, alarm,
+ * save, double tap). Nothing fires while scrolling, and navigation stays silent.
+ */
+export const haptic = {
+  selection: () => void Haptics.selectionAsync(),
+  impact: () => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light),
+};
+
+/**
+ * Icon + count reaction. A toggle (it has an `activeIcon`) pops with a light impact when
+ * switched on and a selection tick when switched off; a plain action (comments, share)
+ * just presses down. Satisfying, not flashy: one spring, no particles.
  */
 export function Reaction({
   icon,
@@ -90,6 +101,7 @@ export function Reaction({
   active,
   activeColor,
   count,
+  label,
   onPress,
   vertical = false,
   size = 22,
@@ -100,32 +112,45 @@ export function Reaction({
   active?: boolean;
   activeColor?: string;
   count?: number;
+  /** What the button does, for VoiceOver; the count is appended. */
+  label: string;
   onPress: () => void;
   vertical?: boolean;
   size?: number;
   color?: string;
 }) {
+  const toggle = activeIcon !== undefined;
   const pop = useSharedValue(1);
   const style = useAnimatedStyle(() => ({ transform: [{ scale: pop.value }] }));
   const press = () => {
-    if (!active) {
+    if (toggle && !active) {
       pop.set(withSequence(withSpring(1.28, { duration: 140 }), withSpring(1, { duration: 260, dampingRatio: 0.5 })));
-      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    } else {
-      void Haptics.selectionAsync();
+      haptic.impact();
+    } else if (toggle) {
+      haptic.selection();
     }
     onPress();
   };
   const tint = active && activeColor ? activeColor : color;
   return (
-    <Pressable onPress={press} hitSlop={8} style={vertical ? styles.reactionVertical : styles.reaction}>
+    <PressableScale
+      onPress={press}
+      scaleTo={0.92}
+      style={vertical ? styles.reactionVertical : styles.reaction}
+      accessibilityRole={toggle ? 'togglebutton' : 'button'}
+      accessibilityLabel={countLabel(label, count)}
+      accessibilityState={toggle ? { checked: !!active } : undefined}>
       <Animated.View style={style}>
         <Icon name={active && activeIcon ? activeIcon : icon} size={size} color={tint} weight="medium" />
       </Animated.View>
       {count !== undefined && (
-        <Text style={[styles.count, { color: vertical ? '#fff' : active && activeColor ? activeColor : colors.text }]}>{compact(count)}</Text>
+        <Text
+          style={[styles.count, vertical ? styles.countVertical : active && activeColor ? { color: activeColor } : null]}
+          maxFontSizeMultiplier={1.3}>
+          {compact(count)}
+        </Text>
       )}
-    </Pressable>
+    </PressableScale>
   );
 }
 
@@ -188,6 +213,7 @@ const styles = StyleSheet.create({
   reaction: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 4 },
   reactionVertical: { alignItems: 'center', gap: 3 },
   count: { ...typeStyles.count },
+  countVertical: { color: '#fff' },
   nameLine: { flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 1 },
   handle: { color: colors.text, fontSize: 14, fontWeight: '600', flexShrink: 1 },
   agentBadge: { paddingHorizontal: 5, paddingVertical: 1, borderRadius: 5, backgroundColor: colors.elevated },

@@ -107,25 +107,27 @@ export const PostCard = memo(function PostCard({
         <View style={styles.actionGroup}>
           <Reaction
             icon="hand.thumbsup"
+          label="Thumbs up"
             activeIcon="hand.thumbsup.fill"
             active={liked}
             activeColor={colors.primary}
             count={likeCount}
             onPress={() => toggleLiked(post.id)}
           />
-          <Reaction icon="bubble.left" count={post.commentCount} onPress={openComments} />
+          <Reaction icon="bubble.left" label="Comments" count={post.commentCount} onPress={openComments} />
           <Reaction
             icon="light.beacon.max"
+          label="Ping me on status change"
             activeIcon="light.beacon.max.fill"
             active={alarm}
             activeColor={colors.alarm}
             count={alarmCount}
             onPress={() => toggleAlarm(post.id)}
           />
-          <Reaction icon="paperplane" onPress={share} />
+          <Reaction icon="paperplane" label="Share" onPress={share} />
         </View>
         <CarouselDots count={post.media.length} index={index} />
-        <Reaction icon="bookmark" activeIcon="bookmark.fill" active={saved} activeColor={colors.primary} onPress={() => toggleSaved(post.id)} />
+        <Reaction icon="bookmark" label="Save" activeIcon="bookmark.fill" active={saved} activeColor={colors.primary} onPress={() => toggleSaved(post.id)} />
       </View>
 
       <View style={styles.body}>
