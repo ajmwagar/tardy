@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1080, height=1920" />
+    <title>tardy launch: /tardy-ad-refs</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      /* Brand: mobile/src/theme/index.ts. SF Rounded is copied locally for the render and gitignored. */
+      @font-face {
+        font-family: "TardyRounded";
+        src: url("assets/fonts/SFNSRounded.ttf") format("truetype");
+        font-weight: 100 1000;
+      }
+      :root {
+        --bg: #0a0a0d;
+        --surface: #15151b;
+        --elevated: #22222b;
+        --separator: #26262f;
+        --text: #f7f7fa;
+        --text2: #a1a1ae;
+        --text3: #80808c;
+        --primary: #ffc21a;
+        --on-primary: #14110a;
+        --alarm: #ff2d3d;
+        --mono: "SF Mono", ui-monospace, Menlo, monospace;
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1080px; height: 1920px; overflow: hidden; background: var(--bg); }
+      #root {
+        position: relative; width: 100%; height: 100%; overflow: hidden; background: var(--bg);
+        font-family: "TardyRounded", -apple-system, system-ui, sans-serif; font-weight: 900; color: var(--text);
+      }
+      .layer { position: absolute; inset: 0; }
+      .abs { position: absolute; }
+      .scene { position: absolute; inset: 0; opacity: 0; }
+      .w { display: inline-block; opacity: 0; will-change: transform, filter, opacity; }
+
+      /* chips: which PATTERNS.md pattern this beat uses */
+      #chip {
+        position: absolute; left: 64px; top: 240px; padding: 14px 26px; border-radius: 999px;
+        background: var(--surface); border: 2px solid var(--separator);
+        font: 600 30px/1 var(--mono); color: var(--text2); letter-spacing: -0.01em; white-space: nowrap;
+      }
+      #chip b { color: var(--primary); font-weight: 700; margin-right: 14px; }
+
+      /* the point of light: cold open, reveal, loop */
+      #pt {
+        position: absolute; left: 540px; top: 1000px; width: 16px; height: 16px; border-radius: 999px;
+        background: var(--text); transform: translate(-50%, -50%);
+        box-shadow: 0 0 18px 6px rgba(255, 194, 26, 0.9), 0 0 70px 24px rgba(255, 194, 26, 0.45), 0 0 220px 80px rgba(255, 194, 26, 0.18);
+      }
+
+      /* scene 1-2 */
+      #hero { left: 80px; top: 560px; font-size: 164px; letter-spacing: -0.045em; line-height: 1; }
+      .build { left: 96px; font-size: 104px; letter-spacing: -0.04em; line-height: 1; }
+      #b1 { top: 790px; } #b2 { top: 905px; } #b3 { top: 1020px; }
+      .accent { color: var(--primary); }
+      .dim { color: var(--text3); }
+
+      /* scene 3: bento */
+      .tile {
+        position: absolute; background: var(--surface); border: 2px solid var(--separator); border-radius: 40px;
+        padding: 34px 38px; opacity: 0; overflow: hidden;
+      }
+      .tile .num { font-size: 150px; letter-spacing: -0.05em; line-height: 0.9; }
+      .tile .lab { margin-top: 14px; font: 600 34px/1.2 -apple-system, system-ui, sans-serif; color: var(--text2); }
+      #tA { left: 60px; top: 330px; width: 600px; height: 300px; }
+      #tB { left: 680px; top: 330px; width: 340px; height: 300px; }
+      #tC { left: 60px; top: 650px; width: 470px; height: 300px; }
+      #tD { left: 550px; top: 650px; width: 470px; height: 300px; }
+      #tE { left: 60px; top: 970px; width: 830px; height: 258px; padding: 26px 30px; }
+      #tF { left: 60px; top: 1246px; width: 830px; height: 174px; padding: 28px 38px; background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
+      #tF .cmd { font: 700 64px/1 var(--mono); letter-spacing: -0.03em; }
+      #tF .lab { color: rgba(20, 17, 10, 0.72); }
+      /* PATTERNS.md, the real file the bank distilled into (facts.md 6-7) */
+      #tE .file { font: 700 26px/1 var(--mono); color: var(--text3); margin-bottom: 18px; }
+      .pats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 24px; }
+      .pats div { font: 600 25px/1.15 var(--mono); color: var(--text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: 0; }
+      .pats b { color: var(--primary); margin-right: 10px; }
+
+      /* scene 4: the prompt */
+      #persp { position: absolute; inset: 0; perspective: 1400px; }
+      #box {
+        position: absolute; left: 70px; top: 520px; width: 940px; height: 220px; border-radius: 44px;
+        background: #121218; border: 3px solid var(--primary); transform-origin: 50% 50%;
+        box-shadow: 0 0 0 1px rgba(255, 194, 26, 0.4), 0 0 60px 6px rgba(255, 194, 26, 0.45), 0 0 220px 40px rgba(255, 194, 26, 0.16);
+        display: flex; align-items: center; padding: 0 56px;
+      }
+      #typed { font: 700 66px/1 var(--mono); color: var(--text); letter-spacing: -0.02em; white-space: pre; }
+      #caret { display: inline-block; width: 6px; height: 72px; background: var(--primary); margin-left: 6px; vertical-align: middle; }
+      #scope { left: 96px; top: 790px; font: 600 32px/1 var(--mono); color: var(--text3); }
+      .res { left: 96px; font-size: 54px; letter-spacing: -0.03em; opacity: 0; white-space: nowrap; }
+      .res b { font: 700 46px/1 var(--mono); color: var(--primary); margin-right: 22px; }
+      #rh { left: 96px; top: 900px; font: 600 34px/1 var(--mono); color: var(--text3); opacity: 0; }
+      #r1 { top: 980px; } #r2 { top: 1090px; } #r3 { top: 1200px; }
+
+      /* scene 5: reveal */
+      #h5a, #h5b { left: 64px; font-size: 100px; letter-spacing: -0.045em; line-height: 1; }
+      #h5a { top: 330px; } #h5b { top: 440px; color: var(--text3); }
+      #glow5 {
+        position: absolute; left: 540px; top: 1000px; width: 1100px; height: 1100px; transform: translate(-50%, -50%);
+        border-radius: 50%; background: radial-gradient(circle, rgba(255, 194, 26, 0.28) 0%, rgba(255, 194, 26, 0.06) 45%, rgba(255, 194, 26, 0) 70%);
+        opacity: 0;
+      }
+      #phone {
+        position: absolute; left: 540px; top: 1003px; width: 400px; height: 866px; transform: translate(-50%, -50%);
+        border-radius: 64px; overflow: hidden; background: #000; opacity: 0;
+      }
+      #phone video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+      #rim {
+        position: absolute; left: 540px; top: 1003px; width: 400px; height: 866px; transform: translate(-50%, -50%);
+        border-radius: 64px; border: 3px solid rgba(255, 220, 120, 0.95); opacity: 0; pointer-events: none;
+        box-shadow: 0 0 30px 4px rgba(255, 194, 26, 0.7), 0 0 140px 30px rgba(255, 194, 26, 0.25), inset 0 0 24px rgba(255, 194, 26, 0.25);
+      }
+
+      /* scene 6: end card */
+      .ctr { left: 0; width: 1080px; text-align: center; }
+      #intro { top: 610px; font-size: 66px; color: var(--text3); letter-spacing: -0.03em; }
+      #name { top: 700px; font: 700 104px/1 var(--mono); letter-spacing: -0.05em; }
+      #used { top: 850px; font: 600 46px/1.3 -apple-system, system-ui, sans-serif; color: var(--text2); }
+      #wm { top: 1060px; font-size: 160px; letter-spacing: -0.05em; line-height: 1; }
+      #wm .dot { display: inline-block; width: 32px; height: 32px; border-radius: 50%; background: var(--alarm); margin-left: 6px; }
+      #sign { top: 1255px; font: 700 44px/1.3 -apple-system, system-ui, sans-serif; color: var(--text); }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="22.6" data-width="1080" data-height="1920">
+      <div id="stage" class="layer clip" data-start="0" data-duration="22.6" data-track-index="0">
+        <div id="glow5"></div>
+
+        <!-- 1-2: cold open + build in place -->
+        <div id="s1" class="scene">
+          <div id="hero" class="abs"><span class="w">96</span> <span class="w">real</span> <span class="w">ads.</span></div>
+          <div id="b1" class="abs build"><span class="w">Tagged.</span></div>
+          <div id="b2" class="abs build"><span class="w">Filmstripped.</span></div>
+          <div id="b3" class="abs build"><span class="w accent">Distilled.</span></div>
+        </div>
+
+        <!-- 3: bento of real numbers (facts.md 1, 2, 3, 6, 8, 9) -->
+        <div id="s3" class="scene">
+          <div id="tA" class="tile"><div class="num">96</div><div class="lab">real ads logged</div></div>
+          <div id="tB" class="tile"><div class="num">10</div><div class="lab">brands</div></div>
+          <div id="tC" class="tile"><div class="num">71</div><div class="lab">videos, filmstripped</div></div>
+          <div id="tD" class="tile"><div class="num">8</div><div class="lab">patterns worth stealing</div></div>
+          <div id="tE" class="tile">
+            <div class="file">PATTERNS.md</div>
+            <div class="pats" id="pats"></div>
+          </div>
+          <div id="tF" class="tile"><div class="cmd">/tardy-ad-refs</div><div class="lab">new skill · cites 1–3 real ads per reel</div></div>
+        </div>
+
+        <!-- 4: the prompt, macro and tilted -->
+        <div id="s4" class="scene">
+          <div id="persp"><div id="box"><span id="typed"></span><span id="caret"></span></div></div>
+          <div id="scope" class="abs">reads PATTERNS.md + index.jsonl</div>
+          <div id="rh" class="abs">brag-plan.md › ## References</div>
+          <div id="r1" class="abs res"><b>01</b>cold open</div>
+          <div id="r2" class="abs res"><b>03</b>product hero with glow</div>
+          <div id="r3" class="abs res"><b>07</b>the “Introducing” card</div>
+        </div>
+
+        <!-- 5: locked headline over the reveal -->
+        <div id="s5" class="scene">
+          <div id="h5a" class="abs">References first.</div>
+          <div id="h5b" class="abs">Reel second.</div>
+        </div>
+
+        <!-- 6: the "Introducing" card -->
+        <div id="s6" class="scene">
+          <div id="intro" class="abs ctr">Introducing</div>
+          <div id="name" class="abs ctr">/tardy-ad-refs</div>
+          <div id="used" class="abs ctr">Built from its own playbook:<br /><span class="accent">7 of 8</span> patterns.</div>
+          <div id="wm" class="abs ctr">tardy<span class="dot"></span></div>
+          <div id="sign" class="abs ctr">Real followers, real friends.<br />Stay Tardy.</div>
+        </div>
+
+        <div id="chip"><b>01</b><span id="chipText">cold open</span></div>
+        <div id="pt"></div>
+      </div>
+
+      <!-- the real app, recorded from the simulator (facts.md 12); untimed wrapper, timed video -->
+      <div id="phone">
+        <video id="app" class="clip" src="assets/app/app-reveal.mp4" data-start="13.70" data-duration="5.26" data-track-index="1" muted playsinline></video>
+      </div>
+      <div id="rim"></div>
+
+      <audio id="bed" src="assets/music/bed.mp3" data-start="0" data-duration="22.6" data-track-index="10" data-volume="0.55"></audio>
+      <audio id="sfx-w1" src="assets/sfx/switch7.ogg" data-start="2.65" data-duration="0.19" data-track-index="12" data-volume="0.35"></audio>
+      <audio id="sfx-w2" src="assets/sfx/switch7.ogg" data-start="3.18" data-duration="0.19" data-track-index="12" data-volume="0.35"></audio>
+      <audio id="sfx-w3" src="assets/sfx/switch7.ogg" data-start="3.70" data-duration="0.19" data-track-index="12" data-volume="0.45"></audio>
+      <audio id="sfx-t1" src="assets/sfx/switch7.ogg" data-start="5.80" data-duration="0.19" data-track-index="12" data-volume="0.4"></audio>
+      <audio id="sfx-t2" src="assets/sfx/switch7.ogg" data-start="6.34" data-duration="0.19" data-track-index="12" data-volume="0.4"></audio>
+      <audio id="sfx-t3" src="assets/sfx/switch7.ogg" data-start="6.86" data-duration="0.19" data-track-index="12" data-volume="0.4"></audio>
+      <audio id="sfx-t4" src="assets/sfx/switch7.ogg" data-start="7.38" data-duration="0.19" data-track-index="12" data-volume="0.4"></audio>
+      <audio id="sfx-t5" src="assets/sfx/switch7.ogg" data-start="7.91" data-duration="0.19" data-track-index="12" data-volume="0.4"></audio>
+      <audio id="sfx-t6" src="assets/sfx/switch7.ogg" data-start="8.44" data-duration="0.19" data-track-index="12" data-volume="0.5"></audio>
+      <audio id="sfx-k1" src="assets/sfx/keypress-001.wav" data-start="10.10" data-duration="0.07" data-track-index="13" data-volume="0.5"></audio>
+      <audio id="sfx-k2" src="assets/sfx/keypress-003.wav" data-start="10.18" data-duration="0.07" data-track-index="14" data-volume="0.5"></audio>
+      <audio id="sfx-k3" src="assets/sfx/keypress-005.wav" data-start="10.26" data-duration="0.07" data-track-index="13" data-volume="0.5"></audio>
+      <audio id="sfx-k4" src="assets/sfx/keypress-007.wav" data-start="10.34" data-duration="0.07" data-track-index="14" data-volume="0.5"></audio>
+      <audio id="sfx-k5" src="assets/sfx/keypress-001.wav" data-start="10.42" data-duration="0.07" data-track-index="13" data-volume="0.5"></audio>
+      <audio id="sfx-k6" src="assets/sfx/keypress-003.wav" data-start="10.50" data-duration="0.07" data-track-index="14" data-volume="0.5"></audio>
+      <audio id="sfx-k7" src="assets/sfx/keypress-005.wav" data-start="10.58" data-duration="0.07" data-track-index="13" data-volume="0.5"></audio>
+      <audio id="sfx-k8" src="assets/sfx/keypress-007.wav" data-start="10.66" data-duration="0.07" data-track-index="14" data-volume="0.5"></audio>
+      <audio id="sfx-k9" src="assets/sfx/keypress-001.wav" data-start="10.74" data-duration="0.07" data-track-index="13" data-volume="0.5"></audio>
+      <audio id="sfx-k10" src="assets/sfx/keypress-005.wav" data-start="10.84" data-duration="0.07" data-track-index="14" data-volume="0.6"></audio>
+      <audio id="sfx-r1" src="assets/sfx/select_008.ogg" data-start="11.06" data-duration="0.05" data-track-index="15" data-volume="0.6"></audio>
+      <audio id="sfx-r2" src="assets/sfx/select_008.ogg" data-start="11.60" data-duration="0.05" data-track-index="15" data-volume="0.6"></audio>
+      <audio id="sfx-r3" src="assets/sfx/select_008.ogg" data-start="12.12" data-duration="0.05" data-track-index="15" data-volume="0.6"></audio>
+      <audio id="sfx-intro" src="assets/sfx/bong_001.ogg" data-start="18.96" data-duration="0.12" data-track-index="11" data-volume="0.6"></audio>
+      <audio id="sfx-bell" src="assets/sfx/impactBell_heavy_000.ogg" data-start="20.02" data-duration="1.48" data-track-index="16" data-volume="0.32"></audio>
+      <audio id="sfx-loop" src="assets/sfx/bong_001.ogg" data-start="22.02" data-duration="0.12" data-track-index="11" data-volume="0.45"></audio>
+    </div>
+
+    <script>
+      const DUR = 22.6;
+      const $ = (id) => document.getElementById(id);
+      const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+      const seg = (t, a, b) => clamp((t - a) / (b - a));
+      const outCubic = (p) => 1 - Math.pow(1 - p, 3);
+      const inOut = (p) => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2);
+      // visible window with fades: in over [a, a+fi], out over [b-fo, b]
+      const win = (t, a, b, fi = 0.25, fo = 0.25) => Math.min(seg(t, a, a + fi), 1 - seg(t, b - fo, b));
+
+      // blur-in: the keynote word reveal
+      function blurIn(el, t, t0, d = 0.45, dy = 28) {
+        const e = outCubic(seg(t, t0, t0 + d));
+        el.style.opacity = e;
+        el.style.filter = `blur(${(1 - e) * 22}px)`;
+        el.style.transform = `translateY(${(1 - e) * dy}px)`;
+      }
+
+      // PATTERNS.md headings (facts.md 6-7), revealed line by line in the bento
+      const PATS = ["cold open", "word-by-word", "glow hero", "locked headline", "prompt typing", "bento / chips", "“Introducing” card", "short cuts"];
+      const patsEl = $("pats");
+      PATS.forEach((p, i) => {
+        const d = document.createElement("div");
+        d.innerHTML = `<b>0${i + 1}</b>${p}`;
+        patsEl.appendChild(d);
+      });
+      const patRows = [...patsEl.children];
+
+      const CHIPS = [
+        [-1, "01", "cold open"],
+        [2.65, "02", "word-by-word, one accent word"],
+        [5.8, "06", "bento of real numbers"],
+        [10.01, "05", "prompt typing"],
+        [13.7, "03+04", "glow hero, locked headline"],
+        [18.96, "07", "the “Introducing” card"],
+        [22.0, "01", "cold open"],
+      ];
+      const PROMPT = "/tardy-ad-refs launch";
+      const BEATS_T = [5.8, 6.34, 6.86, 7.38, 7.91, 8.44];
+      const TILES = ["tA", "tB", "tC", "tD", "tE", "tF"].map($);
+      const setFull = (el) => { el.style.opacity = 1; el.style.filter = "none"; el.style.transform = "none"; };
+
+      function render(t) {
+        // chip: swap text on each scene, fade around the swap
+        let ci = 0;
+        CHIPS.forEach((c, i) => { if (t >= c[0]) ci = i; });
+        const chip = $("chip");
+        chip.querySelector("b").textContent = CHIPS[ci][1];
+        $("chipText").textContent = CHIPS[ci][2];
+        const since = t - CHIPS[ci][0];
+        const next = ci + 1 < CHIPS.length ? CHIPS[ci + 1][0] : 99;
+        const ce = outCubic(clamp(since / 0.3));
+        chip.style.opacity = Math.min(ce, 1 - seg(t, next - 0.15, next));
+        chip.style.transform = `translateY(${(1 - ce) * -10}px)`;
+
+        // --- the line of light: full at frame 0; becomes the phone's edge at 13.7; redraws for the loop ---
+        const pt = $("pt");
+        if (t < 2.65) {
+          pt.style.left = "540px"; pt.style.top = "1000px";
+          pt.style.width = "876px"; pt.style.height = "4px";
+          pt.style.opacity = 1 - seg(t, 2.25, 2.65);
+          pt.style.transform = "translate(-50%, -50%)";
+        } else if (t >= 13.55 && t < 14.75) {
+          const a = seg(t, 13.55, 13.7), v = inOut(seg(t, 13.7, 14.15)), o = seg(t, 14.45, 14.75);
+          pt.style.left = "540px"; pt.style.top = "1003px";
+          pt.style.width = "6px";
+          pt.style.height = `${16 + v * 850}px`;
+          pt.style.opacity = a * (1 - o);
+          pt.style.transform = "translate(-50%, -50%)";
+        } else if (t >= 22.0) {
+          const g = inOut(seg(t, 22.12, 22.5));
+          pt.style.left = "540px"; pt.style.top = "1000px";
+          pt.style.width = `${16 + g * 860}px`;
+          pt.style.height = `${16 - g * 12}px`;
+          pt.style.opacity = seg(t, 22.0, 22.12);
+          pt.style.transform = "translate(-50%, -50%)";
+        } else {
+          pt.style.opacity = 0;
+        }
+
+        // --- 1-2: "96 real ads." is on screen from frame 0; Tagged / Filmstripped / Distilled. build in ---
+        $("s1").style.opacity = t >= 22.0 ? 1 : 1 - seg(t, 5.45, 5.8);
+        const hw = $("hero").querySelectorAll(".w");
+        hw.forEach((w, i) => (t < 20 ? setFull(w) : blurIn(w, t, 22.05 + i * 0.12, 0.28, 30)));
+        const builds = [$("b1"), $("b2"), $("b3")].map((b) => b.firstElementChild);
+        if (t < 20) {
+          blurIn(builds[0], t, 2.65, 0.4);
+          blurIn(builds[1], t, 3.18, 0.4);
+          blurIn(builds[2], t, 3.7, 0.45);
+        } else builds.forEach((b) => (b.style.opacity = 0));
+        const dimP = seg(t, 3.7, 4.1);
+        $("b1").style.color = $("b2").style.color = `rgba(247,247,250,${1 - 0.55 * dimP})`;
+
+        // --- 3: bento ---
+        $("s3").style.opacity = win(t, 5.7, 10.01, 0.1, 0.3);
+        TILES.forEach((el, i) => {
+          const e = outCubic(seg(t, BEATS_T[i], BEATS_T[i] + 0.45));
+          el.style.opacity = e;
+          el.style.filter = `blur(${(1 - e) * 14}px)`;
+          el.style.transform = `translateY(${(1 - e) * 60}px) scale(${0.94 + 0.06 * e})`;
+        });
+        patRows.forEach((r, i) => (r.style.opacity = seg(t, 8.05 + i * 0.07, 8.25 + i * 0.07)));
+
+        // --- 4: the prompt, macro and tilted, pulling back ---
+        $("s4").style.opacity = win(t, 10.01, 13.62, 0.2, 0.25);
+        const pull = inOut(seg(t, 10.01, 13.6));
+        $("box").style.transform =
+          `rotateX(${14 - 9 * pull}deg) rotateY(${-9 + 6 * pull}deg) rotateZ(${-2.5 + 1.8 * pull}deg) scale(${1.04 - 0.08 * pull})`;
+        const n = Math.floor(PROMPT.length * seg(t, 10.1, 10.85));
+        $("typed").textContent = PROMPT.slice(0, n);
+        $("caret").style.opacity = t < 10.9 || Math.floor(t * 3) % 2 === 0 ? 1 : 0;
+        $("scope").style.opacity = seg(t, 10.9, 11.15);
+        blurIn($("rh"), t, 10.95, 0.3, 14);
+        blurIn($("r1"), t, 11.06, 0.38, 24);
+        blurIn($("r2"), t, 11.6, 0.38, 24);
+        blurIn($("r3"), t, 12.12, 0.38, 24);
+
+        // --- 5: reveal: the line opens into the phone; locked headline above ---
+        $("s5").style.opacity = win(t, 13.7, 18.96, 0.3, 0.3);
+        blurIn($("h5a"), t, 13.75, 0.45);
+        blurIn($("h5b"), t, 14.25, 0.45);
+        const open = inOut(seg(t, 14.15, 14.7));
+        const exit = seg(t, 18.66, 18.96);
+        const phone = $("phone"), rim = $("rim");
+        const w = 6 + open * 394;
+        [phone, rim].forEach((el) => {
+          el.style.width = `${w}px`;
+          el.style.transform = `translate(-50%, -50%) scale(${1 - 0.06 * exit})`;
+        });
+        phone.style.opacity = (t >= 14.15 && t < 18.96 ? 1 : 0) * (1 - exit);
+        const pulse = 0.85 + 0.15 * Math.cos(((t - 1.6) / 0.5225) * 2 * Math.PI); // breathes on the beat
+        rim.style.opacity = (t >= 14.15 && t < 18.96 ? 1 : 0) * (1 - exit) * pulse;
+        $("glow5").style.opacity = seg(t, 14.2, 14.9) * (1 - exit) * pulse;
+
+        // --- 6: Introducing (claim + wordmark hold ~2s), then fades into the loop ---
+        $("s6").style.opacity = win(t, 18.96, 22.05, 0.15, 0.3);
+        blurIn($("intro"), t, 18.96, 0.4, 20);
+        blurIn($("name"), t, 19.12, 0.45, 20);
+        blurIn($("used"), t, 19.49, 0.4, 16);
+        blurIn($("wm"), t, 20.02, 0.45, 20);
+        blurIn($("sign"), t, 20.3, 0.4, 14);
+      }
+
+      document.fonts.ready.then(() => {
+        const state = { t: 0 };
+        const tl = gsap.timeline({ paused: true });
+        tl.to(state, { t: DUR, duration: DUR, ease: "none", onUpdate: () => render(state.t) }, 0);
+        render(0);
+        window.__timelines["main"] = tl;
+        tl.seek(0);
+      });
+    </script>
+  </body>
+</html>
