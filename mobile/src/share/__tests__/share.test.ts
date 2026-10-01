@@ -3,7 +3,7 @@ import { MOCK_AGENT_CLAIM_CODE, MockTardyApi } from '@/data/mock/mock-api';
 import { POSTS } from '@/data/mock/fixtures';
 
 import { matchRank, searchRanked } from '../search';
-import { contextGrant, promotionNotice, shareSections, threadKind } from '../sections';
+import { contextGrant, lastUsed, promotionNotice, shareSections, threadKind } from '../sections';
 import { share, shareThreadSets } from '../send';
 import { threadLabel } from '../thread-label';
 
@@ -95,7 +95,12 @@ describe('MockTardyApi.searchAccounts', () => {
 describe('share', () => {
   it('sends to each recipient separately', async () => {
     const client = api();
-    const result = await share(client, { recipients: p('avery', 'a-fw'), mode: 'separately', attachment: { sharedPostId: publicPost }, note: 'look' });
+    const result = await share(client, {
+      recipients: p('avery', 'a-fw'),
+      mode: 'separately',
+      attachment: { sharedPostId: publicPost },
+      note: 'look',
+    });
     expect(result.sent.map((t) => t.id)).toEqual(['t-avery', 't-fw']);
     expect(result.failed).toEqual([]);
     const last = (await client.messages('t-avery')).at(-1)!;
@@ -104,7 +109,12 @@ describe('share', () => {
 
   it('sends once into a new group', async () => {
     const client = api();
-    const result = await share(client, { recipients: p('avery', 'a-fw'), mode: 'group', attachment: { sharedPostId: publicPost }, title: 'Crew' });
+    const result = await share(client, {
+      recipients: p('avery', 'a-fw'),
+      mode: 'group',
+      attachment: { sharedPostId: publicPost },
+      title: 'Crew',
+    });
     expect(result.sent).toHaveLength(1);
     expect(result.sent[0].title).toBe('Crew');
     expect(await client.messages(result.sent[0].id)).toHaveLength(1);
@@ -112,7 +122,11 @@ describe('share', () => {
 
   it('reports a failed recipient and still delivers to the rest', async () => {
     const client = api();
-    const result = await share(client, { recipients: p('avery', 'nobody'), mode: 'separately', attachment: { sharedPostId: publicPost } });
+    const result = await share(client, {
+      recipients: p('avery', 'nobody'),
+      mode: 'separately',
+      attachment: { sharedPostId: publicPost },
+    });
     expect(result.sent.map((t) => t.id)).toEqual(['t-avery']);
     expect(result.failed).toEqual([{ participantIds: ['nobody'], error: expect.stringMatching(/nobody/) }]);
   });
@@ -138,25 +152,58 @@ describe('share into an existing group', () => {
   it('sends into the picked group and to new recipients in one go', async () => {
     const client = api();
     const crew = await client.thread('t-crew');
-    const result = await share(client, { recipients: p('a-fw'), threads: [crew], mode: 'group', attachment: { sharedPostId: publicPost } });
+    const result = await share(client, {
+      recipients: p('a-fw'),
+      threads: [crew],
+      mode: 'group',
+      attachment: { sharedPostId: publicPost },
+    });
     expect(result.sent.map((t) => t.id)).toEqual(['t-crew', 't-fw']);
     expect((await client.messages('t-crew')).at(-1)!.sharedPost).toEqual({ status: 'available', postId: publicPost });
   });
 });
 
 describe('shareSections', () => {
-  it('orders groups, friends, brands, then agents, dropping empty sections', () => {
-    const accounts = [
-      { id: 'x', kind: 'agent' as const },
-      { id: 'y', kind: 'human' as const },
-      { id: 'z', kind: 'project' as const },
+  const c = (id: string, kind: 'agent' | 'human' | 'project' | 'group', lastUsedMs?: number, ownedByViewer?: boolean) => ({
+    id,
+    kind,
+    lastUsedMs,
+    ownedByViewer,
+  });
+  const view = (sections: { title: string; items: { id: string }[] }[]) =>
+    sections.map((s) => [s.title, s.items.map((i) => i.id)]);
+
+  it('puts your agents first, then mixes everyone else most recently used first', () => {
+    const candidates = [
+      c('brand', 'project'),
+      c('friend-old', 'human', 100),
+      c('crew', 'group', 300),
+      c('other-agent', 'agent', 200),
+      c('mine-old', 'agent', 10, true),
+      c('mine-new', 'agent', 50, true),
     ];
-    expect(shareSections([], accounts).map((s) => [s.title, s.accounts.map((a) => a.id)])).toEqual([
-      ['Friends', ['y']],
-      ['Brands', ['z']],
-      ['Agents', ['x']],
+    expect(view(shareSections(candidates, { byRecency: true }))).toEqual([
+      ['Your agents', ['mine-new', 'mine-old']],
+      ['Recent', ['crew', 'other-agent', 'friend-old', 'brand']],
     ]);
-    expect(shareSections(['g'], []).map((s) => s.title)).toEqual(['Groups']);
+  });
+
+  it('keeps relevance order while searching, and drops empty sections', () => {
+    const candidates = [c('b', 'human', 1), c('a', 'human', 999)];
+    expect(view(shareSections(candidates, { byRecency: false }))).toEqual([['Recent', ['b', 'a']]]);
+  });
+
+  it('dates 1:1 threads by the other person and groups by themselves', () => {
+    const at = (iso: string) => ({ createdAt: iso }) as never;
+    const used = lastUsed(
+      [
+        { id: 't1', participantIds: ['me', 'h1'], lastMessage: at('1970-01-01T00:00:01Z') },
+        { id: 't2', participantIds: ['me', 'h1', 'a1'], lastMessage: at('1970-01-01T00:00:02Z') },
+      ],
+      'me',
+    );
+    expect(used.get('h1')).toBe(1000);
+    expect(used.get('g:t2')).toBe(2000);
   });
 
   it('makes a thread work only when an agent is in it', () => {
@@ -165,9 +212,12 @@ describe('shareSections', () => {
   });
 
   it('names exactly what picked agents will see', () => {
-    expect(contextGrant([], true)).toBeNull();
-    expect(contextGrant(['opus.backend'], true)).toBe('opus.backend gets this post and new messages in this chat. Nothing from your other DMs.');
-    expect(contextGrant(['a', 'b', 'c'], false)).toBe('a, b and c get new messages in this chat. Nothing from your other DMs.');
+    expect(contextGrant([], 'post')).toBeNull();
+    expect(contextGrant(['opus.backend'], 'post')).toBe(
+      'opus.backend gets this tardy and new messages in this chat. Nothing from your other DMs.',
+    );
+    expect(contextGrant(['opus.backend'], 'link')).toMatch(/^opus.backend gets this link and/);
+    expect(contextGrant(['a', 'b', 'c'], null)).toBe('a, b and c get new messages in this chat. Nothing from your other DMs.');
   });
 
   it('labels fixture threads by who is in them', async () => {

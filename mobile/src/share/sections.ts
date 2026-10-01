@@ -1,18 +1,52 @@
-import type { Account, ThreadKind, ThreadRef } from '@/data/types';
+import type { Account, Thread, ThreadKind, ThreadRef } from '@/data/types';
+
+/** Anything the share sheet can offer: an account, or an existing group chat. */
+export type ShareCandidate = {
+  kind: Account['kind'] | 'group';
+  ownedByViewer?: boolean;
+  /** When the viewer last messaged them (ms), for recency order. */
+  lastUsedMs?: number;
+};
 
 /**
- * The share sheet's groups, in order: existing group chats, friends (people), brands
- * (projects and channels), then agents. Agents are split out because sending to one starts a work conversation
- * (see `threadKind`), and the sheet must make that visible before it happens.
+ * The share sheet's layout: your own agents first (Tardy is where you talk to them), then
+ * everyone and everything else in one grid: friends, group chats, brands, other agents, mixed.
+ * With no query both are ordered most recently used first, so the people you message most
+ * are a tap away; never-messaged candidates keep their incoming order after them. While
+ * searching, the incoming order (relevance) is kept instead.
  */
-export function shareSections<G, A extends Pick<Account, 'kind'>>(groups: readonly G[], accounts: readonly A[]) {
-  const sections: { title: 'Groups' | 'Friends' | 'Brands' | 'Agents'; groups: G[]; accounts: A[] }[] = [
-    { title: 'Groups', groups: [...groups], accounts: [] },
-    { title: 'Friends', groups: [], accounts: accounts.filter((a) => a.kind === 'human') },
-    { title: 'Brands', groups: [], accounts: accounts.filter((a) => a.kind === 'project' || a.kind === 'channel') },
-    { title: 'Agents', groups: [], accounts: accounts.filter((a) => a.kind === 'agent') },
+export function shareSections<T extends ShareCandidate>(candidates: readonly T[], { byRecency }: { byRecency: boolean }) {
+  const order = (list: T[]) =>
+    byRecency
+      ? list
+          .map((item, index) => ({ item, index }))
+          .sort((a, b) => (b.item.lastUsedMs ?? -1) - (a.item.lastUsedMs ?? -1) || a.index - b.index)
+          .map(({ item }) => item)
+      : list;
+  const mine = (c: T) => c.kind === 'agent' && !!c.ownedByViewer;
+  const sections: { title: 'Your agents' | 'Recent'; items: T[] }[] = [
+    { title: 'Your agents', items: order(candidates.filter(mine)) },
+    { title: 'Recent', items: order(candidates.filter((c) => !mine(c))) },
   ];
-  return sections.filter((s) => s.groups.length + s.accounts.length > 0);
+  return sections.filter((s) => s.items.length > 0);
+}
+
+/**
+ * When the viewer last messaged each account and group: a 1:1 thread dates the other person,
+ * a group dates itself (keyed `g:<thread id>`). Feeds `ShareCandidate.lastUsedMs`.
+ */
+export function lastUsed(
+  threads: readonly Pick<Thread, 'id' | 'participantIds' | 'lastMessage'>[],
+  viewerId: string | undefined,
+) {
+  const at = new Map<string, number>();
+  for (const t of threads) {
+    const ms = Date.parse(t.lastMessage.createdAt);
+    const others = t.participantIds.filter((id) => id !== viewerId);
+    const key = others.length === 1 ? others[0] : `g:${t.id}`;
+    at.set(key, Math.max(ms, at.get(key) ?? -Infinity));
+  }
+  return at;
 }
 
 /**
@@ -26,14 +60,15 @@ export const threadKind = (participants: readonly Pick<Account, 'kind'>[]): Thre
  * What the picked agents will be able to read, shown before sending, or null when no agent
  * is picked. A new work thread starts at this share; nothing earlier is granted.
  */
-export function contextGrant(tardyHandles: readonly string[], sharing: boolean): string | null {
-  if (tardyHandles.length === 0) return null;
+export function contextGrant(agentHandles: readonly string[], sharing: 'post' | 'link' | null): string | null {
+  if (agentHandles.length === 0) return null;
   const who =
-    tardyHandles.length === 1
-      ? tardyHandles[0]
-      : `${tardyHandles.slice(0, -1).join(', ')} and ${tardyHandles[tardyHandles.length - 1]}`;
-  const verb = tardyHandles.length === 1 ? 'gets' : 'get';
-  return `${who} ${verb} ${sharing ? 'this post and ' : ''}new messages in this chat. Nothing from your other DMs.`;
+    agentHandles.length === 1
+      ? agentHandles[0]
+      : `${agentHandles.slice(0, -1).join(', ')} and ${agentHandles[agentHandles.length - 1]}`;
+  const verb = agentHandles.length === 1 ? 'gets' : 'get';
+  const what = sharing === 'post' ? 'this tardy and ' : sharing === 'link' ? 'this link and ' : '';
+  return `${who} ${verb} ${what}new messages in this chat. Nothing from your other DMs.`;
 }
 
 /** Work threads are labeled; a DM never is (it is never agent-visible). */

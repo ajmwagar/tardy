@@ -381,6 +381,10 @@ export class HttpTardyApi implements TardyApi {
     });
   }
 
+  sharedLink(id: string): Promise<SharedLink> {
+    return this.request('GET', `/v1/social/shared-links/${segment(id)}`, { decode: W.sharedLink });
+  }
+
   async createSharedLink(url: string): Promise<SharedLink> {
     const link = await this.request('POST', '/v1/social/shared-links', { body: { url }, decode: W.sharedLink });
     this.links.set(link.id, link);

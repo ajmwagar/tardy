@@ -1,5 +1,4 @@
 import { Image } from 'expo-image';
-import * as WebBrowser from 'expo-web-browser';
 import { router, Stack, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActionSheetIOS, Alert, FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -9,8 +8,10 @@ import { ErrorState, Pulse, SkeletonBlock } from '@/components/states';
 import { Avatar, haptic, Icon, IconButton, NameLine, PressableScale, StatusPill } from '@/components/ui';
 import { TardyApiError } from '@/data/api';
 import type { Account, Message, Post, ThreadRef } from '@/data/types';
+import { LinkPreview } from '@/components/link-preview';
 import { ThreadAvatar } from '@/components/thread-avatar';
 import { isWork, promotionNotice } from '@/share/sections';
+import { useSharedLink } from '@/share/use-shared-link';
 import { isGroup, othersIn, threadLabel } from '@/share/thread-label';
 import { api, cacheAccounts, ensureAccounts, refreshUnread, reportError, useAccount, useStore } from '@/state/store';
 import { colors, IMAGE_TRANSITION_MS, radius, timeAgo } from '@/theme';
@@ -19,6 +20,7 @@ import { colors, IMAGE_TRANSITION_MS, radius, timeAgo } from '@/theme';
 const POLL_MS = 3000;
 /** Messages further apart than this get a time divider. */
 const BREAK_MS = 60 * 60 * 1000;
+const LINK_CARD_WIDTH = 260;
 
 /**
  * A message, or a local event line (an agent joining) that sits in the timeline. Event lines
@@ -79,24 +81,11 @@ function SharedPostCard({ message }: { message: Message }) {
 
 const isUrl = (text: string) => /^https?:\/\/\S+$/.test(text.trim());
 
-/** A shared link: who it's from and where it goes. Enrichment (title, transcript) comes later. */
-function LinkCard({ url, mine }: { url: string; mine: boolean }) {
-  const host = new URL(url).hostname.replace(/^www\./, '');
-  return (
-    <Pressable
-      style={[styles.link, mine && styles.linkMine]}
-      onPress={() => void WebBrowser.openBrowserAsync(url)}
-      accessibilityRole="link"
-      accessibilityLabel={`Link to ${host}`}>
-      <Icon name="link" size={16} color={colors.link} />
-      <View style={{ flex: 1 }}>
-        <Text style={styles.linkHost}>{host}</Text>
-        <Text style={styles.linkUrl} numberOfLines={1}>
-          {url}
-        </Text>
-      </View>
-    </Pressable>
-  );
+/** A shared link as its preview card, filling in as enrichment finishes. */
+function LinkCard({ id, url }: { id: string; url: string }) {
+  // A failed preview read leaves the plain card: the link itself still opens.
+  const { link } = useSharedLink(id);
+  return <LinkPreview url={url} link={link} width={LINK_CARD_WIDTH} />;
 }
 
 const Bubble = memo(function Bubble({
@@ -121,7 +110,7 @@ const Bubble = memo(function Bubble({
         {showName && !mine && sender && <Text style={styles.senderName}>{sender.handle}</Text>}
         {row.sharedPost && <SharedPostCard message={row} />}
         {row.sharedLinkId && !row.sharedPost && isUrl(row.text) ? (
-          <LinkCard url={row.text} mine={mine} />
+          <LinkCard id={row.sharedLinkId} url={row.text} />
         ) : row.text ? (
           <Pressable
             disabled={!row.failed}
@@ -377,18 +366,6 @@ export default function ThreadScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  link: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    maxWidth: 260,
-    padding: 12,
-    borderRadius: radius.card,
-    backgroundColor: colors.elevated,
-  },
-  linkMine: { alignSelf: 'flex-end' },
-  linkHost: { color: colors.text, fontSize: 14, fontWeight: '700' },
-  linkUrl: { color: colors.textSecondary, fontSize: 12 },
   event: { color: colors.textTertiary, fontSize: 12, textAlign: 'center', paddingVertical: 10, paddingHorizontal: 24 },
   groupTitle: { color: colors.text, fontSize: 15, fontWeight: '700', maxWidth: 220 },
   senderName: { color: colors.textTertiary, fontSize: 11.5, marginLeft: 12, marginBottom: 2 },

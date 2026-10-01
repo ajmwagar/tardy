@@ -11,7 +11,7 @@ import {
   withOverride,
   type PushDecision,
 } from '@/notifications/preferences';
-import { canonicalUrl, linkProvider } from '@/share/links';
+import { canonicalUrl, linkProvider, youtubeId } from '@/share/links';
 import { searchRanked } from '@/share/search';
 import { threadKind } from '@/share/sections';
 import { normalizeProfilePatch, profileProblem, type ProfilePatch } from '../profile';
@@ -73,6 +73,9 @@ function forbidden(what: string): never {
   throw new TardyApiError('forbidden', `Not allowed: ${what}`);
 }
 
+/** How long mock enrichment takes to go from queued to ready. */
+const MOCK_ENRICH_MS = 1500;
+
 /** The one-time code a self-registered agent shows its human, in the mock. */
 export const MOCK_AGENT_CLAIM_CODE = 'TARDY-7Q4K';
 /** The agent that code claims: opus.firmware, which `me` does not own until then. */
@@ -122,7 +125,7 @@ export class MockTardyApi implements TardyApi {
     kind: this.kindOf(participantIds),
   }));
   /** Shared links by id; `linkIds` dedupes by canonical URL, as the server does. */
-  private links = new Map<string, SharedLink>();
+  private links = new Map<string, SharedLink & { createdMs: number }>();
   private linkIds = new Map<string, string>();
   /** Agents the viewer claimed with a code (beyond the ones their projects own). */
   private claimedAgents = new Set<string>();
@@ -559,11 +562,31 @@ export class MockTardyApi implements TardyApi {
       throw new TardyApiError('invalid', e instanceof Error ? e.message : String(e));
     }
     const existing = this.linkIds.get(canonical);
-    if (existing) return this.delay(this.links.get(existing)!);
-    const link: SharedLink = { id: `link-${this.links.size + 1}`, canonicalUrl: canonical, provider: linkProvider(canonical), status: 'queued' };
+    if (existing) return this.sharedLink(existing);
+    const link = { id: `link-${this.links.size + 1}`, canonicalUrl: canonical, provider: linkProvider(canonical), status: 'queued' as const, createdMs: Date.now() };
     this.links.set(link.id, link);
     this.linkIds.set(canonical, link.id);
-    return this.delay(link);
+    return this.sharedLink(link.id);
+  }
+
+  /**
+   * Mock enrichment, computed at read time (no timers): queued at first, processing after a
+   * beat, then ready with a title and thumbnail. The real worker uses yt-dlp/Whisper.
+   */
+  async sharedLink(id: string): Promise<SharedLink> {
+    const stored = this.links.get(id) ?? notFound(`shared link ${id}`);
+    const { createdMs, ...link } = stored;
+    const age = Date.now() - createdMs;
+    if (age < MOCK_ENRICH_MS / 2) return this.delay(link);
+    if (age < MOCK_ENRICH_MS) return this.delay({ ...link, status: 'processing' });
+    const url = new URL(link.canonicalUrl);
+    const video = youtubeId(link.canonicalUrl);
+    return this.delay({
+      ...link,
+      status: 'ready',
+      title: video ? 'A video worth your three minutes' : url.pathname.length > 1 ? url.pathname.slice(1).replace(/[/-]/g, ' ') : url.hostname,
+      thumbnailUrl: video ? `https://img.youtube.com/vi/${video}/hqdefault.jpg` : `https://picsum.photos/seed/${encodeURIComponent(link.id)}/1200/630`,
+    });
   }
 
   async claimAgent(code: string) {

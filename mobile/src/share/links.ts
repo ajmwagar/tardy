@@ -39,6 +39,14 @@ export function canonicalUrl(raw: string): string {
   return url.toString();
 }
 
+/** A YouTube video id from a canonical URL (watch?v=, youtu.be/, shorts/), or null. */
+export function youtubeId(canonical: string): string | null {
+  const url = new URL(canonical);
+  if (url.hostname === 'youtu.be') return url.pathname.slice(1) || null;
+  if (url.hostname !== 'youtube.com') return null;
+  return url.searchParams.get('v') ?? /^\/shorts\/([^/]+)/.exec(url.pathname)?.[1] ?? null;
+}
+
 /** Who to credit on a link card, from the canonical host. Mirrors the server's table exactly. */
 export function linkProvider(canonical: string): string {
   const providers: Record<string, string> = {

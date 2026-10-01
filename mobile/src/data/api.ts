@@ -157,6 +157,8 @@ export interface TardyApi {
    * `invalid` for anything but http(s).
    */
   createSharedLink(url: string): Promise<SharedLink>;
+  /** A shared link's current state, for its preview card; poll it until `ready` or `failed`. */
+  sharedLink(id: string): Promise<SharedLink>;
   /**
    * Who the viewer can message, best match first, never the viewer or anything hidden.
    * An empty query suggests: recent conversations, then accounts they follow. Matches

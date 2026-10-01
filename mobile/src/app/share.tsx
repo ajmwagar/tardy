@@ -1,15 +1,27 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
-import { KeyboardAvoidingView, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  KeyboardAvoidingView,
+  Pressable,
+  ScrollView,
+  Share,
+  StyleSheet,
+  Text,
+  TextInput,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { EmptyState, ErrorState, Pulse, SkeletonBlock } from '@/components/states';
+import { LinkPreview } from '@/components/link-preview';
 import { ThreadAvatar } from '@/components/thread-avatar';
 import { Avatar, haptic, Icon, PressableScale } from '@/components/ui';
 import type { Account, MessageAttachment, SharedLink, Thread } from '@/data/types';
 import { share, type ShareMode } from '@/share/send';
+import { useSharedLink } from '@/share/use-shared-link';
 import { matchRank } from '@/share/search';
-import { contextGrant, shareSections } from '@/share/sections';
+import { contextGrant, lastUsed, shareSections } from '@/share/sections';
 import { isGroup, threadLabel } from '@/share/thread-label';
 import { api, cacheAccounts, ensureAccounts, logEngagement, reportError, useAccount, useStore } from '@/state/store';
 import { colors } from '@/theme';
@@ -76,34 +88,6 @@ const TargetCell = memo(function TargetCell({
   );
 });
 
-const LINK_STATUS: Record<NonNullable<SharedLink['status']>, string> = {
-  queued: 'Queued for a summary',
-  processing: 'Summarizing…',
-  ready: 'Ready',
-  failed: 'Summary failed. Sharing still works.',
-};
-
-/** The link being shared: where it's from and its enrichment state (kept apart from delivery). */
-function LinkHeader({ url, link, error }: { url: string; link: SharedLink | null; error: string | null }) {
-  return (
-    <View style={styles.linkHeader}>
-      <Icon name="link" size={16} color={colors.link} />
-      <View style={{ flex: 1 }}>
-        <Text style={styles.linkUrl} numberOfLines={1}>
-          {link?.canonicalUrl ?? url}
-        </Text>
-        <Text style={error ? styles.linkError : styles.linkStatus} numberOfLines={2}>
-          {error
-            ? `Can't share this link: ${error}`
-            : link
-              ? `${link.provider} · ${link.status ? LINK_STATUS[link.status] : 'Saved'}`
-              : 'Saving…'}
-        </Text>
-      </View>
-    </View>
-  );
-}
-
 function GridSkeleton() {
   return (
     <Pulse style={styles.skeleton}>
@@ -140,6 +124,9 @@ export default function ShareSheet() {
       live = false;
     };
   }, [url]);
+  // Re-read until enrichment settles, so the card fills in while you pick people.
+  const { link: enriched } = useSharedLink(link?.id, link);
+  const { width: windowWidth } = useWindowDimensions();
   const attachment: MessageAttachment | undefined = postId
     ? { sharedPostId: postId }
     : link
@@ -150,7 +137,7 @@ export default function ShareSheet() {
   const accountsById = useStore((s) => s.accounts);
 
   const [query, setQuery] = useState('');
-  const [groups, setGroups] = useState<Thread[] | null>(null);
+  const [threads, setThreads] = useState<Thread[] | null>(null);
   const [people, setPeople] = useState<Account[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Target[]>([]);
@@ -167,9 +154,9 @@ export default function ShareSheet() {
 
   const loadGroups = useCallback(async () => {
     try {
-      const threads = (await api.threads()).filter(isGroup);
-      await ensureAccounts(threads.flatMap((t) => t.participantIds));
-      setGroups(threads);
+      const threads = await api.threads();
+      await ensureAccounts(threads.filter(isGroup).flatMap((t) => t.participantIds));
+      setThreads(threads);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -204,20 +191,34 @@ export default function ShareSheet() {
   }, [query]);
 
   const sections = useMemo(() => {
-    if (!groups || !people) return null;
-    const groupTargets = groups
+    if (!threads || !people) return null;
+    const used = lastUsed(threads, me);
+    const groupTargets = threads
+      .filter(isGroup)
       .map((thread): Target => ({ key: `g:${thread.id}`, kind: 'group', thread }))
       .filter((t) => !query.trim() || matchRank({ handle: labelOf(t), name: labelOf(t) }, query) !== null);
-    // Picked people stay visible while the query narrows, so you can see and undo them.
+    // Picked targets stay visible while the query narrows, so you can see and undo them.
     const shownPeople = new Set(people.map((a) => a.id));
     const pinnedPeople = selected.flatMap((t) => (t.kind === 'account' && !shownPeople.has(t.account.id) ? [t.account] : []));
     const pinnedGroups = selected.filter((t) => t.kind === 'group' && !groupTargets.some((g) => g.key === t.key));
-    const toTarget = (account: Account): Target => ({ key: `a:${account.id}`, kind: 'account', account });
-    return shareSections([...pinnedGroups, ...groupTargets], [...pinnedPeople, ...people]).map((section) => ({
+    const candidates = [
+      ...[...pinnedPeople, ...people].map((account) => ({
+        target: { key: `a:${account.id}`, kind: 'account' as const, account },
+        kind: account.kind,
+        ownedByViewer: account.ownedByViewer,
+        lastUsedMs: used.get(account.id),
+      })),
+      ...[...pinnedGroups, ...groupTargets].map((target) => ({
+        target,
+        kind: 'group' as const,
+        lastUsedMs: used.get(target.key),
+      })),
+    ];
+    return shareSections(candidates, { byRecency: !query.trim() }).map((section) => ({
       title: section.title,
-      items: [...section.groups, ...section.accounts.map(toTarget)],
+      items: section.items.map((c) => c.target),
     }));
-  }, [groups, people, query, selected, labelOf]);
+  }, [threads, people, query, selected, labelOf, me]);
 
   const selectedKeys = useMemo(() => new Set(selected.map(targetKey)), [selected]);
   const pickedPeople = selected.flatMap((t) => (t.kind === 'account' ? [t.account] : []));
@@ -228,7 +229,7 @@ export default function ShareSheet() {
 
   const grant = contextGrant(
     selected.flatMap((t) => (t.kind === 'account' && t.account.kind === 'agent' ? [t.account.handle] : [])),
-    !composing,
+    postId ? 'post' : url ? 'link' : null,
   );
 
   const toggle = useCallback((t: Target) => {
@@ -310,7 +311,11 @@ export default function ShareSheet() {
       <Text style={styles.title} accessibilityRole="header">
         {composing ? 'New message' : 'Share'}
       </Text>
-      {url ? <LinkHeader url={url} link={link} error={linkError} /> : null}
+      {url ? (
+        <View style={styles.linkHeader}>
+          <LinkPreview url={url} link={enriched ?? link} error={linkError} width={windowWidth - 32} compact />
+        </View>
+      ) : null}
       <View style={styles.search}>
         <Icon name="magnifyingglass" size={16} color={colors.textTertiary} />
         <TextInput
@@ -493,19 +498,7 @@ const styles = StyleSheet.create({
   grant: { flexDirection: 'row', gap: 6, alignItems: 'flex-start' },
   grantText: { flex: 1, color: colors.textSecondary, fontSize: 12.5, lineHeight: 17 },
   scroll: { flex: 1, overflow: 'hidden' },
-  linkHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginHorizontal: 16,
-    marginBottom: 10,
-    padding: 12,
-    borderRadius: 12,
-    backgroundColor: colors.elevated,
-  },
-  linkUrl: { color: colors.text, fontSize: 14, fontWeight: '600' },
-  linkStatus: { color: colors.textSecondary, fontSize: 12, marginTop: 2 },
-  linkError: { color: colors.alarm, fontSize: 12, marginTop: 2 },
+  linkHeader: { marginHorizontal: 16, marginBottom: 10 },
   grid: { paddingHorizontal: 8, paddingTop: 14, paddingBottom: 16 },
   skeleton: {
     flexDirection: 'row',

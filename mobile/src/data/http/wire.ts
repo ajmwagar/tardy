@@ -225,6 +225,8 @@ export const sharedLink: Decoder<SharedLink> = object<SharedLink>({
   canonicalUrl: string,
   provider: string,
   status: knownOf(['queued', 'processing', 'ready', 'failed']),
+  title: optional(string),
+  thumbnailUrl: optional(string),
 });
 
 /** Notifications of a kind this client does not know are skipped, per the contract. */

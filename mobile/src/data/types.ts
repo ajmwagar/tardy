@@ -209,6 +209,10 @@ export type SharedLink = {
   /** e.g. `youtube`, `x`, `web`: who to credit on the card. */
   provider: string;
   status?: 'queued' | 'processing' | 'ready' | 'failed';
+  /** Filled in by enrichment once `status` is `ready`: what the preview card shows. */
+  title?: string;
+  /** Wire: `thumbnail_url`. */
+  thumbnailUrl?: string;
 };
 
 /** Who `openThread` needs to know about: the server routes agents and people differently. */
