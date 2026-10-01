@@ -7,6 +7,11 @@ import { Alert, Linking } from 'react-native';
 export const config = {
   /** Tardy website; hosts paid checkouts (verification, story boosts). */
   webUrl: process.env.EXPO_PUBLIC_TARDY_WEB_URL?.replace(/\/$/, '') ?? null,
+  /**
+   * Tardy API server (the Rust backend). When set, the app talks to it over HTTP
+   * (`data/http/http-api.ts`); unset or empty, it runs on the in-app mock backend.
+   */
+  apiUrl: process.env.EXPO_PUBLIC_TARDY_API_URL || null,
 } as const;
 
 /** What can be bought on the website: its path there, and what it enables (for alerts). */

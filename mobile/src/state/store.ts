@@ -3,6 +3,8 @@ import { useSyncExternalStore } from 'react';
 import type { TardyApi } from '@/data/api';
 import { faults, withFaults } from '@/data/mock/faults';
 import { MockTardyApi } from '@/data/mock/mock-api';
+import { HttpTardyApi } from '@/data/http/http-api';
+import { config } from '@/config';
 import { keychainSlot } from '@/auth/keychain';
 import type { Account, EngagementAction, Post } from '@/data/types';
 
@@ -14,8 +16,9 @@ import type { Account, EngagementAction, Post } from '@/data/types';
  * rolls the change back and surfaces the error via `lastError`.
  */
 
-// Starts signed out; the mock server's sessions survive relaunch in the keychain.
-const backend: TardyApi = new MockTardyApi({ viewerId: null, persistence: keychainSlot('tardy.mock-server') });
+// The real server when EXPO_PUBLIC_TARDY_API_URL is set; otherwise the mock, which starts
+// signed out and keeps its sessions across relaunch in the keychain.
+const backend: TardyApi = config.apiUrl ? new HttpTardyApi({ baseUrl: config.apiUrl }) : new MockTardyApi({ viewerId: null, persistence: keychainSlot('tardy.mock-server') });
 
 /** Wrapped for dev-only fault injection (`data/mock/faults.ts`); a no-op in production. */
 export const api: TardyApi = withFaults(backend, faults);
