@@ -1,12 +1,23 @@
 import { router } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import { memo, useState } from 'react';
-import { ActionSheetIOS, Pressable, Share, StyleSheet, Text, View } from 'react-native';
+import { ActionSheetIOS, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type { Post } from '@/data/types';
-import { logEngagement, toggleAlarm, toggleFollowing, toggleLiked, toggleSaved, useAccount, useIsFollowing, usePostState } from '@/state/store';
+import {
+  logEngagement,
+  toggleAlarm,
+  toggleFollowing,
+  toggleLiked,
+  toggleRepost,
+  toggleSaved,
+  useAccount,
+  useIsFollowing,
+  usePostState,
+} from '@/state/store';
 import { colors, layout, radius, timeAgo } from '@/theme';
 
+import { CollabHeader } from './collab';
 import { CarouselDots, MediaCarousel } from './media-carousel';
 import { StyleChip } from './style-chip';
 import { Avatar, Icon, IconButton, NameLine, PressableScale, Reaction, StatusPill } from './ui';
@@ -47,6 +58,8 @@ export const PostCard = memo(function PostCard({
   const likeCount = state?.likeCount ?? post.likeCount;
   const alarm = state?.alarm ?? post.viewerHasAlarm;
   const alarmCount = state?.alarmCount ?? post.alarmCount;
+  const reposted = state?.reposted ?? post.viewerHasReposted;
+  const repostCount = state?.repostCount ?? post.repostCount;
   const mediaWidth = width - CARD_GUTTER * 2;
 
   const openProfile = () => {
@@ -55,10 +68,7 @@ export const PostCard = memo(function PostCard({
     router.push({ pathname: '/profile/[handle]', params: { handle: author.handle } });
   };
   const openComments = () => router.push({ pathname: '/comments/[postId]', params: { postId: post.id } });
-  const share = async () => {
-    const result = await Share.share({ message: `${post.caption}\n\n— @${author?.handle} on Tardy` });
-    if (result.action === Share.sharedAction) logEngagement({ type: 'share', postId: post.id });
-  };
+  const share = () => router.push({ pathname: '/share', params: { postId: post.id } });
   const more = () =>
     ActionSheetIOS.showActionSheetWithOptions(
       {
@@ -78,17 +88,23 @@ export const PostCard = memo(function PostCard({
   return (
     <View style={styles.card}>
       <View style={styles.header}>
-        <Pressable onPress={openProfile} accessibilityRole="button" accessibilityLabel={`${author?.handle ?? 'Author'}, open profile`}>
-          <Avatar account={author} size={32} ring={hasStory ? 'unseen' : 'none'} />
-        </Pressable>
-        <Pressable onPress={openProfile} style={styles.headerText} accessible={false}>
-          <NameLine account={author} />
-          {subtitle ? (
-            <Text style={styles.subtitle} numberOfLines={1}>
-              {subtitle}
-            </Text>
-          ) : null}
-        </Pressable>
+        {post.collaboratorIds?.length ? (
+          <CollabHeader post={post} subtitle={subtitle} />
+        ) : (
+          <>
+            <Pressable onPress={openProfile} accessibilityRole="button" accessibilityLabel={`${author?.handle ?? 'Author'}, open profile`}>
+              <Avatar account={author} size={32} ring={hasStory ? 'unseen' : 'none'} />
+            </Pressable>
+            <Pressable onPress={openProfile} style={styles.headerText} accessible={false}>
+              <NameLine account={author} />
+              {subtitle ? (
+                <Text style={styles.subtitle} numberOfLines={1}>
+                  {subtitle}
+                </Text>
+              ) : null}
+            </Pressable>
+          </>
+        )}
         {!following && (
           <PressableScale
             onPress={() => toggleFollowing(post.authorId)}
@@ -119,6 +135,15 @@ export const PostCard = memo(function PostCard({
             onPress={() => toggleLiked(post.id)}
           />
           <Reaction icon="bubble.left" label="Comments" count={post.commentCount} onPress={openComments} />
+          <Reaction
+            icon="arrow.2.squarepath"
+            label="Repost"
+            activeIcon="arrow.2.squarepath"
+            active={reposted}
+            activeColor={colors.repost}
+            count={repostCount}
+            onPress={() => toggleRepost(post.id)}
+          />
           <Reaction
             icon="light.beacon.max"
           label="Ping me on status change"

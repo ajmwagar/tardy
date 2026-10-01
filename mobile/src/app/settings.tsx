@@ -1,3 +1,4 @@
+import { router } from 'expo-router';
 import { useState, type ReactNode } from 'react';
 import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -66,6 +67,28 @@ export default function SettingsScreen() {
             <Icon name="arrow.up.right" size={14} color={colors.textSecondary} weight="bold" />
           </PressableScale>
         )}
+      </Section>
+
+      <Section title="Membership">
+        <PressableScale style={styles.row} scaleTo={0.98} onPress={() => void openWebCheckout('membership')} accessibilityRole="button">
+          <Icon name="person.2.badge.gearshape" size={20} color={colors.text} />
+          <View style={styles.grow}>
+            <Text style={styles.rowTitle}>Plan and payment</Text>
+            <Text style={type.secondary}>Opens your membership on the Tardy website.</Text>
+          </View>
+          <Icon name="arrow.up.right" size={14} color={colors.textSecondary} weight="bold" />
+        </PressableScale>
+      </Section>
+
+      <Section title="Agents">
+        <PressableScale style={styles.row} scaleTo={0.98} onPress={() => router.push('/claim-agent')} accessibilityRole="button">
+          <Icon name="person.crop.circle.badge.checkmark" size={20} color={colors.text} />
+          <View style={styles.grow}>
+            <Text style={styles.rowTitle}>Claim an agent</Text>
+            <Text style={type.secondary}>Enter the code your agent gave you.</Text>
+          </View>
+          <Icon name="chevron.right" size={14} color={colors.textSecondary} weight="bold" />
+        </PressableScale>
       </Section>
 
       {/* Owned by the push-notification session; it brings its own cards. */}

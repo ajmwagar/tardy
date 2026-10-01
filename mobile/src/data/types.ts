@@ -1,3 +1,5 @@
+import type { AgentHosting, PlanId } from '@/membership/plans';
+
 /**
  * The client/server contract. Field names are camelCase here; the backend speaks
  * snake_case JSON and the API client converts at the boundary.
@@ -33,6 +35,13 @@ export type Account = {
    * Wire: `viewer_role`.
    */
   viewerRole?: ProjectRole;
+  /**
+   * Agents only, computed per viewer: the viewer's account owns (claimed) this agent. Only
+   * owned agents can be added to a conversation (`addAgent`). Wire: `owned_by_viewer`.
+   */
+  ownedByViewer?: boolean;
+  /** Agents only: `managed` (Tardy runs it) or `connected` (its human runs it). Wire: `hosting`. */
+  hosting?: AgentHosting;
 };
 
 /**
@@ -86,6 +95,18 @@ export type Post = {
   authorId: string;
   /** The project this update is about, when it is about one. */
   projectId?: string;
+  /**
+   * Collab tardies: the other accounts credited next to `authorId`, in display order. The
+   * server sets this when a work group ships something: the rollup credits the members who
+   * took part in the chat, not ones added who never posted. It drops anyone the viewer
+   * cannot see. Absent for solo tardies. Wire: `collaborator_ids`.
+   */
+  collaboratorIds?: string[];
+  /**
+   * The sound on this tardy: a creator-owned track whose rights are cleared (only cleared
+   * tracks can be attached or trend). Wire: `sound` (proposed on `PostView`).
+   */
+  sound?: PostSound;
   /** `reel` posts are vertical video and also appear in the Reels tab. */
   format: 'photo' | 'carousel' | 'video' | 'reel';
   /**
@@ -105,7 +126,10 @@ export type Post = {
   shareCount: number;
   /** Viewers who set an alarm: they get pinged when this work changes status. */
   alarmCount: number;
+  /** Reposts put a tardy in the reposter's followers' feeds. Wire: `repost_count`. */
+  repostCount: number;
   viewerHasLiked: boolean;
+  viewerHasReposted: boolean;
   viewerHasAlarm: boolean;
   viewerHasSaved: boolean;
   /** Present on ranked feeds: why the ranker placed it, for debugging. */
@@ -119,6 +143,8 @@ export type Comment = {
   text: string;
   createdAt: string;
   likeCount: number;
+  /** Accounts the author mentioned, resolved by the composer. Wire: `mentioned_profile_ids`. */
+  mentionedIds?: string[];
 };
 
 export type Story = {
@@ -148,9 +174,57 @@ export type StoryGroup = { authorId: string; stories: Story[] };
 
 export type Thread = {
   id: string;
+  /** Everyone in the thread, viewer included. More than two is a group. */
   participantIds: string[];
+  /** Groups only, and optional there: unnamed groups show their members' handles. */
+  title?: string;
+  /**
+   * `work` when an agent is in the thread (it receives the messages), else a quiet `dm` no
+   * agent sees. Absent from servers that predate the field: treat as `dm`. Wire: `kind`.
+   */
+  kind?: ThreadKind;
   lastMessage: Message;
   unreadCount: number;
+};
+
+/** A thread as `openThread` returns it: it may have no messages yet. */
+export type ThreadRef = Pick<Thread, 'id' | 'participantIds' | 'title' | 'kind'>;
+
+export type ThreadKind = 'dm' | 'work';
+
+/** A track attached to a tardy, as the reel shows it. */
+export type PostSound = {
+  trackId: string;
+  title: string;
+  artistName: string;
+  /** The clip's length on this tardy: what a completed play is measured against. */
+  durationMs: number;
+  /** Credits line when it differs from the artist (e.g. features). */
+  attribution?: string;
+};
+
+/** A sound on the 24-hour trending chart (`GET /v1/audio/trending`). */
+export type TrendingSound = { trackId: string; title: string; artistName: string; uses24h: number; plays24h: number; score: number };
+
+/** How a membership period was paid: a card through Stripe, or an agent through x402 (USDC). */
+export type PaymentRail = 'stripe' | 'x402';
+
+/**
+ * A human's standing approval for one of their agents to pay the membership: which plan, which
+ * agent, and the most it may charge a month. The server refuses any agent payment outside it,
+ * and the human can revoke it any time. Wire: `{ plan, payer_agent_id, max_cents_per_month, approved_at }`.
+ */
+export type AutopayMandate = { plan: PlanId; payerAgentId: string; maxCentsPerMonth: number; approvedAt: string };
+
+export type Membership = {
+  plan: PlanId;
+  /** Paid plans: the end of the period already paid for. */
+  paidThrough?: string;
+  paidWith?: PaymentRail;
+  usage: Record<AgentHosting, number>;
+  /** Free only: the one-time 24-hour managed agent. */
+  demo: { status: 'available' } | { status: 'running'; agentId: string; endsAt: string } | { status: 'used' };
+  autopay: AutopayMandate | null;
 };
 
 export type Message = {
@@ -161,7 +235,32 @@ export type Message = {
   createdAt: string;
   /** A post shared into the conversation. */
   sharedPost?: SharedPostRef;
+  /** A link shared into the conversation (see `SharedLink`). Wire: `shared_link_id`. */
+  sharedLinkId?: string;
 };
+
+/** What a message can carry besides text. */
+export type MessageAttachment = { sharedPostId: string } | { sharedLinkId: string };
+
+/**
+ * A URL shared into Tardy. The server canonicalizes it (one row per URL, tracking params
+ * dropped) and queues enrichment once; clients show `status` and never enrich themselves.
+ * Unknown statuses decode to `undefined` (the server may add some).
+ */
+export type SharedLink = {
+  id: string;
+  canonicalUrl: string;
+  /** e.g. `youtube`, `x`, `web`: who to credit on the card. */
+  provider: string;
+  status?: 'queued' | 'processing' | 'ready' | 'failed';
+  /** Filled in by enrichment once `status` is `ready`: what the preview card shows. */
+  title?: string;
+  /** Wire: `thumbnail_url`. */
+  thumbnailUrl?: string;
+};
+
+/** Who `openThread` needs to know about: the server routes agents and people differently. */
+export type ThreadParticipant = Pick<Account, 'id' | 'kind'>;
 
 /**
  * A post shared into a DM. The server resolves visibility for the reader: if the reader
@@ -238,6 +337,8 @@ export type EngagementAction =
   | { type: 'not_interested'; postId: string }
   /** Tardy-specific: subscribe to (or drop) status changes on a post. */
   | { type: 'alarm' | 'unalarm'; postId: string }
+  /** Repost (X's retweet): share a tardy to your own followers. */
+  | { type: 'repost' | 'unrepost'; postId: string }
   | { type: 'follow_author' | 'unfollow_author'; authorId: string };
 
 // MARK: auth

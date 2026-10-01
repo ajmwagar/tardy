@@ -1,22 +1,32 @@
 import { Image } from 'expo-image';
 import { router, Stack, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActionSheetIOS, Alert, FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ErrorState, Pulse, SkeletonBlock } from '@/components/states';
-import { Avatar, Icon, NameLine, PressableScale, StatusPill } from '@/components/ui';
+import { Avatar, haptic, Icon, IconButton, NameLine, PressableScale, StatusPill } from '@/components/ui';
 import { TardyApiError } from '@/data/api';
-import type { Message, Post, Thread } from '@/data/types';
-import { api, ensureAccounts, refreshUnread, reportError, useAccount, useStore } from '@/state/store';
+import type { Account, Message, Post, ThreadRef } from '@/data/types';
+import { LinkPreview } from '@/components/link-preview';
+import { ThreadAvatar } from '@/components/thread-avatar';
+import { isWork, promotionNotice } from '@/share/sections';
+import { useSharedLink } from '@/share/use-shared-link';
+import { isGroup, othersIn, threadLabel } from '@/share/thread-label';
+import { api, cacheAccounts, ensureAccounts, refreshUnread, reportError, useAccount, useStore } from '@/state/store';
 import { colors, IMAGE_TRANSITION_MS, radius, timeAgo } from '@/theme';
 
 /** Bounded polling while the thread is open (server push for DMs comes later). */
 const POLL_MS = 3000;
 /** Messages further apart than this get a time divider. */
 const BREAK_MS = 60 * 60 * 1000;
+const LINK_CARD_WIDTH = 260;
 
-type Row = Message & { pending?: boolean; failed?: boolean };
+/**
+ * A message, or a local event line (an agent joining) that sits in the timeline. Event lines
+ * are this device's record of what it just did; the server does not send them (yet).
+ */
+type Row = Message & { pending?: boolean; failed?: boolean; event?: string };
 
 function SharedPostCard({ message }: { message: Message }) {
   const ref = message.sharedPost;
@@ -35,7 +45,7 @@ function SharedPostCard({ message }: { message: Message }) {
       .catch((e: unknown) => {
         // Visibility changed after it was shared: show the same card as `unavailable`.
         if (e instanceof TardyApiError) setHidden(true);
-        else reportError(`Couldn't load a shared post: ${e instanceof Error ? e.message : String(e)}`);
+        else reportError(`Couldn't load a shared tardy: ${e instanceof Error ? e.message : String(e)}`);
       });
   }, [ref]);
 
@@ -44,7 +54,7 @@ function SharedPostCard({ message }: { message: Message }) {
     return (
       <View style={[styles.shared, styles.sharedHidden]}>
         <Icon name="eye.slash" size={16} color={colors.textTertiary} />
-        <Text style={styles.sharedHiddenText}>This post isn&apos;t available to you.</Text>
+        <Text style={styles.sharedHiddenText}>This tardy isn&apos;t available to you.</Text>
       </View>
     );
   }
@@ -69,15 +79,27 @@ function SharedPostCard({ message }: { message: Message }) {
   );
 }
 
+const isUrl = (text: string) => /^https?:\/\/\S+$/.test(text.trim());
+
+/** A shared link as its preview card, filling in as enrichment finishes. */
+function LinkCard({ id, url }: { id: string; url: string }) {
+  // A failed preview read leaves the plain card: the link itself still opens.
+  const { link } = useSharedLink(id);
+  return <LinkPreview url={url} link={link} width={LINK_CARD_WIDTH} />;
+}
+
 const Bubble = memo(function Bubble({
   row,
   mine,
   showAvatar,
+  showName,
   onRetry,
 }: {
   row: Row;
   mine: boolean;
   showAvatar: boolean;
+  /** Groups: the sender's handle above the first bubble of their run. */
+  showName: boolean;
   onRetry: (row: Row) => void;
 }) {
   const sender = useAccount(row.senderId);
@@ -85,8 +107,11 @@ const Bubble = memo(function Bubble({
     <View style={[styles.bubbleRow, mine ? styles.bubbleRowMine : styles.bubbleRowTheirs]}>
       {!mine && <View style={styles.avatarSlot}>{showAvatar && <Avatar account={sender} size={26} />}</View>}
       <View style={[styles.bubbleColumn, mine && styles.bubbleColumnMine]}>
+        {showName && !mine && sender && <Text style={styles.senderName}>{sender.handle}</Text>}
         {row.sharedPost && <SharedPostCard message={row} />}
-        {row.text ? (
+        {row.sharedLinkId && !row.sharedPost && isUrl(row.text) ? (
+          <LinkCard id={row.sharedLinkId} url={row.text} />
+        ) : row.text ? (
           <Pressable
             disabled={!row.failed}
             onPress={() => onRetry(row)}
@@ -116,22 +141,27 @@ export default function ThreadScreen() {
   const { threadId } = useLocalSearchParams<{ threadId: string }>();
   const insets = useSafeAreaInsets();
   const meId = useStore((s) => s.accounts.get('me')?.id);
-  const [thread, setThread] = useState<Thread | null>(null);
+  const [thread, setThread] = useState<ThreadRef | null>(null);
   const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
-  const otherId = thread?.participantIds.find((id) => id !== meId);
-  const otherAccount = useAccount(otherId);
+  const group = thread !== null && isGroup(thread);
+  const otherAccount = useAccount(thread ? othersIn(thread, meId)[0] : undefined);
+  const accounts = useStore((s) => s.accounts);
+  const groupLabel = thread && group ? threadLabel(thread, meId, (id) => accounts.get(id)?.handle) : null;
   const lastReadId = useRef<string | null>(null);
 
   const sync = useCallback(async () => {
     try {
-      const [threads, messages] = await Promise.all([api.threads(), api.messages(threadId)]);
-      const current = threads.find((t) => t.id === threadId) ?? null;
-      await ensureAccounts([...(current?.participantIds ?? []), ...messages.map((m) => m.senderId)]);
+      const [current, messages] = await Promise.all([api.thread(threadId), api.messages(threadId)]);
+      await ensureAccounts([...current.participantIds, ...messages.map((m) => m.senderId)]);
       setThread(current);
       // Keep local pending/failed sends; everything else comes from the server.
-      setRows((prev) => [...messages, ...(prev ?? []).filter((r) => r.pending || r.failed)]);
+      setRows((prev) =>
+        [...messages, ...(prev ?? []).filter((r) => r.pending || r.failed || r.event)].sort(
+          (a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt),
+        ),
+      );
       setError(null);
 
       const last = messages[messages.length - 1];
@@ -178,27 +208,103 @@ export default function ThreadScreen() {
   );
 
   const data = useMemo(() => [...(rows ?? [])].reverse(), [rows]); // inverted list: newest first
+
+  /**
+   * Adds one of the viewer's own agents. The confirmation names the agent and what it will
+   * see before anything happens; a failure leaves the chat exactly as it was (human-only).
+   */
+  const addAgent = useCallback(async () => {
+    if (!thread) return;
+    let mine: Account[];
+    try {
+      mine = (await api.searchAccounts('')).filter((a) => a.kind === 'agent' && a.ownedByViewer && !thread.participantIds.includes(a.id));
+    } catch (e) {
+      reportError(`Couldn't load your agents: ${e instanceof Error ? e.message : String(e)}`);
+      return;
+    }
+    if (mine.length === 0) {
+      Alert.alert('No agents to add', 'Agents you own show up here. Claim one in Settings with the code it gave you.');
+      return;
+    }
+    ActionSheetIOS.showActionSheetWithOptions(
+      { title: 'Add an agent', options: ['Cancel', ...mine.map((a) => a.handle)], cancelButtonIndex: 0 },
+      (i) => {
+        const agent = mine[i - 1];
+        if (!agent) return;
+        const notice = promotionNotice(agent.handle, isWork(thread));
+        Alert.alert(notice.title, notice.message, [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Add',
+            onPress: async () => {
+              try {
+                const promoted = await api.addAgent(thread.id, agent.id);
+                cacheAccounts([agent]);
+                setThread(promoted);
+                haptic.impact();
+                const at = new Date().toISOString();
+                setRows((prev) => [
+                  ...(prev ?? []),
+                  { id: `event-${at}`, threadId: thread.id, senderId: agent.id, text: '', createdAt: at, event: `${agent.handle} joined. It sees messages from here on.` },
+                ]);
+              } catch (e) {
+                reportError(`Couldn't add ${agent.handle}: ${e instanceof Error ? e.message : String(e)}`);
+              }
+            },
+          },
+        ]);
+      },
+    );
+  }, [thread]);
   const retry = useCallback((r: Row) => void send(r.text, r), [send]);
   const renderItem = useCallback(
     ({ item, index }: { item: Row; index: number }) => {
       const older = data[index + 1];
       const newer = data[index - 1];
       const gap = older && Date.parse(item.createdAt) - Date.parse(older.createdAt) > BREAK_MS;
+      if (item.event) {
+        return (
+          <Text style={styles.event} accessibilityRole="text">
+            {item.event}
+          </Text>
+        );
+      }
       return (
         <View>
           {(!older || gap) && <Text style={styles.timeBreak}>{timeAgo(item.createdAt)} ago</Text>}
-          <Bubble row={item} mine={item.senderId === meId} showAvatar={!newer || newer.senderId !== item.senderId} onRetry={retry} />
+          <Bubble
+            row={item}
+            mine={item.senderId === meId}
+            showAvatar={!newer || newer.senderId !== item.senderId}
+            showName={group && (!older || !!gap || older.senderId !== item.senderId)}
+            onRetry={retry}
+          />
         </View>
       );
     },
-    [data, meId, retry],
+    [data, meId, retry, group],
   );
 
   return (
     <View style={styles.screen}>
       <Stack.Screen
         options={{
-          headerTitle: () => (
+          headerRight: () => <IconButton icon="person.crop.circle.badge.plus" size={22} label="Add an agent" onPress={addAgent} />,
+          headerTitle: () =>
+            thread && groupLabel !== null ? (
+              <View style={styles.titleRow} accessibilityRole="header" accessibilityLabel={`Group: ${groupLabel}`}>
+                <ThreadAvatar thread={thread} me={meId} size={28} />
+                <View>
+                  <Text style={styles.groupTitle} numberOfLines={1}>
+                    {groupLabel}
+                  </Text>
+                  <Text style={styles.titleSub}>
+                    {isWork(thread) ? 'Work · ' : ''}
+                    {thread.participantIds.length} members
+                  </Text>
+                </View>
+              </View>
+            ) : (
             <Pressable
               style={styles.titleRow}
               accessibilityRole="button"
@@ -210,7 +316,7 @@ export default function ThreadScreen() {
                 {otherAccount?.model && <Text style={styles.titleSub}>{otherAccount.model}</Text>}
               </View>
             </Pressable>
-          ),
+            ),
         }}
       />
       {error && !rows ? (
@@ -231,7 +337,7 @@ export default function ThreadScreen() {
             <TextInput
               value={draft}
               onChangeText={setDraft}
-              placeholder={otherAccount ? `Message ${otherAccount.handle}…` : 'Message…'}
+              placeholder={groupLabel ? `Message ${groupLabel}…` : otherAccount ? `Message ${otherAccount.handle}…` : 'Message…'}
               placeholderTextColor={colors.textTertiary}
               style={styles.input}
               multiline
@@ -260,6 +366,9 @@ export default function ThreadScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  event: { color: colors.textTertiary, fontSize: 12, textAlign: 'center', paddingVertical: 10, paddingHorizontal: 24 },
+  groupTitle: { color: colors.text, fontSize: 15, fontWeight: '700', maxWidth: 220 },
+  senderName: { color: colors.textTertiary, fontSize: 11.5, marginLeft: 12, marginBottom: 2 },
   titleSub: { color: colors.textTertiary, fontSize: 11, fontFamily: 'ui-monospace' },
   list: { paddingHorizontal: 12, paddingVertical: 12, gap: 3 },
   timeBreak: { color: colors.textTertiary, fontSize: 11.5, textAlign: 'center', marginVertical: 12 },

@@ -22,6 +22,8 @@ export const colors = {
   /** Alarm red: breaking news, blocked work, the alarm reaction. */
   alarm: '#FF2D3D',
   link: '#5AB4FF',
+  /** Repost, as on X: green when you've reposted. */
+  repost: '#2BE07B',
   overlay: 'rgba(0,0,0,0.45)',
   /** Story rings: light grey for unseen, dark grey once seen. Boosted stories use `alarm`. */
   unseenRing: '#C9C9D3',

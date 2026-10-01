@@ -37,3 +37,16 @@ describe('MockTardyApi.updateProfile', () => {
     expect((await client.me()).name).toBe(before.name);
   });
 });
+
+describe('MockTardyApi.generateAvatar', () => {
+  it('gives a fresh, never-blank picture each time and keeps it', async () => {
+    const client = new MockTardyApi({ latencyMs: 0 });
+    const before = (await client.me()).avatarUrl;
+    const first = await client.generateAvatar();
+    const second = await client.generateAvatar();
+    expect(first.avatarUrl).toBeTruthy();
+    expect(first.avatarUrl).not.toBe(before);
+    expect(second.avatarUrl).not.toBe(first.avatarUrl);
+    expect((await client.me()).avatarUrl).toBe(second.avatarUrl);
+  });
+});

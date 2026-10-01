@@ -32,12 +32,14 @@ export const DESTINATION: Record<NotificationKind, Destination> = {
 const fallback = (notice: string): NotificationRoute => ({ href: NOTIFICATIONS_HREF, notice });
 
 function explain(error: unknown, what: 'post' | 'profile'): string {
+  // A post is a "tardy" in the app's copy.
+  const noun = what === 'post' ? 'tardy' : what;
   if (error instanceof TardyApiError) {
     return error.code === 'not_found'
-      ? `That ${what} was deleted.`
-      : `You no longer have access to that ${what}.`;
+      ? `That ${noun} was deleted.`
+      : `You no longer have access to that ${noun}.`;
   }
-  return `Couldn't open that ${what}: ${error instanceof Error ? error.message : String(error)}`;
+  return `Couldn't open that ${noun}: ${error instanceof Error ? error.message : String(error)}`;
 }
 
 /**

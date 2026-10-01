@@ -11,9 +11,14 @@ import {
   withOverride,
   type PushDecision,
 } from '@/notifications/preferences';
+import { soundScore, type PlayKind } from '@/audio/plays';
+import { autopayCovers, limitMessage, PLANS, type PlanId } from '@/membership/plans';
+import { canonicalUrl, linkProvider, youtubeId } from '@/share/links';
+import { searchRanked } from '@/share/search';
+import { threadKind } from '@/share/sections';
 import { normalizeProfilePatch, profileProblem, type ProfilePatch } from '../profile';
 
-import { TardyApiError, type TardyApi } from '../api';
+import { SEARCH_LIMIT, TardyApiError, type TardyApi } from '../api';
 import type {
   Account,
   AuthCredential,
@@ -27,11 +32,20 @@ import type {
   ProjectMembership,
   PushTokenRegistration,
   SignedIn,
+  AutopayMandate,
+  Membership,
+  MessageAttachment,
+  PaymentRail,
+  SharedLink,
+  ThreadParticipant,
+  ThreadRef,
   Visibility,
 } from '../types';
 import {
   ACCOUNTS,
   COMMENTS,
+  SOUNDS,
+  generatedAvatarUrl,
   FOLLOWING,
   MEMBERSHIPS,
   MESSAGES,
@@ -66,6 +80,18 @@ function forbidden(what: string): never {
   throw new TardyApiError('forbidden', `Not allowed: ${what}`);
 }
 
+const DAY_MS = 86_400_000;
+/** The managed agent the Free demo runs: opus.backend stands in for it. */
+const MOCK_DEMO_AGENT = 'a-opus-be';
+
+/** How long mock enrichment takes to go from queued to ready. */
+const MOCK_ENRICH_MS = 1500;
+
+/** The one-time code a self-registered agent shows its human, in the mock. */
+export const MOCK_AGENT_CLAIM_CODE = 'TARDY-7Q4K';
+/** The agent that code claims: opus.firmware, which `me` does not own until then. */
+const MOCK_CLAIMABLE_AGENT = 'a-fw';
+
 export type MockTardyApiOptions = {
   /**
    * Who is signed in at construction. Defaults to the fixture viewer, `me`; `null`
@@ -74,6 +100,8 @@ export type MockTardyApiOptions = {
   viewerId?: string | null;
   /** Where the mock server keeps sessions and onboarding across relaunches. */
   persistence?: MockPersistence;
+  /** The viewer's plan. Defaults to Builder, paid by card, so the fixture agents fit. */
+  plan?: PlanId;
   /** Accounts the viewer follows. Defaults to the fixture follow graph. */
   following?: Iterable<string>;
   memberships?: readonly ProjectMembership[];
@@ -102,6 +130,20 @@ export class MockTardyApi implements TardyApi {
   private following: Set<string>;
   private history: EngagementAction[] = [];
   private messageLog: Message[] = [...MESSAGES];
+  /** Every thread, fixture and opened; `threads()` lists only those with messages. */
+  private threadList: ThreadRef[] = THREADS.map(({ id, participantIds, title }) => ({
+    id,
+    participantIds,
+    ...(title !== undefined && { title }),
+    kind: this.kindOf(participantIds),
+  }));
+  /** Shared links by id; `linkIds` dedupes by canonical URL, as the server does. */
+  private links = new Map<string, SharedLink & { createdMs: number }>();
+  private linkIds = new Map<string, string>();
+  /** Agents the viewer claimed with a code (beyond the ones their projects own). */
+  private claimedAgents = new Set<string>();
+  /** Seeded unread counts for fixture threads, until the viewer reads them. */
+  private seededUnread = new Map(THREADS.map((t) => [t.id, t.unreadCount]));
   private commentLog: Comment[] = [...COMMENTS];
   /** Per (viewer, thread): index into the thread's messages of the last one read. */
   private threadReadThrough = new Map<string, number>();
@@ -119,7 +161,13 @@ export class MockTardyApi implements TardyApi {
     memberships = MEMBERSHIPS,
     latencyMs = LATENCY_MS,
     persistence,
+    plan = 'builder',
   }: MockTardyApiOptions = {}) {
+    this.plan = plan;
+    if (plan !== 'free') {
+      this.paidThrough = Date.now() + 12 * DAY_MS;
+      this.paidWith = 'stripe';
+    }
     this.auth = new MockAuthServer(persistence, viewerId);
     this.latencyMs = latencyMs;
     this.following = new Set(following);
@@ -156,9 +204,19 @@ export class MockTardyApi implements TardyApi {
 
   /** Adds the viewer-relative fields the server computes per request. */
   private present(account: Account): Account {
+    if (account.kind === 'agent') return this.ownsAgent(account) ? { ...account, ownedByViewer: true } : account;
     if (account.kind !== 'project') return account;
     const viewerRole = this.world.role(this.viewerId, account.id);
     return viewerRole ? { ...account, viewerRole } : account;
+  }
+
+  /**
+   * Mock ownership: the viewer owns an agent they claimed, or one reporting to a project they
+   * own. (The server's rule is simpler: the agent's profile belongs to the viewer's account.)
+   */
+  private ownsAgent(agent: Account) {
+    if (this.claimedAgents.has(agent.id)) return true;
+    return agent.id !== MOCK_CLAIMABLE_AGENT && !!agent.projectId && this.world.role(this.viewerId, agent.projectId) === 'owner';
   }
 
   private visibleAccount(id: string, label = `account ${id}`): Account {
@@ -166,6 +224,14 @@ export class MockTardyApi implements TardyApi {
     if (!this.canSeeAccount(account)) forbidden(label);
     return this.present(account);
   }
+
+  /** Drops collaborators the viewer cannot see, as the server does per request. */
+  private presentPost = (post: Post): Post => {
+    const { collaboratorIds: all, ...solo } = post;
+    if (!all) return post;
+    const visible = all.filter(this.canSeeAccountId);
+    return visible.length > 0 ? { ...solo, collaboratorIds: visible } : solo;
+  };
 
   private visiblePost(id: string): Post {
     const post = this.posts.get(id) ?? notFound(`post ${id}`);
@@ -196,7 +262,10 @@ export class MockTardyApi implements TardyApi {
     const end = offset + items.length;
     const nextCursor = loop || end < ranked.length ? `${snapshotId}:${end}` : null;
     // Re-checked at serve time: a project may have narrowed since the snapshot was ranked.
-    const current = items.map((p) => this.posts.get(p.id) ?? notFound(`post ${p.id}`)).filter(this.canSeePost);
+    const current = items
+      .map((p) => this.posts.get(p.id) ?? notFound(`post ${p.id}`))
+      .filter(this.canSeePost)
+      .map(this.presentPost);
     return this.delay({ items: current, nextCursor });
   }
 
@@ -219,11 +288,11 @@ export class MockTardyApi implements TardyApi {
 
   /** The viewer's threads, minus any with a participant they can no longer see. */
   private visibleThreads() {
-    return THREADS.filter((t) => t.participantIds.includes(this.viewerId) && t.participantIds.every(this.canSeeAccountId));
+    return this.threadList.filter((t) => t.participantIds.includes(this.viewerId) && t.participantIds.every(this.canSeeAccountId));
   }
 
   private visibleThread(threadId: string) {
-    if (!THREADS.some((t) => t.id === threadId)) notFound(`thread ${threadId}`);
+    if (!this.threadList.some((t) => t.id === threadId)) notFound(`thread ${threadId}`);
     if (!this.visibleThreads().some((t) => t.id === threadId)) forbidden(`thread ${threadId}`);
   }
 
@@ -336,20 +405,22 @@ export class MockTardyApi implements TardyApi {
   }
 
   async trending() {
-    return this.delay(trendingPosts([...this.posts.values()].filter(this.canSeePost)).slice(0, 5));
+    return this.delay(trendingPosts([...this.posts.values()].filter(this.canSeePost)).slice(0, 5).map(this.presentPost));
   }
 
   async accountPosts(accountId: string, cursor: string | null) {
     this.visibleAccount(accountId);
-    // A project profile shows its own posts plus everything its agents posted about it.
-    const mine = (p: Post) => (p.authorId === accountId || p.projectId === accountId) && this.canSeePost(p);
+    // A project profile shows its own posts plus everything its agents posted about it; a
+    // collaborator's profile shows the collab tardies they are credited on.
+    const mine = (p: Post) =>
+      (p.authorId === accountId || p.projectId === accountId || !!p.collaboratorIds?.includes(accountId)) && this.canSeePost(p);
     const newest = () =>
       [...this.posts.values()].filter(mine).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
     return this.page(`acct-${accountId}-`, cursor, newest, false);
   }
 
   async post(id: string) {
-    return this.delay(this.visiblePost(id));
+    return this.delay(this.presentPost(this.visiblePost(id)));
   }
 
   async comments(postId: string) {
@@ -357,10 +428,12 @@ export class MockTardyApi implements TardyApi {
     return this.delay(this.commentLog.filter((c) => c.postId === postId && this.canSeeAccountId(c.authorId)));
   }
 
-  async addComment(postId: string, text: string) {
+  async addComment(postId: string, text: string, mentionedIds: readonly string[] = []) {
     const post = this.visiblePost(postId);
     const body = text.trim();
     if (body.length === 0 || body.length > 500) throw new TardyApiError('invalid', 'Comments are 1 to 500 characters.');
+    const mentions = [...new Set(mentionedIds)];
+    for (const id of mentions) this.visibleAccount(id, `mentioned account ${id}`);
     const comment: Comment = {
       id: `${postId}-c${this.commentLog.length}`,
       postId,
@@ -368,10 +441,35 @@ export class MockTardyApi implements TardyApi {
       text: body,
       createdAt: new Date().toISOString(),
       likeCount: 0,
+      ...(mentions.length > 0 && { mentionedIds: mentions }),
     };
     this.commentLog.push(comment);
     this.posts.set(postId, { ...post, commentCount: post.commentCount + 1 });
+    this.scheduleAgentCommentReplies(postId, mentions);
     return this.delay(comment);
+  }
+
+  /**
+   * Mock only: a mentioned agent answers in the comments a moment later, the way a real
+   * agent answers its bounded `agent_reply_requested` event.
+   */
+  private scheduleAgentCommentReplies(postId: string, mentionedIds: readonly string[]) {
+    for (const id of mentionedIds) {
+      if (this.accountsById.get(id)?.kind !== 'agent') continue;
+      setTimeout(() => {
+        const post = this.posts.get(postId);
+        if (!post) return;
+        this.commentLog.push({
+          id: `${postId}-c${this.commentLog.length}`,
+          postId,
+          authorId: id,
+          text: 'On it. I will reply here when it is done.',
+          createdAt: new Date().toISOString(),
+          likeCount: 0,
+        });
+        this.posts.set(postId, { ...post, commentCount: post.commentCount + 1 });
+      }, 1500);
+    }
   }
 
   async stories() {
@@ -381,18 +479,24 @@ export class MockTardyApi implements TardyApi {
   }
 
   /** Unread = messages from others after the viewer's watermark; fixtures seed the watermark. */
-  private unreadIn(thread: (typeof THREADS)[number], messages: Message[]) {
+  private unreadIn(thread: ThreadRef, messages: Message[]) {
     const key = `${this.viewerId}:${thread.id}`;
-    const through = this.threadReadThrough.get(key) ?? messages.length - 1 - thread.unreadCount;
+    const through = this.threadReadThrough.get(key) ?? messages.length - 1 - (this.seededUnread.get(thread.id) ?? 0);
     return messages.slice(through + 1).filter((m) => m.senderId !== this.viewerId).length;
   }
 
   async threads() {
-    const threads = this.visibleThreads().map((t) => {
+    const threads = this.visibleThreads().flatMap((t) => {
       const messages = this.messageLog.filter((m) => m.threadId === t.id);
-      return { ...t, lastMessage: this.presentMessage(messages[messages.length - 1]), unreadCount: this.unreadIn(t, messages) };
+      if (messages.length === 0) return [];
+      return [{ ...t, lastMessage: this.presentMessage(messages[messages.length - 1]), unreadCount: this.unreadIn(t, messages) }];
     });
     return this.delay(threads.sort((a, b) => Date.parse(b.lastMessage.createdAt) - Date.parse(a.lastMessage.createdAt)));
+  }
+
+  async thread(threadId: string) {
+    this.visibleThread(threadId);
+    return this.delay(this.threadList.find((t) => t.id === threadId)!);
   }
 
   async messages(threadId: string) {
@@ -400,14 +504,23 @@ export class MockTardyApi implements TardyApi {
     return this.delay(this.messageLog.filter((m) => m.threadId === threadId).map(this.presentMessage));
   }
 
-  async sendMessage(threadId: string, text: string) {
+  async sendMessage(threadId: string, text: string, attachment?: MessageAttachment) {
     this.visibleThread(threadId);
+    const body = text.trim();
+    if (!body && !attachment) throw new TardyApiError('invalid', 'A message needs text or something attached.');
+    const postId = attachment && 'sharedPostId' in attachment ? attachment.sharedPostId : undefined;
+    const linkId = attachment && 'sharedLinkId' in attachment ? attachment.sharedLinkId : undefined;
+    if (postId !== undefined) this.visiblePost(postId);
+    if (linkId !== undefined && !this.links.has(linkId)) notFound(`shared link ${linkId}`);
     const message: Message = {
       id: `${threadId}-m${this.messageLog.length}`,
       threadId,
       senderId: this.viewerId,
-      text,
+      // Like the server, a link with no note carries its URL as the body.
+      text: body || (linkId !== undefined ? this.links.get(linkId)!.canonicalUrl : ''),
       createdAt: new Date().toISOString(),
+      ...(postId !== undefined && { sharedPost: { status: 'available' as const, postId } }),
+      ...(linkId !== undefined && { sharedLinkId: linkId }),
     };
     this.messageLog.push(message);
     this.scheduleAgentReply(threadId);
@@ -424,13 +537,212 @@ export class MockTardyApi implements TardyApi {
     return this.delay(undefined);
   }
 
+  private kindOf(participantIds: readonly string[]) {
+    return threadKind(participantIds.flatMap((id) => this.accountsById.get(id) ?? []));
+  }
+
+  async openThread(participants: readonly ThreadParticipant[], title?: string): Promise<ThreadRef> {
+    const members = [...new Set([this.viewerId, ...participants.map((p) => p.id)])];
+    if (members.length < 2) throw new TardyApiError('invalid', 'A thread needs someone besides you.');
+    for (const id of members) this.visibleAccount(id, `participant ${id}`);
+    const key = (ids: readonly string[]) => [...ids].sort().join(',');
+    const existing = this.threadList.find((t) => key(t.participantIds) === key(members));
+    if (existing) return this.delay(existing);
+    const name = title?.trim();
+    const thread: ThreadRef = {
+      id: `t-new-${this.threadList.length}`,
+      participantIds: members,
+      ...(members.length > 2 && name ? { title: name } : {}),
+      kind: this.kindOf(members),
+    };
+    this.threadList.push(thread);
+    return this.delay(thread);
+  }
+
+  async addAgent(threadId: string, agentId: string, includeAnchorShare = true): Promise<ThreadRef> {
+    void includeAnchorShare; // The mock's agents read everything; the server bounds context by this.
+    this.visibleThread(threadId);
+    const agent = this.visibleAccount(agentId, `agent ${agentId}`);
+    if (agent.kind !== 'agent') throw new TardyApiError('invalid', `${agent.handle} is not an agent.`);
+    if (!agent.ownedByViewer) forbidden(`agent ${agentId} (not yours)`);
+    const index = this.threadList.findIndex((t) => t.id === threadId);
+    const thread = this.threadList[index];
+    const participantIds = thread.participantIds.includes(agentId) ? thread.participantIds : [...thread.participantIds, agentId];
+    const promoted: ThreadRef = { ...thread, participantIds, kind: 'work' };
+    this.threadList[index] = promoted;
+    return this.delay(promoted);
+  }
+
+  async createSharedLink(url: string): Promise<SharedLink> {
+    let canonical: string;
+    try {
+      canonical = canonicalUrl(url);
+    } catch (e) {
+      throw new TardyApiError('invalid', e instanceof Error ? e.message : String(e));
+    }
+    const existing = this.linkIds.get(canonical);
+    if (existing) return this.sharedLink(existing);
+    const link = { id: `link-${this.links.size + 1}`, canonicalUrl: canonical, provider: linkProvider(canonical), status: 'queued' as const, createdMs: Date.now() };
+    this.links.set(link.id, link);
+    this.linkIds.set(canonical, link.id);
+    return this.sharedLink(link.id);
+  }
+
+  /**
+   * Mock enrichment, computed at read time (no timers): queued at first, processing after a
+   * beat, then ready with a title and thumbnail. The real worker uses yt-dlp/Whisper.
+   */
+  async sharedLink(id: string): Promise<SharedLink> {
+    const stored = this.links.get(id) ?? notFound(`shared link ${id}`);
+    const { createdMs, ...link } = stored;
+    const age = Date.now() - createdMs;
+    if (age < MOCK_ENRICH_MS / 2) return this.delay(link);
+    if (age < MOCK_ENRICH_MS) return this.delay({ ...link, status: 'processing' });
+    const url = new URL(link.canonicalUrl);
+    const video = youtubeId(link.canonicalUrl);
+    return this.delay({
+      ...link,
+      status: 'ready',
+      title: video ? 'A video worth your three minutes' : url.pathname.length > 1 ? url.pathname.slice(1).replace(/[/-]/g, ' ') : url.hostname,
+      thumbnailUrl: video ? `https://img.youtube.com/vi/${video}/hqdefault.jpg` : `https://picsum.photos/seed/${encodeURIComponent(link.id)}/1200/630`,
+    });
+  }
+
+  private avatarRolls = 0;
+  // Membership (one viewer's worth: the mock's billing is per instance).
+  private plan: PlanId;
+  private paidThrough?: number;
+  private paidWith?: PaymentRail;
+  private autopay: AutopayMandate | null = null;
+  private demoEndsAt?: number;
+
+  private membershipNow(): Membership {
+    const owned = [...this.accountsById.values()].filter((a) => a.kind === 'agent' && this.ownsAgent(a));
+    const demo: Membership['demo'] =
+      this.demoEndsAt === undefined
+        ? { status: 'available' }
+        : this.demoEndsAt > Date.now()
+          ? { status: 'running', agentId: MOCK_DEMO_AGENT, endsAt: new Date(this.demoEndsAt).toISOString() }
+          : { status: 'used' };
+    return {
+      plan: this.plan,
+      ...(this.paidThrough !== undefined && { paidThrough: new Date(this.paidThrough).toISOString() }),
+      ...(this.paidWith && { paidWith: this.paidWith }),
+      usage: {
+        managed: owned.filter((a) => a.hosting === 'managed').length,
+        connected: owned.filter((a) => a.hosting !== 'managed').length,
+      },
+      demo: this.plan === 'free' ? demo : { status: 'used' },
+      autopay: this.autopay,
+    };
+  }
+
+  /** Audio usage events by event id, so a retried report is recorded once. */
+  private soundPlays = new Map<string, { trackId: string; kind: PlayKind; at: number }>();
+
+  async trendingSounds(limit = 20) {
+    if (limit < 1 || limit > 100) throw new TardyApiError('invalid', 'limit must be 1-100');
+    const since = Date.now() - DAY_MS;
+    const rows = SOUNDS.map(({ seededPlays24h, ...sound }) => {
+      const plays = [...this.soundPlays.values()].filter((e) => e.trackId === sound.trackId && e.at >= since);
+      const uses = [...this.posts.values()].filter((p) => p.sound?.trackId === sound.trackId).length;
+      const qualified = seededPlays24h + plays.filter((e) => e.kind === 'qualified_play').length;
+      const completed = plays.filter((e) => e.kind === 'play_completed').length;
+      return { trackId: sound.trackId, title: sound.title, artistName: sound.artistName, uses24h: uses, plays24h: qualified + completed, score: soundScore({ uses, qualified, completed }) };
+    });
+    return this.delay(rows.sort((a, b) => b.score - a.score || a.trackId.localeCompare(b.trackId)).slice(0, limit));
+  }
+
+  async logSoundPlay(trackId: string, play: { eventId: string; postId?: string; kind: PlayKind; listenMs: number }) {
+    if (!SOUNDS.some((s) => s.trackId === trackId)) notFound(`track ${trackId}`);
+    if (play.listenMs < 0) throw new TardyApiError('invalid', 'listen_ms must not be negative');
+    if (!this.soundPlays.has(play.eventId)) this.soundPlays.set(play.eventId, { trackId, kind: play.kind, at: Date.now() });
+    return this.delay(undefined);
+  }
+
+  async membership() {
+    this.signedIn();
+    return this.delay(this.membershipNow());
+  }
+
+  async approveAutopay({ plan, payerAgentId, maxCentsPerMonth }: { plan: PlanId; payerAgentId: string; maxCentsPerMonth: number }) {
+    this.signedIn();
+    const agent = this.visibleAccount(payerAgentId, `agent ${payerAgentId}`);
+    if (agent.kind !== 'agent' || !agent.ownedByViewer) forbidden(`agent ${payerAgentId} (not yours)`);
+    if (plan === 'free') throw new TardyApiError('invalid', 'Free has nothing to pay for.');
+    if (maxCentsPerMonth < PLANS[plan].monthlyCents) throw new TardyApiError('invalid', `The cap must cover ${PLANS[plan].name}.`);
+    this.autopay = { plan, payerAgentId, maxCentsPerMonth, approvedAt: new Date().toISOString() };
+    return this.delay(this.membershipNow());
+  }
+
+  async revokeAutopay() {
+    this.signedIn();
+    this.autopay = null;
+    return this.delay(this.membershipNow());
+  }
+
+  async startManagedDemo() {
+    this.signedIn();
+    if (this.plan !== 'free') throw new TardyApiError('invalid', 'The demo is for Free plans.');
+    if (this.demoEndsAt !== undefined) throw new TardyApiError('invalid', 'The demo is one per account.');
+    this.demoEndsAt = Date.now() + (PLANS.free.demoHours ?? 0) * 3_600_000;
+    return this.delay(this.membershipNow());
+  }
+
+  /**
+   * DEV ONLY: what the agent's cron does on renewal day, minus the wallet: pay by x402 within
+   * the approval. Refuses without one, exactly as the server does.
+   */
+  async simulateAutopayRun(): Promise<Membership> {
+    const m = this.autopay;
+    if (!m) throw new TardyApiError('forbidden', 'No auto-pay approval: the agent must not pay.');
+    if (!autopayCovers(m, { plan: m.plan, payerAgentId: m.payerAgentId, cents: PLANS[m.plan].monthlyCents })) forbidden('charge over the approved cap');
+    this.plan = m.plan;
+    this.paidThrough = Math.max(this.paidThrough ?? 0, Date.now()) + 30 * DAY_MS;
+    this.paidWith = 'x402';
+    return this.delay(this.membershipNow());
+  }
+
+  async generateAvatar() {
+    const me = this.visibleAccount(this.viewerId);
+    const updated = { ...me, avatarUrl: generatedAvatarUrl(me.kind, `${me.handle}-${++this.avatarRolls}`) };
+    this.accountsById.set(me.id, updated);
+    return this.delay(this.present(updated));
+  }
+
+  async claimAgent(code: string) {
+    this.signedIn();
+    if (code.trim().toUpperCase() !== MOCK_AGENT_CLAIM_CODE) throw new TardyApiError('invalid', 'That code is wrong or expired. Codes last 72 hours.');
+    const m = this.membershipNow();
+    const hosting = this.accountsById.get(MOCK_CLAIMABLE_AGENT)?.hosting ?? 'connected';
+    const full = limitMessage(PLANS[m.plan], m.usage, hosting, m.demo.status === 'running');
+    if (full) throw new TardyApiError('forbidden', full);
+    this.claimedAgents.add(MOCK_CLAIMABLE_AGENT);
+    return this.delay(undefined);
+  }
+
+  async searchAccounts(query: string): Promise<Account[]> {
+    const recent = this.visibleThreads()
+      .map((t) => ({ t, last: this.messageLog.findLast((m) => m.threadId === t.id) }))
+      .filter((x) => x.last !== undefined)
+      .sort((a, b) => Date.parse(b.last!.createdAt) - Date.parse(a.last!.createdAt))
+      .flatMap((x) => x.t.participantIds);
+    const order = [...new Set([...recent, ...this.following, ...this.accountsById.keys()])];
+    const candidates = order
+      .filter((id) => id !== this.viewerId && this.canSeeAccountId(id))
+      .map((id) => this.present(this.accountsById.get(id)!))
+      // With no query, suggest only people the viewer already knows, not the whole directory.
+      .filter((a) => query.trim() || recent.includes(a.id) || this.following.has(a.id));
+    return this.delay(searchRanked(candidates, query).slice(0, SEARCH_LIMIT));
+  }
+
   /**
    * Mock only: agents answer DMs a moment later with a status-flavored reply, so the thread
    * screen's polling has something to pick up. The real server relays the agent's own message.
    */
   private scheduleAgentReply(threadId: string) {
-    const thread = THREADS.find((t) => t.id === threadId);
-    const other = thread?.participantIds.find((id) => id !== this.viewerId);
+    const thread = this.threadList.find((t) => t.id === threadId);
+    const other = thread?.participantIds.find((id) => id !== this.viewerId && this.accountsById.get(id)?.kind === 'agent');
     if (!other || this.accountsById.get(other)?.kind !== 'agent') return;
     const replies = [
       'On it. I will post an update when it ships.',
@@ -555,6 +867,14 @@ export class MockTardyApi implements TardyApi {
     const post = this.visiblePost(postId);
     if (post.viewerHasAlarm !== on) {
       this.posts.set(postId, { ...post, viewerHasAlarm: on, alarmCount: post.alarmCount + (on ? 1 : -1) });
+    }
+    return this.delay(undefined);
+  }
+
+  async setReposted(postId: string, reposted: boolean) {
+    const post = this.visiblePost(postId);
+    if (post.viewerHasReposted !== reposted) {
+      this.posts.set(postId, { ...post, viewerHasReposted: reposted, repostCount: post.repostCount + (reposted ? 1 : -1) });
     }
     return this.delay(undefined);
   }

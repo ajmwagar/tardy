@@ -1,4 +1,6 @@
 import { NOTIFICATION_KINDS } from '@/notifications/preferences';
+import type { PlanId } from '@/membership/plans';
+import { parseTardyUrl } from '@/share/links';
 
 import type {
   Account,
@@ -17,11 +19,16 @@ import type {
   PostStyle,
   ProjectRole,
   Session,
+  SharedLink,
+  AutopayMandate,
+  PostSound,
+  TrendingSound,
+  Membership,
   SharedPostRef,
   SignedIn,
   Story,
   StoryGroup,
-  Thread,
+  ThreadRef,
   Visibility,
   WorkStatus,
 } from '../types';
@@ -30,6 +37,7 @@ import {
   arraySkipping,
   boolean,
   integer,
+  isoTime,
   knownOf,
   knownRecord,
   map,
@@ -86,6 +94,16 @@ export const account: Decoder<Account> = object<Account>({
   postCount: integer,
   visibility: optional(oneOf(VISIBILITIES)),
   viewerRole: optional(oneOf(PROJECT_ROLES)),
+  ownedByViewer: optional(boolean),
+  hosting: optional(oneOf(['managed', 'connected'] as const)),
+});
+
+const postSound: Decoder<PostSound> = object<PostSound>({
+  trackId: string,
+  title: string,
+  artistName: string,
+  durationMs: integer,
+  attribution: optional(string),
 });
 
 const media: Decoder<MediaItem> = tagged<MediaItem>('type', {
@@ -104,6 +122,8 @@ export const post: Decoder<Post> = object<Post>({
   id: string,
   authorId: string,
   projectId: optional(string),
+  collaboratorIds: optional(array(string)),
+  sound: optional(postSound),
   format: oneOf(POST_FORMATS),
   // Open set: a style this client does not know yet is dropped, not an error.
   style: optional(knownOf(POST_STYLES)),
@@ -116,8 +136,10 @@ export const post: Decoder<Post> = object<Post>({
   commentCount: integer,
   shareCount: integer,
   alarmCount: integer,
+  repostCount: integer,
   viewerHasLiked: boolean,
   viewerHasAlarm: boolean,
+  viewerHasReposted: boolean,
   viewerHasSaved: boolean,
   ranking: optional(object<NonNullable<Post['ranking']>>({ score: number, inNetwork: boolean })),
 });
@@ -129,14 +151,22 @@ export function page<T>(item: Decoder<T>): Decoder<Page<T>> {
 /** `GET /v1/feed/hyper-tardy` items carry the app's `post` view next to the virality facts. */
 export const trendingPosts: Decoder<Post[]> = map(array(object<{ post: Post }>({ post })), (items) => items.map((i) => i.post));
 
-export const comment: Decoder<Comment> = object<Comment>({
-  id: string,
-  postId: string,
-  authorId: string,
-  text: string,
-  createdAt: timeMs,
-  likeCount: integer,
-});
+/**
+ * The social `Comment` (`POST /v1/social/posts/{id}/comments`). The server does not count
+ * comment likes yet; an absent `like_count` is zero, which is true of every comment it returns.
+ */
+export const comment: Decoder<Comment> = map(
+  object<Omit<Comment, 'likeCount'> & { likeCount?: number }>({
+    id: string,
+    postId: string,
+    authorId: wire('author_profile_id', string),
+    text: wire('body', string),
+    createdAt: wire('created_at', isoTime),
+    likeCount: optional(integer),
+    mentionedIds: wire('mentioned_profile_ids', optional(array(string))),
+  }),
+  ({ likeCount, mentionedIds, ...rest }) => ({ ...rest, likeCount: likeCount ?? 0, ...(mentionedIds?.length ? { mentionedIds } : {}) }),
+);
 
 const story: Decoder<Story> = object<Story>({
   id: string,
@@ -154,22 +184,104 @@ const sharedPost: Decoder<SharedPostRef> = tagged<SharedPostRef>('status', {
   unavailable: object<Extract<SharedPostRef, { status: 'unavailable' }>>({ status: oneOf(['unavailable']) }),
 });
 
-/** The existing Rust `DirectMessage`, plus `id` and `shared_post`. */
-export const message: Decoder<Message> = object<Message>({
-  id: string,
-  threadId: string,
-  senderId: string,
-  text: wire('body', string),
-  createdAt: wire('sent_at_ms', timeMs),
-  sharedPost: optional(sharedPost),
-});
+/**
+ * The social `ConversationMessage`, plus its `sequence` (the paging cursor). A tardy shared
+ * into a conversation travels as a shared link to its `tardy.news/t/{id}` URL in the body
+ * (the server has no shared-post field); it decodes back to `sharedPost` so it renders as a
+ * tardy card. `shared_post` (proposed) wins when the server sends it.
+ */
+export const conversationMessage: Decoder<{ message: Message; sequence: number }> = map(
+  object<Message & { sequence: number }>({
+    id: string,
+    threadId: wire('conversation_id', string),
+    senderId: wire('sender_profile_id', string),
+    text: wire('body', string),
+    createdAt: wire('created_at', isoTime),
+    sharedPost: optional(sharedPost),
+    sharedLinkId: optional(string),
+    sequence: integer,
+  }),
+  ({ sequence, ...m }) => {
+    const sharedPostId = m.sharedLinkId && !m.sharedPost ? parseTardyUrl(m.text) : null;
+    const message: Message = sharedPostId ? { ...m, text: '', sharedPost: { status: 'available', postId: sharedPostId } } : m;
+    if (message.sharedLinkId === undefined) delete message.sharedLinkId;
+    if (message.sharedPost === undefined) delete message.sharedPost;
+    return { message, sequence };
+  },
+);
 
-/** The existing Rust `DirectThread`, plus `last_message` and `unread_count`. */
-export const thread: Decoder<Thread> = object<Thread>({
+export const message: Decoder<Message> = map(conversationMessage, (m) => m.message);
+
+const MODES = ['dm', 'work'] as const;
+
+/** The social `Conversation`: `mode` is the app's `kind`. */
+export const threadRef: Decoder<ThreadRef> = object<ThreadRef>({
   id: string,
   participantIds: wire('participants', array(string)),
-  lastMessage: message,
-  unreadCount: integer,
+  title: optional(string),
+  kind: wire('mode', oneOf(MODES)),
+});
+
+/**
+ * `GET /v1/social/conversations` rows. `last_message` and `unread_count` are proposed
+ * additions; until the server sends them the client reads the last message itself.
+ */
+export const conversation: Decoder<ThreadRef & { lastMessage?: Message; unreadCount?: number }> = object({
+  id: string,
+  participantIds: wire('participants', array(string)),
+  title: optional(string),
+  kind: wire('mode', oneOf(MODES)),
+  lastMessage: optional(message),
+  unreadCount: optional(integer),
+});
+
+/** `GET /v1/audio/trending` rows: `{ track, uses_24h, qualified_plays_24h, score }`. */
+export const trendingSound: Decoder<TrendingSound> = map(
+  object<{ track: { id: string; title: string; artistName: string }; uses24h: number; qualifiedPlays24h: number; score: number }>({
+    track: object<{ id: string; title: string; artistName: string }>({ id: string, title: string, artistName: string }),
+    uses24h: wire('uses_24h', integer),
+    qualifiedPlays24h: wire('qualified_plays_24h', integer),
+    score: integer,
+  }),
+  ({ track, uses24h, qualifiedPlays24h, score }) => ({ trackId: track.id, title: track.title, artistName: track.artistName, uses24h, plays24h: qualifiedPlays24h, score }),
+);
+
+const PLAN_IDS = allOf<PlanId>()(['free', 'builder', 'studio']);
+
+const mandate: Decoder<AutopayMandate> = object<AutopayMandate>({
+  plan: oneOf(PLAN_IDS),
+  payerAgentId: string,
+  maxCentsPerMonth: integer,
+  approvedAt: wire('approved_at', isoTime),
+});
+
+const demo: Decoder<Membership['demo']> = tagged<Membership['demo']>('status', {
+  available: object<Extract<Membership['demo'], { status: 'available' }>>({ status: oneOf(['available']) }),
+  running: object<Extract<Membership['demo'], { status: 'running' }>>({
+    status: oneOf(['running']),
+    agentId: string,
+    endsAt: wire('ends_at', isoTime),
+  }),
+  used: object<Extract<Membership['demo'], { status: 'used' }>>({ status: oneOf(['used']) }),
+});
+
+/** `GET /v1/membership` (proposed). */
+export const membership: Decoder<Membership> = object<Membership>({
+  plan: oneOf(PLAN_IDS),
+  paidThrough: wire('paid_through', optional(isoTime)),
+  paidWith: optional(oneOf(['stripe', 'x402'] as const)),
+  usage: object<Membership['usage']>({ managed: integer, connected: integer }),
+  demo,
+  autopay: nullable(mandate),
+});
+
+export const sharedLink: Decoder<SharedLink> = object<SharedLink>({
+  id: string,
+  canonicalUrl: string,
+  provider: string,
+  status: knownOf(['queued', 'processing', 'ready', 'failed']),
+  title: optional(string),
+  thumbnailUrl: optional(string),
 });
 
 /** Notifications of a kind this client does not know are skipped, per the contract. */

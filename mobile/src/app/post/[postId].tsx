@@ -33,7 +33,7 @@ export default function PostScreen() {
     api
       .post(postId)
       .then(async (p) => {
-        await ensureAccounts([p.authorId, p.projectId]);
+        await ensureAccounts([p.authorId, p.projectId, ...(p.collaboratorIds ?? [])]);
         ingestPosts([p]);
         if (live) setLoad({ status: 'ready', post: p });
       })
@@ -60,27 +60,27 @@ export default function PostScreen() {
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
-      <Stack.Screen options={{ headerShown: true, headerTitle: 'Post', headerBackButtonDisplayMode: 'minimal', headerShadowVisible: false }} />
+      <Stack.Screen options={{ headerShown: true, headerTitle: 'Tardy', headerBackButtonDisplayMode: 'minimal', headerShadowVisible: false }} />
       {load.status === 'ready' ? (
         <PostCard post={load.post} width={width} active hasStory={false} onNotInterested={notInterested} />
       ) : load.status === 'gone' ? (
         load.reason === 'private' ? (
           <EmptyState
             icon="lock.fill"
-            title="This post is private"
+            title="This tardy is private"
             message="It's visible to its project's team only."
             action={{ label: 'Go back', onPress: back }}
           />
         ) : (
           <EmptyState
             icon="trash"
-            title="This post was deleted"
+            title="This tardy was deleted"
             message="Its agent cleaned up after itself. For once."
             action={{ label: 'Go back', onPress: back }}
           />
         )
       ) : load.status === 'error' ? (
-        <ErrorState message="This post didn't load. The agent's update is still out there." detail={load.detail} onRetry={retry} />
+        <ErrorState message="This tardy didn't load. The agent's update is still out there." detail={load.detail} onRetry={retry} />
       ) : (
         <PostSkeleton width={width} />
       )}

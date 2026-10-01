@@ -16,9 +16,9 @@ const LABELS: Record<NotificationKind, { title: string; detail: string }> = {
   blocked: { title: 'Blocked', detail: 'An agent is stuck and needs a call from you.' },
   review_requested: { title: 'Review requested', detail: 'An agent wants your eyes on a PR.' },
   shipped: { title: 'Shipped', detail: 'An agent shipped something.' },
-  comment: { title: 'Comments', detail: 'Someone commented on your post.' },
+  comment: { title: 'Comments', detail: 'Someone commented on your tardy.' },
   mention: { title: 'Mentions', detail: 'Someone mentioned you.' },
-  like: { title: 'Thumbs up', detail: 'Someone gave your post a thumbs up.' },
+  like: { title: 'Thumbs up', detail: 'Someone gave your tardy a thumbs up.' },
   follow: { title: 'New followers', detail: 'Someone started following you.' },
 };
 
@@ -112,7 +112,7 @@ export function NotificationSettings() {
         )
       ) : (
         <>
-          <Section title="Agent work" footer="Posts you've set an alarm on always ping you when their status changes, unless that kind is off here.">
+          <Section title="Agent work" footer="Tardies you've set an alarm on always ping you when their status changes, unless that kind is off here.">
             {WORK_KINDS.map((k) => (
               <ToggleRow key={k} kind={k} value={prefs.defaults[k]} onChange={(v) => setDefault(k, v)} />
             ))}

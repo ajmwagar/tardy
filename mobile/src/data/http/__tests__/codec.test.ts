@@ -78,6 +78,8 @@ describe('wire types', () => {
     comment_count: 2,
     share_count: 3,
     alarm_count: 4,
+    repost_count: 5,
+    viewer_has_reposted: false,
     viewer_has_liked: true,
     viewer_has_alarm: false,
     viewer_has_saved: false,
@@ -100,6 +102,8 @@ describe('wire types', () => {
       alarmCount: 4,
       viewerHasLiked: true,
       viewerHasAlarm: false,
+      viewerHasReposted: false,
+      repostCount: 5,
       viewerHasSaved: false,
       ranking: { score: 0.5, inNetwork: true },
     });
@@ -109,10 +113,18 @@ describe('wire types', () => {
     expect(() => W.post({ ...wirePost, format: 'hologram' }, 'r')).toThrow('r.format: expected one of photo | carousel | video | reel, got "hologram"');
   });
 
-  it('maps the Rust DirectMessage names (body, sent_at_ms) onto Message', () => {
-    expect(
-      W.message({ id: 'm1', thread_id: 't1', sequence: 4, sender_id: 'a1', recipient_id: 'a2', body: 'hi', sent_at_ms: 0, shared_post: { status: 'unavailable' } }, 'r'),
-    ).toEqual({ id: 'm1', threadId: 't1', senderId: 'a1', text: 'hi', createdAt: '1970-01-01T00:00:00.000Z', sharedPost: { status: 'unavailable' } });
+  it('maps the social ConversationMessage names onto Message', () => {
+    const wire = { id: 'm1', conversation_id: 't1', sequence: 4, sender_profile_id: 'a1', body: 'hi', shared_link_id: null, created_at: '2026-09-30T12:00:00.5+00:00' };
+    expect(W.message(wire, 'r')).toEqual({ id: 'm1', threadId: 't1', senderId: 'a1', text: 'hi', createdAt: '2026-09-30T12:00:00.500Z' });
+    expect(W.message({ ...wire, shared_post: { status: 'unavailable' } }, 'r').sharedPost).toEqual({ status: 'unavailable' });
+    // A plain shared link stays a link; only tardy.news/t/... becomes a tardy card.
+    expect(W.message({ ...wire, body: 'https://youtu.be/x', shared_link_id: 'l1' }, 'r')).toMatchObject({ text: 'https://youtu.be/x', sharedLinkId: 'l1' });
+  });
+
+  it('maps the social Comment and keeps resolved mentions', () => {
+    const wire = { id: 'c1', post_id: 'p1', author_profile_id: 'a1', body: 'hey', mentioned_profile_ids: ['a2'], created_at: '1970-01-01T00:00:00Z' };
+    expect(W.comment(wire, 'r')).toEqual({ id: 'c1', postId: 'p1', authorId: 'a1', text: 'hey', createdAt: '1970-01-01T00:00:00.000Z', likeCount: 0, mentionedIds: ['a2'] });
+    expect(W.comment({ ...wire, mentioned_profile_ids: [] }, 'r')).not.toHaveProperty('mentionedIds');
   });
 
   it('skips notifications and override rows of unknown kinds, and requires every known default', () => {

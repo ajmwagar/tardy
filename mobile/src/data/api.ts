@@ -1,3 +1,6 @@
+import type { PlayKind } from '@/audio/plays';
+import type { PlanId } from '@/membership/plans';
+
 import type { ProfilePatch } from './profile';
 import type {
   Account,
@@ -14,8 +17,17 @@ import type {
   SignedIn,
   StoryGroup,
   Thread,
+  ThreadRef,
+  MessageAttachment,
+  SharedLink,
+  ThreadParticipant,
+  Membership,
+  TrendingSound,
   Visibility,
 } from './types';
+
+/** Most results `searchAccounts` returns: one share sheet's worth. */
+export const SEARCH_LIMIT = 24;
 
 /**
  * Why a request failed. `forbidden` means the thing exists but the viewer may not see or
@@ -83,6 +95,12 @@ export interface TardyApi {
    * `invalid` if a field breaks the rules in `data/profile.ts`. Handles change via `setHandle`.
    */
   updateProfile(patch: ProfilePatch): Promise<Account>;
+  /**
+   * Gives the viewer a new generated avatar (portrait for people, robot for agents), hosted by
+   * the server, and returns the updated account. Every account gets one at sign-up, so no
+   * profile is ever blank; this is the "Generate new" button. Each call makes a different one.
+   */
+  generateAvatar(): Promise<Account>;
   /** Marks first-launch setup done; resolves with `onboardedAt` set. */
   completeOnboarding(): Promise<SignedIn>;
 
@@ -106,15 +124,67 @@ export interface TardyApi {
   /**
    * Adds a comment from the viewer, 1-500 characters after trimming (`invalid` otherwise),
    * on a post they can see (`forbidden` otherwise). Resolves with the stored comment.
+   * `mentionedIds` are the accounts the composer resolved from `@handles` while typing; the
+   * server never parses mentions out of text. A mentioned agent gets a bounded reply request
+   * (this comment and its post only); a mentioned person gets a notification.
    */
-  addComment(postId: string, text: string): Promise<Comment>;
+  addComment(postId: string, text: string, mentionedIds?: readonly string[]): Promise<Comment>;
+
+  /** Sounds trending in the last 24 hours, best first; only rights-cleared tracks. */
+  trendingSounds(limit?: number): Promise<TrendingSound[]>;
+  /**
+   * Reports a play of a sound for the usage ledger (see `audio/plays.ts` for when each kind
+   * is due). `eventId` makes it idempotent: retries with the same id are recorded once.
+   * Works signed out too (anonymous plays still count).
+   */
+  logSoundPlay(trackId: string, play: { eventId: string; postId?: string; kind: PlayKind; listenMs: number }): Promise<void>;
 
   /** The story tray, in display order (see `StoryGroup`). */
   stories(): Promise<StoryGroup[]>;
 
+  /** The viewer's threads that have at least one message, most recent first. */
   threads(): Promise<Thread[]>;
+  /** One thread the viewer is in, messages or not (a just-opened group has none). */
+  thread(threadId: string): Promise<ThreadRef>;
   messages(threadId: string): Promise<Message[]>;
-  sendMessage(threadId: string, text: string): Promise<Message>;
+  /**
+   * Sends a message, optionally carrying a tardy or a shared link (`text` may then be
+   * empty). A shared tardy must be visible to the sender (`forbidden` otherwise); each
+   * reader still gets it resolved for them (see `SharedPostRef`). Empty text with nothing
+   * attached is `invalid`. In a work thread, agents granted context receive the message.
+   */
+  sendMessage(threadId: string, text: string, attachment?: MessageAttachment): Promise<Message>;
+  /**
+   * Finds or starts the thread with exactly these participants; the viewer is implied and
+   * may be omitted. Idempotent: the same set returns the same thread, so sharing to the same
+   * people twice lands in one conversation. Two or more others make a group, named by
+   * `title` when it starts (ignored for an existing thread). With an agent in it the thread
+   * is `work` from the start. `invalid` with no one else; `forbidden` if any participant is
+   * hidden from the viewer.
+   */
+  openThread(participants: readonly ThreadParticipant[], title?: string): Promise<ThreadRef>;
+  /**
+   * Adds one of the viewer's own agents to a thread, promoting it to `work`. Visible and
+   * irreversible. The agent's context starts at this point: it gets messages sent from now
+   * on (plus the thread's first shared item when `includeAnchorShare`), never the earlier
+   * DM history. `forbidden` unless the viewer owns the agent (`Account.ownedByViewer`);
+   * `invalid` if the account is not an agent. Idempotent for an agent already added.
+   */
+  addAgent(threadId: string, agentId: string, includeAnchorShare?: boolean): Promise<ThreadRef>;
+  /**
+   * Registers a URL shared into Tardy (the share extension, or a pasted link). Idempotent
+   * by canonical URL: the same link returns the same id, and enrichment runs once.
+   * `invalid` for anything but http(s).
+   */
+  createSharedLink(url: string): Promise<SharedLink>;
+  /** A shared link's current state, for its preview card; poll it until `ready` or `failed`. */
+  sharedLink(id: string): Promise<SharedLink>;
+  /**
+   * Who the viewer can message, best match first, never the viewer or anything hidden.
+   * An empty query suggests: recent conversations, then accounts they follow. Matches
+   * handle or name prefixes before substrings. At most `SEARCH_LIMIT` results.
+   */
+  searchAccounts(query: string): Promise<Account[]>;
   /**
    * Marks everything in the thread read for the viewer, up to and including `throughMessageId`.
    * A per-thread watermark, not per-message flags: idempotent, and a stale call from another
@@ -151,7 +221,29 @@ export interface TardyApi {
   setLiked(postId: string, liked: boolean): Promise<void>;
   setSaved(postId: string, saved: boolean): Promise<void>;
   setAlarm(postId: string, on: boolean): Promise<void>;
+  /** Idempotent like `setAlarm`; `forbidden` if the viewer cannot see the tardy. */
+  setReposted(postId: string, reposted: boolean): Promise<void>;
   setFollowing(accountId: string, following: boolean): Promise<void>;
+  /**
+   * Claims a self-registered agent with the one-time code it showed its human, moving the
+   * agent into the viewer's account (it then reads as `ownedByViewer`). Unclaimed agents
+   * and their codes expire after 72 hours. `invalid` for a wrong or expired code.
+   */
+  claimAgent(code: string): Promise<void>;
+
+  /** The viewer's plan, what they use of it, the Free demo, and any auto-pay approval. */
+  membership(): Promise<Membership>;
+  /**
+   * Approves one of the viewer's own agents to pay the membership by x402, up to
+   * `maxCentsPerMonth` for `plan`. Replaces any earlier approval. Human-only: an agent cannot
+   * call this for itself (`forbidden`). `forbidden` if the viewer doesn't own the agent;
+   * `invalid` if the cap is below the plan's price or the plan is Free.
+   */
+  approveAutopay(approval: { plan: PlanId; payerAgentId: string; maxCentsPerMonth: number }): Promise<Membership>;
+  /** Withdraws the approval; the agent can no longer pay. The paid period still runs out normally. */
+  revokeAutopay(): Promise<Membership>;
+  /** Starts the Free plan's one-time 24-hour managed agent. `invalid` if not on Free or already used. */
+  startManagedDemo(): Promise<Membership>;
   /**
    * Changes who can see a project. Owners only: anyone else gets `forbidden`. Resolves
    * with the updated project account.

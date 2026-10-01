@@ -6,11 +6,14 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { EmptyState, ErrorState, Pulse, SkeletonBlock } from '@/components/states';
 import { Avatar, Icon, NameLine, PressableScale } from '@/components/ui';
 import { TardyApiError } from '@/data/api';
-import type { Comment } from '@/data/types';
-import { api, ensureAccounts, logEngagement, reportError, useAccount } from '@/state/store';
+import type { Account, Comment } from '@/data/types';
+import { completeMention, mentionQuery, resolveMentions } from '@/share/mentions';
+import { api, cacheAccounts, ensureAccounts, logEngagement, reportError, useAccount, useStore } from '@/state/store';
 import { colors, timeAgo } from '@/theme';
 
 const MAX_LENGTH = 500;
+/** When to re-read comments after mentioning an agent, so its reply shows up. */
+const AGENT_REPLY_RECHECK_MS = 2500;
 
 const CommentRow = memo(function CommentRow({ comment }: { comment: Comment }) {
   const author = useAccount(comment.authorId);
@@ -59,6 +62,29 @@ export default function CommentsScreen() {
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
+  const [suggestions, setSuggestions] = useState<Account[]>([]);
+  const accounts = useStore((s) => s.accounts);
+  const typing = mentionQuery(draft);
+
+  // Suggest accounts while an @handle is being typed. Picking one is what makes it a mention.
+  useEffect(() => {
+    if (typing === null) return;
+    let live = true;
+    const timer = setTimeout(async () => {
+      try {
+        const found = await api.searchAccounts(typing);
+        if (!live) return;
+        cacheAccounts(found);
+        setSuggestions(found.slice(0, 5));
+      } catch (e) {
+        if (live) reportError(`Couldn't search for that handle: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }, 120);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [typing]);
 
   const load = useCallback(async () => {
     try {
@@ -88,7 +114,11 @@ export default function CommentsScreen() {
     if (!text || sending) return;
     setSending(true);
     try {
-      const saved = await api.addComment(postId, text);
+      const byHandle = (handle: string) => [...accounts.values()].find((a) => a.handle === handle);
+      const mentionedIds = resolveMentions(text, byHandle);
+      const saved = await api.addComment(postId, text, mentionedIds);
+      // A mentioned agent replies in the thread; look again once it has had a moment.
+      if (mentionedIds.some((id) => accounts.get(id)?.kind === 'agent')) setTimeout(() => void load(), AGENT_REPLY_RECHECK_MS);
       logEngagement({ type: 'reply', postId });
       setComments((prev) => [...(prev ?? []), saved]);
       setDraft('');
@@ -117,6 +147,24 @@ export default function CommentsScreen() {
           contentContainerStyle={styles.list}
           keyboardDismissMode="interactive"
         />
+      )}
+      {typing !== null && suggestions.length > 0 && (
+        <View style={styles.suggestions} accessibilityRole="menu">
+          {suggestions.map((a) => (
+            <Pressable
+              key={a.id}
+              style={styles.suggestion}
+              onPress={() => {
+                setDraft((d) => completeMention(d, a.handle));
+                setSuggestions([]);
+              }}
+              accessibilityRole="menuitem"
+              accessibilityLabel={`Mention ${a.handle}`}>
+              <Avatar account={a} size={26} />
+              <NameLine account={a} />
+            </Pressable>
+          ))}
+        </View>
       )}
       <View style={[styles.composer, { paddingBottom: Math.max(insets.bottom, 10) }]}>
         <Avatar account={me} size={32} />
@@ -153,6 +201,8 @@ const styles = StyleSheet.create({
   rowHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   time: { color: colors.textTertiary, fontSize: 12 },
   text: { color: colors.text, fontSize: 14.5, lineHeight: 20 },
+  suggestions: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.separator, paddingVertical: 4 },
+  suggestion: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingVertical: 8 },
   composer: {
     flexDirection: 'row',
     alignItems: 'flex-end',

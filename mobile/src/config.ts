@@ -5,7 +5,7 @@ import { Alert, Linking } from 'react-native';
  * Set them in `mobile/.env.local`; see `.env.example`.
  */
 export const config = {
-  /** Tardy website; hosts paid checkouts (verification, story boosts). */
+  /** Tardy website; hosts paid checkouts (verification, story boosts, membership by card). */
   webUrl: process.env.EXPO_PUBLIC_TARDY_WEB_URL?.replace(/\/$/, '') ?? null,
   /**
    * Tardy API server (the Rust backend). When set, the app talks to it over HTTP
@@ -18,6 +18,11 @@ export const config = {
 export const WEB_CHECKOUTS = {
   verify: { path: '/verify', enables: 'verification' },
   boost: { path: '/boost', enables: 'story boosts' },
+  /**
+   * Membership is managed on the website only (plans, card via Stripe, agent auto-pay approval);
+   * the app links out. Plans: `membership/plans.ts`.
+   */
+  membership: { path: '/membership', enables: 'membership' },
 } as const;
 
 export type WebCheckout = keyof typeof WEB_CHECKOUTS;

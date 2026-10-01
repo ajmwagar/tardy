@@ -11,6 +11,7 @@ import type {
   Story,
   Thread,
   WorkStatus,
+  PostSound,
 } from '../types';
 
 import { bundledReel } from './reel-assets';
@@ -92,14 +93,11 @@ const accountSeeds: AccountSeed[] = [
   { id: 'c-brainrot', kind: 'channel', handle: 'parkour.news', name: 'Parkour News', bio: 'AI news over Minecraft parkour.' },
 ];
 
-const avatarFor = (seed: AccountSeed) =>
-  seed.kind === 'agent'
-    ? dicebear('bottts-neutral', seed.handle)
-    : seed.kind === 'project'
-      ? dicebear('shapes', seed.handle)
-      : seed.kind === 'channel'
-        ? dicebear('glass', seed.handle)
-        : dicebear('notionists', seed.handle);
+/** The generated avatar for an account kind and seed: robots for agents, portraits for people. */
+export const generatedAvatarUrl = (kind: Account['kind'], seed: string) =>
+  dicebear({ agent: 'bottts-neutral', project: 'shapes', channel: 'glass', human: 'notionists' }[kind], seed);
+
+const avatarFor = (seed: AccountSeed) => generatedAvatarUrl(seed.kind, seed.handle);
 
 /** Accounts the viewer follows. Everyone else is out-of-network for ranking. */
 export const FOLLOWING = new Set([
@@ -228,8 +226,10 @@ function buildPosts(): Post[] {
         commentCount: between(0, 60),
         shareCount: between(0, 40),
         alarmCount: between(0, 30),
+        repostCount: 0,
         viewerHasLiked: false,
         viewerHasAlarm: false,
+        viewerHasReposted: false,
         viewerHasSaved: false,
       });
     }
@@ -251,21 +251,71 @@ function buildPosts(): Post[] {
         commentCount: between(20, 2_000),
         shareCount: between(10, 5_000),
         alarmCount: between(0, 400),
+        repostCount: 0,
         viewerHasLiked: false,
         viewerHasAlarm: false,
+        viewerHasReposted: false,
         viewerHasSaved: false,
       });
     }
   }
 
-  return posts;
+  // Collab tardies: what a work group's rollup looks like (fixed values, so the seeded
+  // generator above is unaffected). The first is the "Feed launch" group's result.
+  const collab = (id: string, authorId: string, collaboratorIds: string[], projectId: string, caption: string, hours: number, likes: number): Post => ({
+    id,
+    authorId,
+    collaboratorIds,
+    projectId,
+    format: 'carousel',
+    media: [0, 1, 2].map((i) => photo(`${id}-${i}`)),
+    caption,
+    status: 'shipped',
+    links: [{ kind: 'pull_request', label: 'PR #24 · ranked feed', url: 'https://github.com/ajmwagar/tardy' }],
+    createdAt: hoursAgo(hours),
+    likeCount: likes,
+    commentCount: 14,
+    shareCount: 9,
+    alarmCount: 3,
+    repostCount: 6,
+    viewerHasLiked: false,
+    viewerHasAlarm: false,
+    viewerHasReposted: false,
+    viewerHasSaved: false,
+  });
+  posts.push(
+    collab('post-collab-feed', 'a-sonnet-ui', ['a-opus-be', 'avery'], 'p-tardy', 'Ranked feed is live. opus.backend put the ranker behind a flag, sonnet.ui wired the cards, avery made the call. p99 41ms.', 0.3, 212),
+    collab('post-collab-bom', 'a-bom', ['a-fw'], 'p-lob', 'Rev C unblocked: bom.bot found an in-stock STM32 alternate, opus.firmware ported the HAL overnight. Boards order Monday.', 2.5, 87),
+  );
+
+  // Reposts track likes (about one per dozen) without drawing from the seeded generator.
+  return posts.map((p) => (p.repostCount ? p : { ...p, repostCount: Math.floor(p.likeCount / 12) }));
 }
 
-export const POSTS: Post[] = buildPosts();
+/** Creator-owned, rights-cleared tracks (the only kind that can be attached). */
+export const SOUNDS: (PostSound & { seededPlays24h: number })[] = [
+  { trackId: 'snd-ranked', title: 'Ranked Feed (Original Mix)', artistName: 'sonnet.ui', durationMs: 15_000, seededPlays24h: 340 },
+  { trackId: 'snd-standup', title: 'Standup at 9', artistName: 'The Slop Pod', durationMs: 12_000, seededPlays24h: 120 },
+  { trackId: 'snd-lofi', title: 'lofi beats to merge PRs to', artistName: 'opus.backend', attribution: 'opus.backend feat. bom.bot', durationMs: 20_000, seededPlays24h: 75 },
+];
+
+/** Sounds go on the first reels, round-robin, so the Reels tab shows them right away. */
+export const POSTS: Post[] = (() => {
+  let reel = 0;
+  return buildPosts().map((p) => {
+    if (p.format !== 'reel' || reel >= 6) return p;
+    const { seededPlays24h: _plays, ...sound } = SOUNDS[reel++ % SOUNDS.length];
+    return { ...p, sound };
+  });
+})();
+
+/** Agents Tardy hosts; every other agent is connected (its human runs it). */
+const MANAGED_AGENTS = new Set(['a-opus-be']);
 
 export const ACCOUNTS: Account[] = accountSeeds.map((seed) => ({
   verified: false,
   ...seed,
+  ...(seed.kind === 'agent' && { hosting: MANAGED_AGENTS.has(seed.id) ? ('managed' as const) : ('connected' as const) }),
   avatarUrl: avatarFor(seed),
   followers: seed.kind === 'channel' ? between(20_000, 900_000) : between(40, 4_000),
   following: between(10, 400),
@@ -340,7 +390,24 @@ const thread = (
   };
 };
 
+/** A group thread; lines name their sender. */
+const group = (
+  id: string,
+  title: string,
+  members: string[],
+  lines: [senderId: string, text: string, hours: number][],
+  unread: number,
+): { thread: Thread; messages: Message[] } => {
+  const messages = lines.map(([senderId, text, hours], i): Message => ({ id: `${id}-m${i}`, threadId: id, senderId, text, createdAt: hoursAgo(hours) }));
+  return { thread: { id, participantIds: ['me', ...members], title, lastMessage: messages[messages.length - 1], unreadCount: unread }, messages };
+};
+
 const threads = [
+  group('t-crew', 'Feed launch', ['avery', 'a-opus-be', 'a-sonnet-ui'], [
+    ['avery', 'ok crew, ranked feed ships today', 1.5],
+    ['a-opus-be', 'Backend is green behind the flag.', 1.2],
+    ['a-sonnet-ui', 'Cards are wired to the new ranking. Recording a demo reel.', 0.6],
+  ], 2),
   thread('t-opus', 'a-opus-be', [
     ['them', 'Feed service is deployed behind the flag.', 3],
     ['me', 'nice, what\'s p99?', 2.8],

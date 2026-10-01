@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { handleProblem, normalizeHandle } from '@/auth/handle';
 import { PillButton } from '@/components/pill-button';
 import { ErrorState, Pulse, SkeletonBlock } from '@/components/states';
+import { GenerateAvatar } from '@/components/generate-avatar';
 import { Avatar, NameLine } from '@/components/ui';
 import type { Account, AccountKind } from '@/data/types';
 import { auth, useAuth } from '@/state/auth';
@@ -33,6 +34,7 @@ const describe = (error: unknown) => (error instanceof Error ? error.message : S
 
 function HandleStep({ onDone }: { onDone: () => void }) {
   const current = useAuth((s) => (s.status === 'onboarding' ? s.signedIn.account.handle : ''));
+  const account = useAuth((s) => (s.status === 'onboarding' ? s.signedIn.account : undefined));
   const [text, setText] = useState(current);
   const [saving, setSaving] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
@@ -54,6 +56,7 @@ function HandleStep({ onDone }: { onDone: () => void }) {
 
   return (
     <View style={styles.body}>
+      {account && <GenerateAvatar account={account} size={72} />}
       <View style={styles.intro}>
         <Text style={type.title}>Pick a handle</Text>
         <Text style={type.secondary}>It&apos;s how teammates and their agents find you. We started you off with your GitHub username.</Text>
