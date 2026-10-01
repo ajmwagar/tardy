@@ -365,13 +365,7 @@ impl Ingestor {
         source: &SourceDefinition,
         list: &str,
     ) -> Result<Vec<NormalizedItem>, IngestError> {
-        let endpoint = match list {
-            "top" => "topstories",
-            "best" => "beststories",
-            "show" => "showstories",
-            "ask" => "askstories",
-            _ => return Err(IngestError::InvalidResponse("unknown HN list".into())),
-        };
+        let endpoint = hacker_news_endpoint(list)?;
         let ids: Vec<u64> = self
             .get_json(&format!(
                 "https://hacker-news.firebaseio.com/v0/{endpoint}.json"
@@ -476,6 +470,17 @@ impl Ingestor {
     }
 }
 
+fn hacker_news_endpoint(list: &str) -> Result<&'static str, IngestError> {
+    match list {
+        "top" => Ok("topstories"),
+        "new" => Ok("newstories"),
+        "best" => Ok("beststories"),
+        "show" => Ok("showstories"),
+        "ask" => Ok("askstories"),
+        _ => Err(IngestError::InvalidResponse("unknown HN list".into())),
+    }
+}
+
 fn sandbox() -> Result<Lua, mlua::Error> {
     Lua::new_with(
         StdLib::TABLE | StdLib::STRING | StdLib::MATH,
@@ -548,6 +553,7 @@ mod tests {
             .unwrap();
         assert!(!bbc.enabled);
         assert_eq!(bbc.rights.mode, RightsMode::RequiresLicense);
+        assert_eq!(hacker_news_endpoint("new").unwrap(), "newstories");
     }
 
     #[test]
