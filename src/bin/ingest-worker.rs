@@ -16,6 +16,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let ingestor = Ingestor::bundled()?;
     store.sync_sources(&ingestor.sources()?).await?;
+    if std::env::args().nth(1).as_deref() == Some("sync") {
+        tracing::info!(
+            sources = ingestor.sources()?.len(),
+            "source catalog synchronized"
+        );
+        return Ok(());
+    }
     let worker = format!(
         "{}:{}",
         std::env::var("HOSTNAME").unwrap_or_else(|_| "tardy".into()),
