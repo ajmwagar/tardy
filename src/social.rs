@@ -901,11 +901,25 @@ fn normalize_handle(value: &str) -> Result<String, SocialError> {
         || value.len() > 32
         || !value
             .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'_' | b'-'))
     {
         return Err(SocialError::Invalid("invalid handle"));
     }
     Ok(value)
+}
+
+#[cfg(test)]
+mod handle_tests {
+    use super::*;
+
+    #[test]
+    fn source_profile_handles_round_trip_through_public_lookup_validation() {
+        assert_eq!(
+            normalize_handle("@Source-Hacker-News-New").unwrap(),
+            "source-hacker-news-new"
+        );
+        assert!(normalize_handle("bad handle").is_err());
+    }
 }
 fn validated_text(value: &str, max: usize) -> Result<&str, SocialError> {
     let value = value.trim();

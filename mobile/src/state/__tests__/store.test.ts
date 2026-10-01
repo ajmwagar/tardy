@@ -1,7 +1,7 @@
 import { faults } from '@/data/mock/faults';
 import { POSTS } from '@/data/mock/fixtures';
 
-import { clearError, flushEngagement, getState, ingestPosts, seedFollowing, setLiked, toggleAlarm, toggleFollowing, toggleRepost, toggleSaved } from '../store';
+import { cacheAccounts, cacheViewerAccount, clearError, flushEngagement, getState, ingestPosts, resetViewerState, seedFollowing, setLiked, toggleAlarm, toggleFollowing, toggleRepost, toggleSaved } from '../store';
 
 /**
  * Rollback paths, driven by the dev fault switch. Injected interaction faults throw before
@@ -58,5 +58,30 @@ describe('optimistic interactions', () => {
     await toggleFollowing(post.authorId);
     expect(getState().following.has(post.authorId)).toBe(false);
     expect(getState().lastError).toMatch(/follow them/);
+  });
+});
+
+describe('viewer account cache', () => {
+  it('keeps the stable me alias for a durable UUID and refreshes both keys', () => {
+    resetViewerState();
+    const account = {
+      id: '28542681-0556-40dc-9dbd-743691f9f31a',
+      kind: 'human' as const,
+      handle: 'james',
+      name: 'James',
+      avatarUrl: 'https://example.test/avatar.jpg',
+      bio: '',
+      verified: false,
+      followers: 0,
+      following: 0,
+      postCount: 1,
+    };
+    cacheViewerAccount(account);
+    expect(getState().accounts.get('me')).toEqual(account);
+    expect(getState().accounts.get(account.id)).toEqual(account);
+
+    const refreshed = { ...account, postCount: 2 };
+    cacheAccounts([refreshed]);
+    expect(getState().accounts.get('me')).toEqual(refreshed);
   });
 });

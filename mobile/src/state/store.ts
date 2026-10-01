@@ -120,7 +120,17 @@ export function useAccount(id: string | undefined): Account | undefined {
 export async function bootstrap() {
   const [me, following] = await Promise.all([api.me(), api.followingIds()]);
   seedFollowing(following);
-  set((s) => ({ accounts: new Map(s.accounts).set(me.id, me) }));
+  cacheViewerAccount(me);
+}
+
+/** The viewer has a stable `me` cache alias even when the durable PG profile id is a UUID. */
+export function cacheViewerAccount(account: Account) {
+  set((s) => {
+    const next = new Map(s.accounts);
+    next.set(account.id, account);
+    next.set('me', account);
+    return { accounts: next };
+  });
 }
 
 // MARK: posts
@@ -331,7 +341,11 @@ export async function flushEngagement() {
 export function cacheAccounts(accounts: Account[]) {
   set((s) => {
     const next = new Map(s.accounts);
-    accounts.forEach((a) => next.set(a.id, a));
+    const viewerId = s.accounts.get('me')?.id;
+    accounts.forEach((a) => {
+      next.set(a.id, a);
+      if (a.id === viewerId) next.set('me', a);
+    });
     return { accounts: next };
   });
 }
