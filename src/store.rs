@@ -68,6 +68,7 @@ pub struct NewLive {
 
 pub trait Store: Send + Sync {
     fn create_profile(&self, input: NewProfile) -> Result<Profile, StoreError>;
+    fn delete_profiles(&self, profile_ids: &[Uuid]) -> Result<(), StoreError>;
     fn publish_reel(&self, actor: Uuid, input: NewReel) -> Result<Reel, StoreError>;
     fn start_live(&self, actor: Uuid, input: NewLive) -> Result<LiveSession, StoreError>;
     fn append_live_event(
@@ -186,6 +187,46 @@ impl Store for MemoryStore {
             .insert(profile.handle.clone(), profile.id);
         state.profiles.insert(profile.id, profile.clone());
         Ok(profile)
+    }
+
+    fn delete_profiles(&self, profile_ids: &[Uuid]) -> Result<(), StoreError> {
+        let mut state = self.state.write().map_err(|_| StoreError::Poisoned)?;
+        let ids: HashSet<Uuid> = profile_ids.iter().copied().collect();
+        state.profiles.retain(|id, _| !ids.contains(id));
+        state
+            .profile_ids_by_handle
+            .retain(|_, id| !ids.contains(id));
+        state
+            .reels
+            .retain(|_, reel| !ids.contains(&reel.profile_id));
+        let removed_lives: HashSet<Uuid> = state
+            .lives
+            .iter()
+            .filter_map(|(id, live)| ids.contains(&live.profile_id).then_some(*id))
+            .collect();
+        state.lives.retain(|id, _| !removed_lives.contains(id));
+        state.events.retain(|id, _| !removed_lives.contains(id));
+        let removed_threads: HashSet<Uuid> = state
+            .threads
+            .iter()
+            .filter_map(|(id, thread)| {
+                thread
+                    .participants
+                    .iter()
+                    .any(|profile| ids.contains(profile))
+                    .then_some(*id)
+            })
+            .collect();
+        state.threads.retain(|id, _| !removed_threads.contains(id));
+        state.messages.retain(|id, _| !removed_threads.contains(id));
+        state
+            .blocks
+            .retain(|(a, b)| !ids.contains(a) && !ids.contains(b));
+        let remaining_reels: HashSet<Uuid> = state.reels.keys().copied().collect();
+        state
+            .saved_posts
+            .retain(|(_, reel), _| remaining_reels.contains(reel));
+        Ok(())
     }
 
     fn publish_reel(&self, actor: Uuid, input: NewReel) -> Result<Reel, StoreError> {

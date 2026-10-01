@@ -14,6 +14,7 @@ import type {
   Page,
   Post,
   PushTokenRegistration,
+  ReactionKind,
   SharedLink,
   SignedIn,
   StoryGroup,
@@ -400,6 +401,16 @@ export class HttpTardyApi implements TardyApi {
 
   searchAccounts(query: string): Promise<Account[]> {
     return this.request('GET', '/v1/profiles/search', { query: { q: query }, decode: array(W.account) });
+  }
+
+  reactToMessage(threadId: string, messageId: string, kind: ReactionKind | null): Promise<Message> {
+    const path = `/v1/social/conversations/${segment(threadId)}/messages/${segment(messageId)}/reaction`;
+    return kind ? this.request('PUT', path, { body: { kind }, decode: W.message }) : this.request('DELETE', path, { decode: W.message });
+  }
+
+  reactToComment(postId: string, commentId: string, kind: ReactionKind | null): Promise<Comment> {
+    const path = `/v1/social/posts/${segment(postId)}/comments/${segment(commentId)}/reaction`;
+    return kind ? this.request('PUT', path, { body: { kind }, decode: W.comment }) : this.request('DELETE', path, { decode: W.comment });
   }
 
   async markThreadRead(threadId: string, throughMessageId: string): Promise<void> {

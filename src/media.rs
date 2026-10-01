@@ -14,6 +14,7 @@ const UPLOAD_TTL_MS: u64 = 15 * 60 * 1_000;
 pub enum MediaKind {
     Scene,
     Voiceover,
+    AudioOriginal,
     Poster,
     VideoOriginal,
 }
@@ -24,6 +25,7 @@ impl MediaKind {
             Self::Scene => 1 << 20,
             Self::Poster => 10 << 20,
             Self::Voiceover => 25 << 20,
+            Self::AudioOriginal => 500 << 20,
             Self::VideoOriginal => 250 << 20,
         }
     }
@@ -32,6 +34,10 @@ impl MediaKind {
             Self::Scene => mime == "application/json",
             Self::Poster => matches!(mime, "image/jpeg" | "image/png" | "image/webp"),
             Self::Voiceover => matches!(mime, "audio/mp4" | "audio/mpeg" | "audio/ogg"),
+            Self::AudioOriginal => matches!(
+                mime,
+                "audio/mp4" | "audio/mpeg" | "audio/ogg" | "audio/wav" | "audio/flac"
+            ),
             Self::VideoOriginal => matches!(mime, "video/mp4" | "video/quicktime" | "video/webm"),
         }
     }
@@ -39,6 +45,7 @@ impl MediaKind {
         match self {
             Self::Scene => "structured",
             Self::Voiceover => "audio",
+            Self::AudioOriginal => "music-originals",
             Self::Poster => "poster",
             Self::VideoOriginal => "video",
         }

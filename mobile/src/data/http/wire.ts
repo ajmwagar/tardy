@@ -1,5 +1,6 @@
 import { NOTIFICATION_KINDS } from '@/notifications/preferences';
 import type { PlanId } from '@/membership/plans';
+import { REACTION_KINDS } from '@/reactions/reactions';
 import { parseTardyUrl } from '@/share/links';
 
 import type {
@@ -22,6 +23,8 @@ import type {
   SharedLink,
   AutopayMandate,
   PostSound,
+  ReactionKind,
+  ReactionSummary,
   TrendingSound,
   Membership,
   SharedPostRef,
@@ -152,6 +155,16 @@ export function page<T>(item: Decoder<T>): Decoder<Page<T>> {
 export const trendingPosts: Decoder<Post[]> = map(array(object<{ post: Post }>({ post })), (items) => items.map((i) => i.post));
 
 /**
+ * Tap-backs: `[{ kind, account_ids }]`. An open set: kinds this client doesn't know are
+ * skipped, so the server can add some before clients ship; an empty list is absent.
+ */
+const reactionOrSkip: Decoder<ReactionSummary[number] | undefined> = (v, path) => {
+  const row = object<{ kind: ReactionKind | undefined; accountIds: string[] }>({ kind: knownOf(REACTION_KINDS), accountIds: array(string) })(v, path);
+  return row.kind === undefined ? undefined : { kind: row.kind, accountIds: row.accountIds };
+};
+const reactions: Decoder<ReactionSummary | undefined> = map(optional(arraySkipping(reactionOrSkip)), (r) => (r && r.length > 0 ? r : undefined));
+
+/**
  * The social `Comment` (`POST /v1/social/posts/{id}/comments`). The server does not count
  * comment likes yet; an absent `like_count` is zero, which is true of every comment it returns.
  */
@@ -164,8 +177,14 @@ export const comment: Decoder<Comment> = map(
     createdAt: wire('created_at', isoTime),
     likeCount: optional(integer),
     mentionedIds: wire('mentioned_profile_ids', optional(array(string))),
+    reactions,
   }),
-  ({ likeCount, mentionedIds, ...rest }) => ({ ...rest, likeCount: likeCount ?? 0, ...(mentionedIds?.length ? { mentionedIds } : {}) }),
+  ({ likeCount, mentionedIds, reactions: r, ...rest }) => ({
+    ...rest,
+    likeCount: likeCount ?? 0,
+    ...(mentionedIds?.length ? { mentionedIds } : {}),
+    ...(r ? { reactions: r } : {}),
+  }),
 );
 
 const story: Decoder<Story> = object<Story>({
@@ -199,6 +218,7 @@ export const conversationMessage: Decoder<{ message: Message; sequence: number }
     createdAt: wire('created_at', isoTime),
     sharedPost: optional(sharedPost),
     sharedLinkId: optional(string),
+    reactions,
     sequence: integer,
   }),
   ({ sequence, ...m }) => {
@@ -206,6 +226,7 @@ export const conversationMessage: Decoder<{ message: Message; sequence: number }
     const message: Message = sharedPostId ? { ...m, text: '', sharedPost: { status: 'available', postId: sharedPostId } } : m;
     if (message.sharedLinkId === undefined) delete message.sharedLinkId;
     if (message.sharedPost === undefined) delete message.sharedPost;
+    if (message.reactions === undefined) delete message.reactions;
     return { message, sequence };
   },
 );

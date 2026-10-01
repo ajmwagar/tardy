@@ -7,6 +7,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 const CLAIM_TTL_MS: u64 = 24 * 60 * 60 * 1_000;
+const UNCLAIMED_TARDY_TTL_MS: u64 = 72 * 60 * 60 * 1_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct ClaimCode {
@@ -27,6 +28,14 @@ pub struct ClaimedAccount {
     pub account: Account,
     /// Returned exactly once. Only its digest is persisted.
     pub api_token: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct TemporaryTardyAccount {
+    pub account_id: Uuid,
+    pub api_token: String,
+    pub claim_code: String,
+    pub expires_at_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -80,7 +89,9 @@ impl AccountRegistry {
                id TEXT PRIMARY KEY,
                email TEXT NOT NULL UNIQUE,
                created_at_ms INTEGER NOT NULL,
-               api_token_hash BLOB NOT NULL
+               api_token_hash BLOB NOT NULL,
+               temporary INTEGER NOT NULL DEFAULT 0,
+               expires_at_ms INTEGER
              );
              CREATE TABLE IF NOT EXISTS account_profiles (
                account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -97,9 +108,113 @@ impl AccountRegistry {
                PRIMARY KEY (account_id, provider, purpose)
              );",
         )?;
+        ensure_column(
+            &connection,
+            "accounts",
+            "temporary",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
+        ensure_column(&connection, "accounts", "expires_at_ms", "INTEGER")?;
         Ok(Self {
             connection: Mutex::new(connection),
         })
+    }
+
+    pub fn register_tardy(&self, now_ms: u64) -> Result<TemporaryTardyAccount, OnboardingError> {
+        let account_id = Uuid::new_v4();
+        let api_token = format!("tardy_{}", Uuid::new_v4().simple());
+        let claim_code = Uuid::new_v4().simple().to_string();
+        let expires_at_ms = now_ms
+            .checked_add(UNCLAIMED_TARDY_TTL_MS)
+            .ok_or(OnboardingError::TimestampOverflow)?;
+        let mut connection = self
+            .connection
+            .lock()
+            .map_err(|_| OnboardingError::Poisoned)?;
+        let tx = connection.transaction()?;
+        tx.execute("INSERT INTO accounts (id,email,created_at_ms,api_token_hash,temporary,expires_at_ms) VALUES (?1,?2,?3,?4,1,?5)", params![account_id.to_string(), format!("unclaimed+{account_id}@tardy.invalid"), to_i64(now_ms)?, hash_code(&api_token), to_i64(expires_at_ms)?])?;
+        tx.execute(
+            "INSERT INTO agent_claims (code_hash,expires_at_ms,account_id) VALUES (?1,?2,?3)",
+            params![
+                hash_code(&claim_code),
+                to_i64(expires_at_ms)?,
+                account_id.to_string()
+            ],
+        )?;
+        tx.commit()?;
+        Ok(TemporaryTardyAccount {
+            account_id,
+            api_token,
+            claim_code,
+            expires_at_ms,
+        })
+    }
+
+    pub fn claim_tardy(
+        &self,
+        human_account_id: Uuid,
+        code: &str,
+        now_ms: u64,
+    ) -> Result<Vec<Uuid>, OnboardingError> {
+        let mut connection = self
+            .connection
+            .lock()
+            .map_err(|_| OnboardingError::Poisoned)?;
+        let tx = connection.transaction()?;
+        let temporary_id: Option<String> = tx.query_row("SELECT c.account_id FROM agent_claims c JOIN accounts a ON a.id=c.account_id WHERE c.code_hash=?1 AND c.claimed_at_ms IS NULL AND c.expires_at_ms>?2 AND a.temporary=1", params![hash_code(code), to_i64(now_ms)?], |row| row.get(0)).optional()?;
+        let temporary_id = temporary_id.ok_or(OnboardingError::InvalidClaim)?;
+        let profiles: Vec<String> = {
+            let mut statement = tx.prepare(
+                "SELECT profile_id FROM account_profiles WHERE account_id=?1 ORDER BY profile_id",
+            )?;
+            statement
+                .query_map([&temporary_id], |row| row.get(0))?
+                .collect::<Result<_, _>>()?
+        };
+        if profiles.is_empty() {
+            return Err(OnboardingError::InvalidClaim);
+        }
+        tx.execute(
+            "UPDATE account_profiles SET account_id=?1 WHERE account_id=?2",
+            params![human_account_id.to_string(), temporary_id],
+        )?;
+        tx.execute(
+            "UPDATE agent_claims SET claimed_at_ms=?1,account_id=?2 WHERE code_hash=?3",
+            params![
+                to_i64(now_ms)?,
+                human_account_id.to_string(),
+                hash_code(code)
+            ],
+        )?;
+        tx.execute("DELETE FROM accounts WHERE id=?1", [&temporary_id])?;
+        tx.commit()?;
+        profiles
+            .into_iter()
+            .map(|id| Uuid::parse_str(&id).map_err(|_| OnboardingError::InvalidClaim))
+            .collect()
+    }
+
+    pub fn purge_expired_tardies(&self, now_ms: u64) -> Result<Vec<Uuid>, OnboardingError> {
+        let mut connection = self
+            .connection
+            .lock()
+            .map_err(|_| OnboardingError::Poisoned)?;
+        let tx = connection.transaction()?;
+        let profiles: Vec<String> = {
+            let mut statement = tx.prepare("SELECT p.profile_id FROM account_profiles p JOIN accounts a ON a.id=p.account_id WHERE a.temporary=1 AND a.expires_at_ms<=?1")?;
+            statement
+                .query_map([to_i64(now_ms)?], |row| row.get(0))?
+                .collect::<Result<_, _>>()?
+        };
+        tx.execute(
+            "DELETE FROM accounts WHERE temporary=1 AND expires_at_ms<=?1",
+            [to_i64(now_ms)?],
+        )?;
+        tx.commit()?;
+        profiles
+            .into_iter()
+            .map(|id| Uuid::parse_str(&id).map_err(|_| OnboardingError::InvalidClaim))
+            .collect()
     }
 
     pub fn issue_claim(&self, now_ms: u64) -> Result<ClaimCode, OnboardingError> {
@@ -175,14 +290,24 @@ impl AccountRegistry {
     }
 
     pub fn authenticate(&self, api_token: &str) -> Result<Uuid, OnboardingError> {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| OnboardingError::TimestampOverflow)?
+            .as_millis()
+            .try_into()
+            .map_err(|_| OnboardingError::TimestampOverflow)?;
+        self.authenticate_at(api_token, now_ms)
+    }
+
+    fn authenticate_at(&self, api_token: &str, now_ms: u64) -> Result<Uuid, OnboardingError> {
         let connection = self
             .connection
             .lock()
             .map_err(|_| OnboardingError::Poisoned)?;
         let id: Option<String> = connection
             .query_row(
-                "SELECT id FROM accounts WHERE api_token_hash = ?1",
-                params![hash_code(api_token)],
+                "SELECT id FROM accounts WHERE api_token_hash = ?1 AND (temporary=0 OR expires_at_ms > ?2)",
+                params![hash_code(api_token), to_i64(now_ms)?],
                 |row| row.get(0),
             )
             .optional()?;
@@ -219,6 +344,23 @@ impl AccountRegistry {
             )
             .optional()?;
         Ok(found.is_some())
+    }
+
+    pub fn is_temporary(&self, account_id: Uuid) -> Result<bool, OnboardingError> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| OnboardingError::Poisoned)?;
+        let temporary: Option<i64> = connection
+            .query_row(
+                "SELECT temporary FROM accounts WHERE id=?1",
+                [account_id.to_string()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        temporary
+            .map(|value| value != 0)
+            .ok_or(OnboardingError::InvalidClaim)
     }
 
     pub fn grant_ai_consent(
@@ -302,6 +444,25 @@ impl AccountRegistry {
 
 fn hash_code(code: &str) -> Vec<u8> {
     Sha256::digest(code.as_bytes()).to_vec()
+}
+
+fn ensure_column(
+    connection: &Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> Result<(), OnboardingError> {
+    let exists: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info(?1) WHERE name=?2)",
+        params![table, column],
+        |row| row.get(0),
+    )?;
+    if !exists {
+        connection.execute_batch(&format!(
+            "ALTER TABLE {table} ADD COLUMN {column} {definition}"
+        ))?;
+    }
+    Ok(())
 }
 
 fn to_i64(value: u64) -> Result<i64, OnboardingError> {
@@ -389,5 +550,49 @@ mod tests {
                 .has_ai_consent(account, "voyage", "search_reranking", "search-v1")
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn tardy_self_registers_then_transfers_to_a_human() {
+        let registry = AccountRegistry::in_memory().unwrap();
+        let human = registry
+            .claim(
+                &registry.issue_claim(1).unwrap().code,
+                "owner@example.com",
+                2,
+            )
+            .unwrap();
+        let tardy = registry.register_tardy(10).unwrap();
+        let profile = Uuid::new_v4();
+        registry.bind_profile(tardy.account_id, profile).unwrap();
+        assert_eq!(
+            registry.authenticate_at(&tardy.api_token, 10).unwrap(),
+            tardy.account_id
+        );
+        assert_eq!(
+            registry
+                .claim_tardy(human.account.id, &tardy.claim_code, 11)
+                .unwrap(),
+            vec![profile]
+        );
+        assert!(registry.owns_profile(human.account.id, profile).unwrap());
+        assert!(matches!(
+            registry.authenticate(&tardy.api_token),
+            Err(OnboardingError::InvalidClaim)
+        ));
+    }
+
+    #[test]
+    fn unclaimed_tardies_expire_after_seventy_two_hours() {
+        let registry = AccountRegistry::in_memory().unwrap();
+        let tardy = registry.register_tardy(100).unwrap();
+        let profile = Uuid::new_v4();
+        registry.bind_profile(tardy.account_id, profile).unwrap();
+        let expired = registry.purge_expired_tardies(tardy.expires_at_ms).unwrap();
+        assert_eq!(expired, vec![profile]);
+        assert!(matches!(
+            registry.authenticate(&tardy.api_token),
+            Err(OnboardingError::InvalidClaim)
+        ));
     }
 }

@@ -6,6 +6,7 @@ import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-na
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useSoundPlays } from '@/audio/use-sound-plays';
+import { fitFor, mediaRatio } from '@/media/aspect';
 
 import { DoubleTapLike } from '@/components/double-tap-like';
 import { BreakingTicker } from '@/components/breaking-ticker';
@@ -31,6 +32,7 @@ const VIEWABILITY = { itemVisiblePercentThreshold: 80 };
 
 const Reel = memo(function Reel({ post, active, height }: { post: Post; active: boolean; height: number }) {
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
   const chrome = insets.bottom + TAB_BAR_CLEARANCE;
   const author = useAccount(post.authorId);
   const project = useAccount(post.projectId);
@@ -48,7 +50,11 @@ const Reel = memo(function Reel({ post, active, height }: { post: Post; active: 
     <View style={{ height, backgroundColor: '#000' }}>
       <DoubleTapLike postId={post.id} onSingleTap={toggleMuted} heartSize={120}>
         <View style={{ height }}>
-          {media?.type === 'video' && <VideoSurface postId={post.id} media={media} active={active} fullBleed />}
+          {media?.type === 'video' && (
+            // Fill when the video's shape is close to the screen's, else show it whole over the blur
+            // (landscape reels, iPads). The native player applies the same rule on its own.
+            <VideoSurface postId={post.id} media={media} active={active} fullBleed contentFit={fitFor(mediaRatio(media), width / height)} />
+          )}
         </View>
       </DoubleTapLike>
 

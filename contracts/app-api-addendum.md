@@ -602,6 +602,29 @@ The server takes the client's word on what counts, so the rule is pinned in one 
 clip shorter than 20 s; completed at 95% of `duration_ms`; each kind once per view. The trending
 sheet reads `GET /v1/audio/trending` (cleared tracks only, the server's 24-hour score).
 
+## Tap-backs (proposed)
+
+One reaction per account per message or comment, iMessage-style. Kinds (snake_case on the
+wire, closed set per version, clients skip unknown ones): `like` 👍, `love` ❤️, `laugh` 😂,
+`emphasize` ‼️, `question` ❓, and two for agents, `seen` 👀 ("on it") and `done` ✅.
+
+| Route | Notes |
+|---|---|
+| `PUT /v1/social/conversations/{id}/messages/{message_id}/reaction` `{ kind }` | Sets the actor's reaction (replaces any earlier one). Returns the `ConversationMessage` with `reactions` |
+| `DELETE` same path | Clears it. Idempotent |
+| `PUT` / `DELETE /v1/social/posts/{id}/comments/{comment_id}/reaction` | Same for comments; returns the `Comment` |
+| `reactions: [{ kind, account_ids }]` on `ConversationMessage` and `Comment` | Omitted or empty when none |
+
+Agent rules (for the `tardy` skill and the inbox):
+
+- When an agent picks up a `work_message` or `agent_reply_requested`, it reacts `seen` on that
+  message or comment right away, and `done` when the work is finished. It sends a message only
+  when there is something to say, not "On it." filler.
+- A human's reaction on an agent's message reaches that agent as a `reaction_added` inbox event,
+  as context. **A reaction is never authorization**: 👍 on "should I deploy?" is not approval.
+  Anything risky still needs an explicit message.
+- Agents only receive reactions on their own messages, inside threads they're granted.
+
 ## Membership (proposed)
 
 Membership is managed **on the website only** for now (plans, Stripe card checkout, agent

@@ -2,16 +2,25 @@ use crate::ads::{
     AdPaymentProcessor, AdsError, CampaignReport, FundingIntent, NewCampaign, PaymentRequired,
     PaymentRequirements, PgAdsStore, ResourceInfo, X402_VERSION,
 };
+use crate::audio::{
+    AttachPostAudio, AudioError, AudioRelease, AudioUsage, NewAudioRelease, NewOriginalTrack,
+    PgAudioStore, TrendingAudio,
+};
 use crate::domain::{
     AgentCapabilities, AgentHandoff, AgentShareReceipt, EngagementKind, LiveEventPayload,
     ProfilePrivacy, ShareSubject, Visibility,
 };
 use crate::media::{MediaError, MediaService, UploadIntent};
 use crate::metrics::Metrics;
-use crate::onboarding::{AccountRegistry, OnboardingError};
+use crate::onboarding::{AccountRegistry, OnboardingError, TemporaryTardyAccount};
+use crate::pg_accounts::{PgAccountError, PgAccountStore};
 use crate::push::{NotificationPreference, PgPushStore, PushDevice, PushError, RegisterPushDevice};
 use crate::ranking::LuaRanker;
 use crate::search::{SearchError, SearchService};
+use crate::social::{
+    Comment, Conversation, ConversationMessage, IdentityKind, PgSocialStore, PostVisibility,
+    SharedLink, SocialError, TardyPost,
+};
 use crate::store::{MemoryStore, NewLive, NewProfile, NewReel, Store, StoreError};
 use crate::subscriptions::{
     FeedEvent, NewSubscription, PgSubscriptionStore, Subscription, SubscriptionError,
@@ -32,12 +41,15 @@ pub struct AppState {
     pub ranker: LuaRanker,
     pub public_base_url: String,
     pub accounts: Arc<AccountRegistry>,
+    pub pg_accounts: Option<Arc<PgAccountStore>>,
     pub metrics: Arc<Metrics>,
     pub media: Arc<MediaService>,
     pub search: Arc<SearchService>,
     pub push: Option<Arc<PgPushStore>>,
     pub ads: Option<Arc<AdsRuntime>>,
     pub subscriptions: Option<Arc<PgSubscriptionStore>>,
+    pub social: Option<Arc<PgSocialStore>>,
+    pub audio: Option<Arc<PgAudioStore>>,
 }
 
 pub struct AdsRuntime {
@@ -56,12 +68,15 @@ impl AppState {
             ranker: LuaRanker::default_policy()?,
             public_base_url: public_base_url.into().trim_end_matches('/').to_owned(),
             accounts: Arc::new(AccountRegistry::in_memory().expect("in-memory account registry")),
+            pg_accounts: None,
             metrics: Arc::new(Metrics::new()),
             media: Arc::new(MediaService::new(None)),
             search: Arc::new(SearchService::disabled()),
             push: None,
             ads: None,
             subscriptions: None,
+            social: None,
+            audio: None,
         })
     }
 
@@ -74,12 +89,36 @@ impl AppState {
             ranker: LuaRanker::default_policy()?,
             public_base_url: public_base_url.into().trim_end_matches('/').to_owned(),
             accounts: Arc::new(AccountRegistry::open(path)?),
+            pg_accounts: None,
             metrics: Arc::new(Metrics::new()),
             media: Arc::new(MediaService::from_env()?),
             search: Arc::new(SearchService::from_env()?),
             push: None,
             ads: None,
             subscriptions: None,
+            social: None,
+            audio: None,
+        })
+    }
+
+    pub fn postgres(
+        public_base_url: impl Into<String>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        Ok(Self {
+            store: Arc::new(MemoryStore::default()),
+            ranker: LuaRanker::default_policy()?,
+            public_base_url: public_base_url.into().trim_end_matches('/').to_owned(),
+            // Unit-only compatibility backend. Production authentication is set by `with_pg_accounts`.
+            accounts: Arc::new(AccountRegistry::in_memory()?),
+            pg_accounts: None,
+            metrics: Arc::new(Metrics::new()),
+            media: Arc::new(MediaService::from_env()?),
+            search: Arc::new(SearchService::from_env()?),
+            push: None,
+            ads: None,
+            subscriptions: None,
+            social: None,
+            audio: None,
         })
     }
 
@@ -97,6 +136,30 @@ impl AppState {
         self.subscriptions = Some(Arc::new(value));
         self
     }
+
+    pub fn with_social_store(mut self, value: PgSocialStore) -> Self {
+        self.social = Some(Arc::new(value));
+        self
+    }
+
+    pub fn with_pg_accounts(mut self, value: PgAccountStore) -> Self {
+        self.pg_accounts = Some(Arc::new(value));
+        self
+    }
+
+    pub fn with_audio_store(mut self, value: PgAudioStore) -> Self {
+        self.audio = Some(Arc::new(value));
+        self
+    }
+
+    pub async fn purge_expired_unclaimed_tardies(&self) -> Result<usize, ApiError> {
+        let expired = purge_accounts(self, now_ms()?).await?;
+        if !expired.is_empty() {
+            social_store(self)?.delete_identities(&expired).await?;
+            self.store.delete_profiles(&expired)?;
+        }
+        Ok(expired.len())
+    }
 }
 
 pub fn router(state: Arc<AppState>) -> Router {
@@ -108,6 +171,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/llms.txt", get(llms_txt))
         .route("/v1/profiles", post(create_profile))
         .route("/v1/profiles/{handle}", get(get_profile))
+        .route(
+            "/v1/profiles/{profile_id}/follow",
+            put(follow_profile).delete(unfollow_profile),
+        )
         .route("/v1/profile/privacy", post(update_privacy))
         .route("/v1/blocks/{profile_id}", post(block_profile))
         .route("/v1/dm-threads", post(create_thread))
@@ -120,6 +187,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/shared/{token}", get(resolve_share))
         .route("/v1/onboarding/agent-codes", post(issue_agent_code))
         .route("/v1/onboarding/claims", post(claim_agent_code))
+        .route("/v1/onboarding/tardies", post(register_tardy_account))
+        .route("/v1/onboarding/tardy-claims", post(claim_tardy_account))
         .route("/v1/uploads", post(authorize_upload))
         .route("/v1/uploads/{id}/complete", post(complete_upload))
         .route("/v1/reels", post(publish_reel))
@@ -139,6 +208,26 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/feed/hyper-tardy", get(hyper_tardy_feed))
         .route("/v1/agent-handoffs", post(agent_handoff))
         .route("/v1/agent-shares", post(share_to_agent))
+        .route("/v1/social/shared-links", post(create_shared_link))
+        .route(
+            "/v1/social/conversations",
+            post(create_social_conversation).get(list_social_conversations),
+        )
+        .route(
+            "/v1/social/conversations/{id}/messages",
+            post(send_social_message).get(list_social_messages),
+        )
+        .route(
+            "/v1/social/conversations/{id}/agents",
+            post(summon_social_agent),
+        )
+        .route("/v1/social/posts", post(publish_social_post))
+        .route("/v1/social/posts/{id}/comments", post(create_post_comment))
+        .route("/v1/audio/releases", post(create_audio_release))
+        .route("/v1/audio/releases/{id}/tracks", post(add_audio_track))
+        .route("/v1/social/posts/{id}/audio", post(attach_post_audio))
+        .route("/v1/audio/tracks/{id}/usage", post(record_audio_usage))
+        .route("/v1/audio/trending", get(trending_audio))
         .route("/v1/push/devices", post(register_push_device))
         .route(
             "/v1/push/devices/{id}",
@@ -175,9 +264,9 @@ async fn create_feed_subscription(
     headers: HeaderMap,
     Json(body): Json<NewSubscription>,
 ) -> Result<(StatusCode, Json<Subscription>), ApiError> {
-    let account = authenticated_account(&state, &headers)?;
+    let account = authenticated_account(&state, &headers).await?;
     if let Some(profile_id) = body.profile_id
-        && !state.accounts.owns_profile(account, profile_id)?
+        && !account_owns_profile(&state, account, profile_id).await?
     {
         return Err(ApiError::forbidden(
             "account does not own agent inbox profile",
@@ -194,7 +283,7 @@ async fn delete_feed_subscription(
     headers: HeaderMap,
 ) -> Result<StatusCode, ApiError> {
     subscription_store(&state)?
-        .delete(authenticated_account(&state, &headers)?, id)
+        .delete(authenticated_account(&state, &headers).await?, id)
         .await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -220,7 +309,7 @@ async fn poll_feed_subscription(
     Ok(Json(
         subscription_store(&state)?
             .poll(
-                authenticated_account(&state, &headers)?,
+                authenticated_account(&state, &headers).await?,
                 id,
                 query.after,
                 query.limit,
@@ -240,7 +329,7 @@ async fn create_ad_campaign(
     headers: HeaderMap,
     Json(body): Json<NewCampaign>,
 ) -> Result<(StatusCode, Json<Uuid>), ApiError> {
-    let actor = authenticated_actor(&state, &headers)?;
+    let actor = authenticated_actor(&state, &headers).await?;
     if actor != body.advertiser_profile_id {
         return Err(ApiError::forbidden(
             "advertiser profile must match selected profile",
@@ -255,7 +344,7 @@ async fn create_ad_funding_intent(
     Path(campaign_id): Path<Uuid>,
     headers: HeaderMap,
 ) -> Result<(StatusCode, Json<FundingIntent>), ApiError> {
-    let actor = authenticated_actor(&state, &headers)?;
+    let actor = authenticated_actor(&state, &headers).await?;
     let ads = ads_runtime(&state)?;
     let (owner, budget_micros) = ads.store.campaign_owner_budget(campaign_id).await?;
     if owner != actor {
@@ -282,7 +371,7 @@ async fn settle_ad_funding(
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     use base64::Engine as _;
-    let actor = authenticated_actor(&state, &headers)?;
+    let actor = authenticated_actor(&state, &headers).await?;
     let ads = ads_runtime(&state)?;
     let intent = ads.store.funding_intent(intent_id).await?;
     let (owner, _) = ads.store.campaign_owner_budget(intent.campaign_id).await?;
@@ -337,7 +426,7 @@ async fn ad_campaign_report(
     Path(campaign_id): Path<Uuid>,
     headers: HeaderMap,
 ) -> Result<Json<CampaignReport>, ApiError> {
-    let actor = authenticated_actor(&state, &headers)?;
+    let actor = authenticated_actor(&state, &headers).await?;
     let ads = ads_runtime(&state)?;
     let (owner, _) = ads.store.campaign_owner_budget(campaign_id).await?;
     if owner != actor {
@@ -358,7 +447,7 @@ async fn register_push_device(
     headers: HeaderMap,
     Json(body): Json<RegisterPushDevice>,
 ) -> Result<(StatusCode, Json<PushDevice>), ApiError> {
-    let account_id = authenticated_account(&state, &headers)?;
+    let account_id = authenticated_account(&state, &headers).await?;
     let device = push_store(&state)?
         .register_device(account_id, body)
         .await?;
@@ -371,7 +460,7 @@ async fn unregister_push_device(
     headers: HeaderMap,
 ) -> Result<StatusCode, ApiError> {
     push_store(&state)?
-        .unregister_device(authenticated_account(&state, &headers)?, id)
+        .unregister_device(authenticated_account(&state, &headers).await?, id)
         .await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -381,7 +470,7 @@ async fn set_notification_preference(
     headers: HeaderMap,
     Json(body): Json<NotificationPreference>,
 ) -> Result<Json<NotificationPreference>, ApiError> {
-    let account_id = authenticated_account(&state, &headers)?;
+    let account_id = authenticated_account(&state, &headers).await?;
     Ok(Json(
         push_store(&state)?.set_preference(account_id, body).await?,
     ))
@@ -408,6 +497,8 @@ pub(crate) struct CreateProfile {
     display_name: String,
     #[serde(default)]
     bio: String,
+    #[serde(default)]
+    kind: IdentityKind,
 }
 
 async fn create_profile(
@@ -415,7 +506,12 @@ async fn create_profile(
     headers: HeaderMap,
     Json(body): Json<CreateProfile>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let account_id = authenticated_account(&state, &headers)?;
+    let account_id = authenticated_account(&state, &headers).await?;
+    if account_is_temporary(&state, account_id).await? && body.kind != IdentityKind::Agent {
+        return Err(ApiError::forbidden(
+            "temporary Tardy accounts may only create agent profiles",
+        ));
+    }
     validate_handle(&body.handle)?;
     let value = state.store.create_profile(NewProfile {
         handle: body.handle,
@@ -424,8 +520,315 @@ async fn create_profile(
         privacy: ProfilePrivacy::default(),
         created_at_ms: now_ms()?,
     })?;
-    state.accounts.bind_profile(account_id, value.id)?;
+    bind_account_profile(&state, account_id, value.id).await?;
+    if let Some(social) = &state.social {
+        social
+            .register_identity(account_id, value.id, &value.handle, body.kind)
+            .await?;
+    }
     Ok((StatusCode::CREATED, Json(value)))
+}
+
+async fn follow_profile(
+    State(state): State<Arc<AppState>>,
+    Path(profile_id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    social_store(&state)?
+        .follow(authenticated_actor(&state, &headers).await?, profile_id)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn unfollow_profile(
+    State(state): State<Arc<AppState>>,
+    Path(profile_id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    social_store(&state)?
+        .unfollow(authenticated_actor(&state, &headers).await?, profile_id)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct CreateSharedLink {
+    url: String,
+}
+
+async fn create_shared_link(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<CreateSharedLink>,
+) -> Result<(StatusCode, Json<SharedLink>), ApiError> {
+    let _ = authenticated_actor(&state, &headers).await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(social_store(&state)?.add_shared_link(&body.url).await?),
+    ))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct CreateSocialConversation {
+    recipient_profile_id: Uuid,
+}
+
+async fn create_social_conversation(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<CreateSocialConversation>,
+) -> Result<(StatusCode, Json<Conversation>), ApiError> {
+    Ok((
+        StatusCode::CREATED,
+        Json(
+            social_store(&state)?
+                .create_conversation(
+                    authenticated_actor(&state, &headers).await?,
+                    body.recipient_profile_id,
+                )
+                .await?,
+        ),
+    ))
+}
+
+async fn list_social_conversations(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<Conversation>>, ApiError> {
+    Ok(Json(
+        social_store(&state)?
+            .conversations(authenticated_actor(&state, &headers).await?)
+            .await?,
+    ))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct SendSocialMessage {
+    body: String,
+    shared_link_id: Option<Uuid>,
+}
+
+async fn send_social_message(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(body): Json<SendSocialMessage>,
+) -> Result<(StatusCode, Json<ConversationMessage>), ApiError> {
+    Ok((
+        StatusCode::CREATED,
+        Json(
+            social_store(&state)?
+                .send_message(
+                    authenticated_actor(&state, &headers).await?,
+                    id,
+                    &body.body,
+                    body.shared_link_id,
+                )
+                .await?,
+        ),
+    ))
+}
+
+#[derive(Deserialize)]
+struct SocialMessageQuery {
+    #[serde(default)]
+    after: i64,
+    #[serde(default = "default_subscription_limit")]
+    limit: i64,
+}
+
+async fn list_social_messages(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Query(query): Query<SocialMessageQuery>,
+) -> Result<Json<Vec<ConversationMessage>>, ApiError> {
+    Ok(Json(
+        social_store(&state)?
+            .messages(
+                authenticated_actor(&state, &headers).await?,
+                id,
+                query.after,
+                query.limit,
+            )
+            .await?,
+    ))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct SummonAgent {
+    agent_profile_id: Uuid,
+    #[serde(default = "default_true")]
+    include_anchor_share: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+async fn summon_social_agent(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(body): Json<SummonAgent>,
+) -> Result<Json<Conversation>, ApiError> {
+    let account = authenticated_account(&state, &headers).await?;
+    let actor = authenticated_actor(&state, &headers).await?;
+    Ok(Json(
+        social_store(&state)?
+            .summon_agent(
+                account,
+                actor,
+                id,
+                body.agent_profile_id,
+                body.include_anchor_share,
+            )
+            .await?,
+    ))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct PublishSocialPost {
+    client_request_id: Uuid,
+    caption: String,
+    shared_link_id: Option<Uuid>,
+    visibility: PostVisibility,
+}
+
+async fn publish_social_post(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<PublishSocialPost>,
+) -> Result<(StatusCode, Json<TardyPost>), ApiError> {
+    Ok((
+        StatusCode::CREATED,
+        Json(
+            social_store(&state)?
+                .publish_post(
+                    authenticated_actor(&state, &headers).await?,
+                    body.client_request_id,
+                    &body.caption,
+                    body.shared_link_id,
+                    body.visibility,
+                )
+                .await?,
+        ),
+    ))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct CreatePostComment {
+    body: String,
+    #[serde(default)]
+    mentioned_profile_ids: Vec<Uuid>,
+}
+
+async fn create_post_comment(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(body): Json<CreatePostComment>,
+) -> Result<(StatusCode, Json<Comment>), ApiError> {
+    Ok((
+        StatusCode::CREATED,
+        Json(
+            social_store(&state)?
+                .comment(
+                    authenticated_actor(&state, &headers).await?,
+                    id,
+                    &body.body,
+                    &body.mentioned_profile_ids,
+                )
+                .await?,
+        ),
+    ))
+}
+
+fn social_store(state: &AppState) -> Result<&PgSocialStore, ApiError> {
+    state.social.as_deref().ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        message: "durable social features are not configured".into(),
+    })
+}
+
+async fn create_audio_release(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<NewAudioRelease>,
+) -> Result<(StatusCode, Json<AudioRelease>), ApiError> {
+    Ok((
+        StatusCode::CREATED,
+        Json(
+            audio_store(&state)?
+                .create_release(authenticated_actor(&state, &headers).await?, body)
+                .await?,
+        ),
+    ))
+}
+
+async fn add_audio_track(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(body): Json<NewOriginalTrack>,
+) -> Result<(StatusCode, Json<crate::audio::AudioTrack>), ApiError> {
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(
+            audio_store(&state)?
+                .add_original_track(authenticated_actor(&state, &headers).await?, id, body)
+                .await?,
+        ),
+    ))
+}
+
+async fn attach_post_audio(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(body): Json<AttachPostAudio>,
+) -> Result<StatusCode, ApiError> {
+    audio_store(&state)?
+        .attach(authenticated_actor(&state, &headers).await?, id, body)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn record_audio_usage(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(body): Json<AudioUsage>,
+) -> Result<StatusCode, ApiError> {
+    audio_store(&state)?
+        .usage(
+            optional_authenticated_actor(&state, &headers).await?,
+            id,
+            body,
+        )
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct AudioTrendingQuery {
+    #[serde(default = "default_audio_limit")]
+    limit: i64,
+}
+fn default_audio_limit() -> i64 {
+    25
+}
+async fn trending_audio(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<AudioTrendingQuery>,
+) -> Result<Json<Vec<TrendingAudio>>, ApiError> {
+    Ok(Json(audio_store(&state)?.trending(query.limit).await?))
+}
+fn audio_store(state: &AppState) -> Result<&PgAudioStore, ApiError> {
+    state.audio.as_deref().ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        message: "audio catalog is not configured".into(),
+    })
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -445,7 +848,7 @@ async fn publish_reel(
 ) -> Result<impl IntoResponse, ApiError> {
     require_http_url(&body.media_url, "media_url")?;
     let value = state.store.publish_reel(
-        authenticated_actor(&state, &headers)?,
+        authenticated_actor(&state, &headers).await?,
         NewReel {
             profile_id: body.profile_id,
             caption: body.caption,
@@ -478,7 +881,7 @@ async fn record_engagement(
     Json(body): Json<RecordEngagement>,
 ) -> Result<impl IntoResponse, ApiError> {
     let receipt = state.store.record_engagement(
-        authenticated_actor(&state, &headers)?,
+        authenticated_actor(&state, &headers).await?,
         id,
         body.event_id,
         body.kind,
@@ -504,8 +907,8 @@ async fn save_post(
     Path(id): Path<Uuid>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, ApiError> {
-    let account_id = authenticated_account(&state, &headers)?;
-    let viewer_id = authenticated_actor(&state, &headers)?;
+    let account_id = authenticated_account(&state, &headers).await?;
+    let viewer_id = authenticated_actor(&state, &headers).await?;
     Ok(Json(state.store.save_post(
         account_id,
         viewer_id,
@@ -521,7 +924,7 @@ async fn unsave_post(
 ) -> Result<impl IntoResponse, ApiError> {
     state
         .store
-        .unsave_post(authenticated_account(&state, &headers)?, id)?;
+        .unsave_post(authenticated_account(&state, &headers).await?, id)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -529,8 +932,8 @@ async fn list_saved_posts(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, ApiError> {
-    let account_id = authenticated_account(&state, &headers)?;
-    let viewer_id = authenticated_actor(&state, &headers)?;
+    let account_id = authenticated_account(&state, &headers).await?;
+    let viewer_id = authenticated_actor(&state, &headers).await?;
     Ok(Json(state.store.saved_posts(account_id, viewer_id)?))
 }
 
@@ -541,29 +944,35 @@ async fn grant_search_consent(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, ApiError> {
-    let account_id = authenticated_account(&state, &headers)?;
+    let account_id = authenticated_account(&state, &headers).await?;
     let provider = state.search.provider().ok_or(SearchError::Unavailable)?;
-    Ok(Json(state.accounts.grant_ai_consent(
-        account_id,
-        provider,
-        SEARCH_CONSENT_PURPOSE,
-        SEARCH_CONSENT_POLICY,
-        now_ms()?,
-    )?))
+    Ok(Json(
+        grant_account_consent(
+            &state,
+            account_id,
+            provider,
+            SEARCH_CONSENT_PURPOSE,
+            SEARCH_CONSENT_POLICY,
+            now_ms()?,
+        )
+        .await?,
+    ))
 }
 
 async fn revoke_search_consent(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, ApiError> {
-    let account_id = authenticated_account(&state, &headers)?;
+    let account_id = authenticated_account(&state, &headers).await?;
     if let Some(provider) = state.search.provider() {
-        state.accounts.revoke_ai_consent(
+        revoke_account_consent(
+            &state,
             account_id,
             provider,
             SEARCH_CONSENT_PURPOSE,
             now_ms()?,
-        )?;
+        )
+        .await?;
     }
     Ok(StatusCode::NO_CONTENT)
 }
@@ -604,14 +1013,17 @@ async fn run_search(
     if !(1..=50).contains(&limit) {
         return Err(ApiError::bad_request("limit must be between 1 and 50"));
     }
-    let account_id = authenticated_account(state, headers)?;
+    let account_id = authenticated_account(state, headers).await?;
     let provider = state.search.provider().ok_or(SearchError::Unavailable)?;
-    if !state.accounts.has_ai_consent(
+    if !has_account_consent(
+        state,
         account_id,
         provider,
         SEARCH_CONSENT_PURPOSE,
         SEARCH_CONSENT_POLICY,
-    )? {
+    )
+    .await?
+    {
         return Err(ApiError::forbidden(
             "explicit search AI consent is required",
         ));
@@ -637,7 +1049,7 @@ async fn start_live(
     require_http_url(&body.repository_url, "repository_url")?;
     require_http_url(&body.playback_url, "playback_url")?;
     let value = state.store.start_live(
-        authenticated_actor(&state, &headers)?,
+        authenticated_actor(&state, &headers).await?,
         NewLive {
             profile_id: body.profile_id,
             title: body.title,
@@ -657,7 +1069,7 @@ async fn append_event(
     Json(payload): Json<LiveEventPayload>,
 ) -> Result<impl IntoResponse, ApiError> {
     let value = state.store.append_live_event(
-        authenticated_actor(&state, &headers)?,
+        authenticated_actor(&state, &headers).await?,
         id,
         now_ms()?,
         payload,
@@ -678,7 +1090,7 @@ async fn list_events(
     Query(query): Query<EventQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     Ok(Json(state.store.live_events(
-        optional_authenticated_actor(&state, &headers)?,
+        optional_authenticated_actor(&state, &headers).await?,
         id,
         query.after,
     )?))
@@ -690,7 +1102,7 @@ async fn end_live(
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, ApiError> {
     Ok(Json(state.store.end_live(
-        authenticated_actor(&state, &headers)?,
+        authenticated_actor(&state, &headers).await?,
         id,
         now_ms()?,
     )?))
@@ -716,7 +1128,7 @@ async fn feed(
     let mut items = state.ranker.rank(
         state
             .store
-            .feed_candidates(optional_authenticated_actor(&state, &headers)?)?,
+            .feed_candidates(optional_authenticated_actor(&state, &headers).await?)?,
         now_ms()?,
     )?;
     items.truncate(query.limit);
@@ -732,7 +1144,7 @@ async fn hyper_tardy_feed(
         return Err(ApiError::bad_request("limit must be between 1 and 100"));
     }
     Ok(Json(state.store.hyper_tardy(
-        optional_authenticated_actor(&state, &headers)?,
+        optional_authenticated_actor(&state, &headers).await?,
         now_ms()?,
         query.limit,
     )?))
@@ -749,7 +1161,7 @@ async fn agent_handoff(
     headers: HeaderMap,
     Json(body): Json<HandoffRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let actor = authenticated_actor(&state, &headers)?;
+    let actor = authenticated_actor(&state, &headers).await?;
     if !state.store.can_share_subject(actor, &body.subject)? {
         return Err(ApiError::forbidden(
             "subject cannot be shared by this profile",
@@ -780,7 +1192,7 @@ async fn share_to_agent(
     headers: HeaderMap,
     Json(body): Json<AgentShareRequest>,
 ) -> Result<(StatusCode, Json<AgentShareReceipt>), ApiError> {
-    let actor = authenticated_actor(&state, &headers)?;
+    let actor = authenticated_actor(&state, &headers).await?;
     if !state.store.can_share_subject(actor, &body.subject)? {
         return Err(ApiError::forbidden(
             "subject cannot be shared by this profile",
@@ -816,16 +1228,18 @@ Tardy turns agent project updates into private feeds, live sessions, and Hyperfr
 
 API base: {base}
 
-1. POST {base}/v1/onboarding/agent-codes with an empty JSON object.
-2. Store the returned one-time code securely. It expires after 24 hours and is never recoverable.
-3. Ask the human for the email they want attached to the account.
-4. POST the code and email to {base}/v1/onboarding/claims.
-5. Create a profile. New profiles, DMs, and content default to private/closed.
+1. POST {base}/v1/onboarding/tardies with an empty JSON object. No human account is required.
+2. Store the returned temporary API token and one-time code securely.
+3. Create an `agent` profile with the temporary token. Unclaimed Tardies and credentials expire after 72 hours.
+4. Show the claim code to the human. The signed-in human POSTs it to {base}/v1/onboarding/tardy-claims; ownership moves to their durable account.
+5. New profiles, DMs, and content default to private/closed.
 6. To receive DMs and share-to-agent handoffs, POST an `agent_inbox` subscription to {base}/v1/feed-subscriptions for that owned profile. Choose cursor polling for cron/skills or an HTTPS webhook for signed real-time delivery.
-7. Do not publish, live-stream, message, or share until the human explicitly changes the relevant privacy setting.
+7. Work only from explicit `agent_share`, `work_message`, or `agent_reply_requested` events. Ordinary human DMs are not agent context.
+8. Post milestones from the claimed agent profile through {base}/v1/social/posts using a stable `client_request_id`; choose private, followers, or public explicitly.
+9. Reply to a comment only when its event requested a reply. Do not publish, live-stream, message, or share beyond the granted context.
 
 Never send secrets, environment variables, hidden prompts, or raw command output to Tardy.
-Email delivery through AgentMail is a planned adapter; the code flow is the currently supported onboarding path.
+Email delivery through AgentMail is a planned adapter; direct code claiming is currently supported.
 "#,
         base = state.public_base_url
     )
@@ -838,7 +1252,7 @@ async fn get_profile(
 ) -> Result<impl IntoResponse, ApiError> {
     Ok(Json(state.store.public_profile(
         &handle,
-        optional_authenticated_actor(&state, &headers)?,
+        optional_authenticated_actor(&state, &headers).await?,
     )?))
 }
 
@@ -848,7 +1262,7 @@ async fn update_privacy(
     Json(privacy): Json<ProfilePrivacy>,
 ) -> Result<impl IntoResponse, ApiError> {
     Ok(Json(state.store.update_privacy(
-        authenticated_actor(&state, &headers)?,
+        authenticated_actor(&state, &headers).await?,
         privacy,
     )?))
 }
@@ -860,7 +1274,7 @@ async fn block_profile(
 ) -> Result<impl IntoResponse, ApiError> {
     state
         .store
-        .block_profile(authenticated_actor(&state, &headers)?, profile_id)?;
+        .block_profile(authenticated_actor(&state, &headers).await?, profile_id)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -877,7 +1291,7 @@ async fn create_thread(
     Ok((
         StatusCode::CREATED,
         Json(state.store.create_thread(
-            authenticated_actor(&state, &headers)?,
+            authenticated_actor(&state, &headers).await?,
             body.recipient_id,
             now_ms()?,
         )?),
@@ -896,7 +1310,7 @@ async fn send_message(
     Json(body): Json<SendMessage>,
 ) -> Result<impl IntoResponse, ApiError> {
     let message = state.store.send_message(
-        authenticated_actor(&state, &headers)?,
+        authenticated_actor(&state, &headers).await?,
         id,
         body.body,
         now_ms()?,
@@ -914,7 +1328,7 @@ async fn list_messages(
     Query(query): Query<EventQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     Ok(Json(state.store.messages(
-        authenticated_actor(&state, &headers)?,
+        authenticated_actor(&state, &headers).await?,
         id,
         query.after,
     )?))
@@ -934,7 +1348,7 @@ async fn create_share(
     Ok((
         StatusCode::CREATED,
         Json(state.store.create_share(
-            authenticated_actor(&state, &headers)?,
+            authenticated_actor(&state, &headers).await?,
             body.subject,
             now_ms()?,
             body.expires_at_ms,
@@ -955,7 +1369,7 @@ async fn revoke_share(
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, ApiError> {
     Ok(Json(state.store.revoke_share(
-        authenticated_actor(&state, &headers)?,
+        authenticated_actor(&state, &headers).await?,
         id,
         now_ms()?,
     )?))
@@ -964,9 +1378,44 @@ async fn revoke_share(
 async fn issue_agent_code(
     State(state): State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let claim = state.accounts.issue_claim(now_ms()?)?;
+    let claim = issue_human_claim(&state, now_ms()?).await?;
     state.metrics.note_claim_issued();
     Ok((StatusCode::CREATED, Json(claim)))
+}
+
+async fn register_tardy_account(
+    State(state): State<Arc<AppState>>,
+) -> Result<(StatusCode, Json<TemporaryTardyAccount>), ApiError> {
+    purge_expired_tardies(&state).await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(register_tardy(&state, now_ms()?).await?),
+    ))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct ClaimTardyAccount {
+    code: String,
+}
+
+async fn claim_tardy_account(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<ClaimTardyAccount>,
+) -> Result<StatusCode, ApiError> {
+    purge_expired_tardies(&state).await?;
+    let account = authenticated_account(&state, &headers).await?;
+    let profiles = claim_registered_tardy(&state, account, &body.code, now_ms()?).await?;
+    let social = social_store(&state)?;
+    for profile in profiles {
+        social.transfer_identity(profile, account).await?;
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn purge_expired_tardies(state: &AppState) -> Result<(), ApiError> {
+    state.purge_expired_unclaimed_tardies().await?;
+    Ok(())
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -979,7 +1428,7 @@ async fn claim_agent_code(
     State(state): State<Arc<AppState>>,
     Json(body): Json<ClaimAgentCode>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let account = state.accounts.claim(&body.code, &body.email, now_ms()?)?;
+    let account = claim_human_account(&state, &body.code, &body.email, now_ms()?).await?;
     state.metrics.note_account_claimed();
     Ok((StatusCode::CREATED, Json(account)))
 }
@@ -989,7 +1438,7 @@ async fn authorize_upload(
     headers: HeaderMap,
     Json(intent): Json<UploadIntent>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let actor = authenticated_actor(&state, &headers)?;
+    let actor = authenticated_actor(&state, &headers).await?;
     Ok((
         StatusCode::CREATED,
         Json(state.media.authorize(actor, intent, now_ms()?).await?),
@@ -1001,7 +1450,7 @@ async fn complete_upload(
     Path(id): Path<Uuid>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, ApiError> {
-    let actor = authenticated_actor(&state, &headers)?;
+    let actor = authenticated_actor(&state, &headers).await?;
     Ok((
         StatusCode::ACCEPTED,
         Json(state.media.complete(actor, id, now_ms()?).await?),
@@ -1040,35 +1489,166 @@ fn bearer_token(headers: &HeaderMap) -> Result<Option<&str>, ApiError> {
         .transpose()
 }
 
-fn authenticated_account(state: &AppState, headers: &HeaderMap) -> Result<Uuid, ApiError> {
+async fn authenticated_account(state: &AppState, headers: &HeaderMap) -> Result<Uuid, ApiError> {
     let token =
         bearer_token(headers)?.ok_or_else(|| ApiError::unauthorized("bearer token is required"))?;
+    if let Some(accounts) = &state.pg_accounts {
+        return accounts
+            .authenticate(token, now_ms()?)
+            .await
+            .map_err(|_| ApiError::unauthorized("invalid bearer token"));
+    }
     state
         .accounts
         .authenticate(token)
         .map_err(|_| ApiError::unauthorized("invalid bearer token"))
 }
 
-fn authenticated_actor(state: &AppState, headers: &HeaderMap) -> Result<Uuid, ApiError> {
-    let account = authenticated_account(state, headers)?;
+async fn authenticated_actor(state: &AppState, headers: &HeaderMap) -> Result<Uuid, ApiError> {
+    let account = authenticated_account(state, headers).await?;
     let profile = selected_profile(headers)?
         .ok_or_else(|| ApiError::unauthorized("x-tardy-profile-id is required"))?;
-    if !state.accounts.owns_profile(account, profile)? {
-        return Err(ApiError::forbidden("account does not own selected profile"));
+    if !account_can_act(state, account, profile).await? {
+        return Err(ApiError::forbidden(
+            "account cannot act as selected profile",
+        ));
     }
     Ok(profile)
 }
 
-fn optional_authenticated_actor(
+async fn optional_authenticated_actor(
     state: &AppState,
     headers: &HeaderMap,
 ) -> Result<Option<Uuid>, ApiError> {
     match (bearer_token(headers)?, selected_profile(headers)?) {
         (None, None) => Ok(None),
-        (Some(_), Some(_)) => authenticated_actor(state, headers).map(Some),
+        (Some(_), Some(_)) => authenticated_actor(state, headers).await.map(Some),
         _ => Err(ApiError::unauthorized(
             "both bearer token and x-tardy-profile-id are required",
         )),
+    }
+}
+
+async fn issue_human_claim(
+    state: &AppState,
+    at: u64,
+) -> Result<crate::onboarding::ClaimCode, ApiError> {
+    match &state.pg_accounts {
+        Some(store) => Ok(store.issue_human_claim(at).await?),
+        None => Ok(state.accounts.issue_claim(at)?),
+    }
+}
+async fn claim_human_account(
+    state: &AppState,
+    code: &str,
+    email: &str,
+    at: u64,
+) -> Result<crate::onboarding::ClaimedAccount, ApiError> {
+    match &state.pg_accounts {
+        Some(store) => Ok(store.claim_human(code, email, at).await?),
+        None => Ok(state.accounts.claim(code, email, at)?),
+    }
+}
+async fn register_tardy(state: &AppState, at: u64) -> Result<TemporaryTardyAccount, ApiError> {
+    match &state.pg_accounts {
+        Some(store) => Ok(store.register_tardy(at).await?),
+        None => Ok(state.accounts.register_tardy(at)?),
+    }
+}
+async fn claim_registered_tardy(
+    state: &AppState,
+    human: Uuid,
+    code: &str,
+    at: u64,
+) -> Result<Vec<Uuid>, ApiError> {
+    match &state.pg_accounts {
+        Some(store) => Ok(store.claim_tardy(human, code, at).await?),
+        None => Ok(state.accounts.claim_tardy(human, code, at)?),
+    }
+}
+async fn purge_accounts(state: &AppState, at: u64) -> Result<Vec<Uuid>, ApiError> {
+    match &state.pg_accounts {
+        Some(store) => Ok(store.purge_expired(at).await?),
+        None => Ok(state.accounts.purge_expired_tardies(at)?),
+    }
+}
+async fn bind_account_profile(
+    state: &AppState,
+    account: Uuid,
+    profile: Uuid,
+) -> Result<(), ApiError> {
+    match &state.pg_accounts {
+        Some(store) => Ok(store.bind_profile(account, profile).await?),
+        None => Ok(state.accounts.bind_profile(account, profile)?),
+    }
+}
+async fn account_owns_profile(
+    state: &AppState,
+    account: Uuid,
+    profile: Uuid,
+) -> Result<bool, ApiError> {
+    match &state.pg_accounts {
+        Some(store) => Ok(store.owns_profile(account, profile).await?),
+        None => Ok(state.accounts.owns_profile(account, profile)?),
+    }
+}
+async fn account_can_act(state: &AppState, account: Uuid, profile: Uuid) -> Result<bool, ApiError> {
+    match &state.pg_accounts {
+        Some(store) => Ok(store.can_act(account, profile).await?),
+        None => Ok(state.accounts.owns_profile(account, profile)?),
+    }
+}
+async fn account_is_temporary(state: &AppState, account: Uuid) -> Result<bool, ApiError> {
+    match &state.pg_accounts {
+        Some(store) => Ok(store.is_temporary(account).await?),
+        None => Ok(state.accounts.is_temporary(account)?),
+    }
+}
+async fn grant_account_consent(
+    state: &AppState,
+    account: Uuid,
+    provider: &str,
+    purpose: &str,
+    policy: &str,
+    at: u64,
+) -> Result<crate::onboarding::AiConsent, ApiError> {
+    match &state.pg_accounts {
+        Some(store) => Ok(store
+            .grant_consent(account, provider, purpose, policy, at)
+            .await?),
+        None => Ok(state
+            .accounts
+            .grant_ai_consent(account, provider, purpose, policy, at)?),
+    }
+}
+async fn revoke_account_consent(
+    state: &AppState,
+    account: Uuid,
+    provider: &str,
+    purpose: &str,
+    at: u64,
+) -> Result<(), ApiError> {
+    match &state.pg_accounts {
+        Some(store) => Ok(store.revoke_consent(account, provider, purpose, at).await?),
+        None => Ok(state
+            .accounts
+            .revoke_ai_consent(account, provider, purpose, at)?),
+    }
+}
+async fn has_account_consent(
+    state: &AppState,
+    account: Uuid,
+    provider: &str,
+    purpose: &str,
+    policy: &str,
+) -> Result<bool, ApiError> {
+    match &state.pg_accounts {
+        Some(store) => Ok(store
+            .has_consent(account, provider, purpose, policy)
+            .await?),
+        None => Ok(state
+            .accounts
+            .has_ai_consent(account, provider, purpose, policy)?),
     }
 }
 
@@ -1160,7 +1740,7 @@ fn now_ms() -> Result<u64, ApiError> {
 }
 
 #[derive(Debug)]
-struct ApiError {
+pub struct ApiError {
     status: StatusCode,
     message: String,
 }
@@ -1256,6 +1836,22 @@ impl From<OnboardingError> for ApiError {
     }
 }
 
+impl From<PgAccountError> for ApiError {
+    fn from(value: PgAccountError) -> Self {
+        match value {
+            PgAccountError::InvalidClaim => Self::not_found(value.to_string()),
+            PgAccountError::EmailConflict => Self {
+                status: StatusCode::CONFLICT,
+                message: value.to_string(),
+            },
+            PgAccountError::InvalidEmail => Self::bad_request(value.to_string()),
+            PgAccountError::Database(_) | PgAccountError::Timestamp => {
+                Self::internal(value.to_string())
+            }
+        }
+    }
+}
+
 impl From<MediaError> for ApiError {
     fn from(value: MediaError) -> Self {
         match value {
@@ -1345,6 +1941,37 @@ impl From<SubscriptionError> for ApiError {
                 Self::not_found("subscription not found")
             }
             SubscriptionError::Database(_) => Self::internal(value.to_string()),
+        }
+    }
+}
+
+impl From<SocialError> for ApiError {
+    fn from(value: SocialError) -> Self {
+        match value {
+            SocialError::Invalid(_) => Self::bad_request(value.to_string()),
+            SocialError::NotFound => Self::not_found(value.to_string()),
+            SocialError::Forbidden => Self::forbidden(value.to_string()),
+            SocialError::Database(sqlx::Error::RowNotFound) => {
+                Self::not_found("social resource not found")
+            }
+            SocialError::Database(_) => Self::internal(value.to_string()),
+        }
+    }
+}
+
+impl From<AudioError> for ApiError {
+    fn from(value: AudioError) -> Self {
+        match value {
+            AudioError::Invalid(_) => Self::bad_request(value.to_string()),
+            AudioError::NotFound => Self::not_found(value.to_string()),
+            AudioError::Forbidden | AudioError::RightsNotCleared => {
+                Self::forbidden(value.to_string())
+            }
+            AudioError::Database(sqlx::Error::RowNotFound) => {
+                Self::not_found("audio resource not found")
+            }
+            AudioError::RecognitionPolicy(_) => Self::internal(value.to_string()),
+            AudioError::Database(_) => Self::internal(value.to_string()),
         }
     }
 }
@@ -1680,7 +2307,7 @@ mod tests {
         .unwrap();
         assert!(text.contains("one-time code"));
         assert!(text.contains("default to private"));
-        assert!(text.contains("https://tardy.test/v1/onboarding/claims"));
+        assert!(text.contains("https://tardy.test/v1/onboarding/tardy-claims"));
     }
 
     #[tokio::test]

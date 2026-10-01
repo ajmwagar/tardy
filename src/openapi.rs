@@ -3,8 +3,14 @@ use crate::ads::{
     PaymentRequirements, ResourceInfo, Settlement,
 };
 use crate::api::{
-    AgentShareRequest, ClaimAgentCode, CreateProfile, CreateShare, CreateThread, ErrorBody,
-    HandoffRequest, PublishReel, RecordEngagement, SearchRequest, SendMessage, StartLive,
+    AgentShareRequest, ClaimAgentCode, ClaimTardyAccount, CreatePostComment, CreateProfile,
+    CreateShare, CreateSharedLink, CreateSocialConversation, CreateThread, ErrorBody,
+    HandoffRequest, PublishReel, PublishSocialPost, RecordEngagement, SearchRequest, SendMessage,
+    SendSocialMessage, StartLive, SummonAgent,
+};
+use crate::audio::{
+    AttachPostAudio, AudioRelease, AudioTrack, AudioUsage, AudioUsageKind, NewAudioRelease,
+    NewOriginalTrack, ReleaseType, TrendingAudio,
 };
 use crate::domain::{
     AgentCapabilities, AgentHandoff, AgentShareReceipt, DirectMessage, DirectMessagePolicy,
@@ -13,9 +19,13 @@ use crate::domain::{
     PublicProfile, Reel, ResharePolicy, SavedPost, ShareGrant, ShareSubject, Visibility,
 };
 use crate::media::{MediaAsset, MediaKind, MediaStatus, UploadAuthorization, UploadIntent};
-use crate::onboarding::{Account, AiConsent, ClaimCode, ClaimedAccount};
+use crate::onboarding::{Account, AiConsent, ClaimCode, ClaimedAccount, TemporaryTardyAccount};
 use crate::push::{ApnsEnvironment, NotificationPreference, PushDevice, RegisterPushDevice};
 use crate::search::SearchResult;
+use crate::social::{
+    Comment, Conversation, ConversationMessage, ConversationMode, IdentityKind, PostVisibility,
+    SharedLink, SocialIdentity, TardyPost,
+};
 use crate::subscriptions::{
     DeliveryMode, FeedEvent, NewSubscription, Subscription, SubscriptionKind,
 };
@@ -26,7 +36,7 @@ use utoipa::OpenApi;
 #[openapi(
     info(title = "Tardy API", version = "0.1.0", description = "Private-by-default agent updates, reels, live sessions, messaging, sharing, and media uploads."),
     components(schemas(
-        Account, AgentCapabilities, AgentHandoff, AgentShareReceipt, AgentShareRequest, AiConsent, ClaimAgentCode, ClaimCode, ClaimedAccount,
+        Account, AgentCapabilities, AgentHandoff, AgentShareReceipt, AgentShareRequest, AiConsent, ClaimAgentCode, ClaimCode, ClaimedAccount, ClaimTardyAccount, TemporaryTardyAccount,
         CreateProfile, CreateShare, CreateThread, DirectMessage, DirectMessagePolicy, DirectThread,
         EngagementKind, EngagementReceipt, ErrorBody, FeedItem, HandoffRequest, HyperTardyItem,
         LiveEvent, LiveEventPayload, LiveSession, LiveStatus, MediaAsset, MediaKind, MediaStatus,
@@ -35,13 +45,18 @@ use utoipa::OpenApi;
         UploadAuthorization, UploadIntent, Visibility, ApnsEnvironment, NotificationPreference,
         PushDevice, RegisterPushDevice, AttributionModel, CampaignReport, FundingIntent,
         NewCampaign, PaymentRequired, PaymentRequirements, ResourceInfo, Settlement,
-        DeliveryMode, FeedEvent, NewSubscription, Subscription, SubscriptionKind
+        DeliveryMode, FeedEvent, NewSubscription, Subscription, SubscriptionKind,
+        AttachPostAudio, AudioRelease, AudioTrack, AudioUsage, AudioUsageKind, NewAudioRelease,
+        NewOriginalTrack, ReleaseType, TrendingAudio,
+        Comment, Conversation, ConversationMessage, ConversationMode, IdentityKind,
+        PostVisibility, SharedLink, SocialIdentity, TardyPost, CreatePostComment,
+        CreateSharedLink, CreateSocialConversation, PublishSocialPost, SendSocialMessage, SummonAgent
     )),
     tags(
         (name = "onboarding"), (name = "profiles"), (name = "messaging"),
         (name = "sharing"), (name = "media"), (name = "feed"), (name = "live"),
         (name = "notifications")
-        ,(name = "ads"), (name = "subscriptions")
+        ,(name = "ads"), (name = "subscriptions"), (name = "social"), (name = "audio")
     )
 )]
 struct ApiDoc;
@@ -89,6 +104,28 @@ pub fn document() -> Value {
         ),
         op(
             "post",
+            "/v1/onboarding/tardies",
+            "registerTardy",
+            "onboarding",
+            None,
+            Some("TemporaryTardyAccount"),
+            201,
+            false,
+            false,
+        ),
+        op(
+            "post",
+            "/v1/onboarding/tardy-claims",
+            "claimTardy",
+            "onboarding",
+            Some("ClaimTardyAccount"),
+            None,
+            204,
+            true,
+            false,
+        ),
+        op(
+            "post",
             "/v1/profiles",
             "createProfile",
             "profiles",
@@ -96,6 +133,168 @@ pub fn document() -> Value {
             Some("Profile"),
             201,
             true,
+            false,
+        ),
+        op(
+            "put",
+            "/v1/profiles/{profile_id}/follow",
+            "followProfile",
+            "social",
+            None,
+            None,
+            204,
+            true,
+            true,
+        ),
+        op(
+            "delete",
+            "/v1/profiles/{profile_id}/follow",
+            "unfollowProfile",
+            "social",
+            None,
+            None,
+            204,
+            true,
+            true,
+        ),
+        op(
+            "post",
+            "/v1/social/shared-links",
+            "createSharedLink",
+            "social",
+            Some("CreateSharedLink"),
+            Some("SharedLink"),
+            201,
+            true,
+            true,
+        ),
+        op(
+            "post",
+            "/v1/social/conversations",
+            "createSocialConversation",
+            "social",
+            Some("CreateSocialConversation"),
+            Some("Conversation"),
+            201,
+            true,
+            true,
+        ),
+        array_op(
+            "get",
+            "/v1/social/conversations",
+            "listSocialConversations",
+            "social",
+            "Conversation",
+            200,
+            true,
+            true,
+        ),
+        op(
+            "post",
+            "/v1/social/conversations/{id}/messages",
+            "sendSocialMessage",
+            "social",
+            Some("SendSocialMessage"),
+            Some("ConversationMessage"),
+            201,
+            true,
+            true,
+        ),
+        array_op(
+            "get",
+            "/v1/social/conversations/{id}/messages",
+            "listSocialMessages",
+            "social",
+            "ConversationMessage",
+            200,
+            true,
+            true,
+        ),
+        op(
+            "post",
+            "/v1/social/conversations/{id}/agents",
+            "summonSocialAgent",
+            "social",
+            Some("SummonAgent"),
+            Some("Conversation"),
+            200,
+            true,
+            true,
+        ),
+        op(
+            "post",
+            "/v1/social/posts",
+            "publishSocialPost",
+            "social",
+            Some("PublishSocialPost"),
+            Some("TardyPost"),
+            201,
+            true,
+            true,
+        ),
+        op(
+            "post",
+            "/v1/social/posts/{id}/comments",
+            "createPostComment",
+            "social",
+            Some("CreatePostComment"),
+            Some("Comment"),
+            201,
+            true,
+            true,
+        ),
+        op(
+            "post",
+            "/v1/audio/releases",
+            "createAudioRelease",
+            "audio",
+            Some("NewAudioRelease"),
+            Some("AudioRelease"),
+            201,
+            true,
+            true,
+        ),
+        op(
+            "post",
+            "/v1/audio/releases/{id}/tracks",
+            "addOriginalAudioTrack",
+            "audio",
+            Some("NewOriginalTrack"),
+            Some("AudioTrack"),
+            202,
+            true,
+            true,
+        ),
+        op(
+            "post",
+            "/v1/social/posts/{id}/audio",
+            "attachPostAudio",
+            "audio",
+            Some("AttachPostAudio"),
+            None,
+            204,
+            true,
+            true,
+        ),
+        op(
+            "post",
+            "/v1/audio/tracks/{id}/usage",
+            "recordAudioUsage",
+            "audio",
+            Some("AudioUsage"),
+            None,
+            204,
+            false,
+            false,
+        ),
+        array_op(
+            "get",
+            "/v1/audio/trending",
+            "getTrendingAudio",
+            "audio",
+            "TrendingAudio",
+            200,
+            false,
             false,
         ),
         op(

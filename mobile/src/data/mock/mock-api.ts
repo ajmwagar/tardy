@@ -12,6 +12,7 @@ import {
   type PushDecision,
 } from '@/notifications/preferences';
 import { soundScore, type PlayKind } from '@/audio/plays';
+import { applyReaction, type ReactionKind } from '@/reactions/reactions';
 import { autopayCovers, limitMessage, PLANS, type PlanId } from '@/membership/plans';
 import { canonicalUrl, linkProvider, youtubeId } from '@/share/links';
 import { searchRanked } from '@/share/search';
@@ -523,7 +524,7 @@ export class MockTardyApi implements TardyApi {
       ...(linkId !== undefined && { sharedLinkId: linkId }),
     };
     this.messageLog.push(message);
-    this.scheduleAgentReply(threadId);
+    this.scheduleAgentReply(threadId, message.id);
     return this.delay(message);
   }
 
@@ -777,18 +778,22 @@ export class MockTardyApi implements TardyApi {
    * Mock only: agents answer DMs a moment later with a status-flavored reply, so the thread
    * screen's polling has something to pick up. The real server relays the agent's own message.
    */
-  private scheduleAgentReply(threadId: string) {
+  private scheduleAgentReply(threadId: string, requestId: string) {
     const thread = this.threadList.find((t) => t.id === threadId);
     const other = thread?.participantIds.find((id) => id !== this.viewerId && this.accountsById.get(id)?.kind === 'agent');
     if (!other || this.accountsById.get(other)?.kind !== 'agent') return;
     const replies = [
-      'On it. I will post an update when it ships.',
-      'Copy. Running the tests now.',
-      'Good call. Opening a PR for that.',
+      'Feed service flag is flipped for staging.',
+      'Tests are green. Opening a PR for that.',
+      'Done: the ranker reads the new weights now.',
       'Blocked on review, can you take a look?',
     ];
     const count = this.messageLog.filter((m) => m.threadId === threadId).length;
+    // The agent picks the request up right away (👀 on your message), then marks it done (✅)
+    // as it replies: status on your own message instead of "On it." filler.
+    setTimeout(() => this.setReaction(requestId, other, 'seen'), 400);
     setTimeout(() => {
+      this.setReaction(requestId, other, 'done');
       this.messageLog.push({
         id: `${threadId}-m${this.messageLog.length}`,
         threadId,
@@ -797,6 +802,32 @@ export class MockTardyApi implements TardyApi {
         createdAt: new Date().toISOString(),
       });
     }, 1500);
+  }
+
+  /** Applies one account's tap-back to a message in the log; a no-op if the message is gone. */
+  private setReaction(messageId: string, accountId: string, kind: ReactionKind | null) {
+    const i = this.messageLog.findIndex((m) => m.id === messageId);
+    if (i < 0) return;
+    const reactions = applyReaction(this.messageLog[i].reactions, accountId, kind);
+    const { reactions: _old, ...rest } = this.messageLog[i];
+    this.messageLog[i] = reactions.length > 0 ? { ...rest, reactions } : rest;
+  }
+
+  async reactToMessage(threadId: string, messageId: string, kind: ReactionKind | null) {
+    this.visibleThread(threadId);
+    const message = this.messageLog.find((m) => m.id === messageId && m.threadId === threadId) ?? notFound(`message ${messageId} in ${threadId}`);
+    this.setReaction(message.id, this.viewerId, kind);
+    return this.delay(this.presentMessage(this.messageLog.find((m) => m.id === messageId)!));
+  }
+
+  async reactToComment(postId: string, commentId: string, kind: ReactionKind | null) {
+    this.visiblePost(postId);
+    const i = this.commentLog.findIndex((c) => c.id === commentId && c.postId === postId);
+    if (i < 0) notFound(`comment ${commentId} on ${postId}`);
+    const reactions = applyReaction(this.commentLog[i].reactions, this.viewerId, kind);
+    const { reactions: _old, ...rest } = this.commentLog[i];
+    this.commentLog[i] = reactions.length > 0 ? { ...rest, reactions } : rest;
+    return this.delay(this.commentLog[i]);
   }
 
   async notifications() {

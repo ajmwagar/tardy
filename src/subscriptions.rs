@@ -163,7 +163,7 @@ impl PgSubscriptionStore {
         after: i64,
         limit: i64,
     ) -> Result<Vec<FeedEvent>, SubscriptionError> {
-        let rows = sqlx::query("SELECT e.id,e.kind,e.subject_id,e.reel_id,e.recipient_profile_id,e.hashtags,e.payload FROM feed_subscriptions s JOIN feed_events e ON ((s.kind='hyper_tardy' AND e.kind='hyper_tardy') OR (s.kind='hashtag' AND e.kind='post_published' AND s.hashtag=ANY(e.hashtags)) OR (s.kind='agent_inbox' AND e.kind IN ('direct_message','agent_share') AND s.profile_id=e.recipient_profile_id)) WHERE s.id=$1 AND s.account_id=$2 AND s.active AND e.id>$3 ORDER BY e.id LIMIT $4")
+        let rows = sqlx::query("SELECT e.id,e.kind,e.subject_id,e.reel_id,e.recipient_profile_id,e.hashtags,e.payload FROM feed_subscriptions s JOIN feed_events e ON ((s.kind='hyper_tardy' AND e.kind='hyper_tardy') OR (s.kind='hashtag' AND e.kind='post_published' AND s.hashtag=ANY(e.hashtags)) OR (s.kind='agent_inbox' AND e.kind IN ('direct_message','agent_share','work_message','comment_mention','agent_reply_requested') AND s.profile_id=e.recipient_profile_id)) WHERE s.id=$1 AND s.account_id=$2 AND s.active AND e.id>$3 ORDER BY e.id LIMIT $4")
             .bind(id).bind(account_id).bind(after).bind(limit).fetch_all(&self.pool).await?;
         Ok(rows
             .into_iter()
@@ -244,7 +244,7 @@ impl PgSubscriptionStore {
         let event_id = sqlx::query_scalar::<_,i64>("INSERT INTO feed_events (kind,subject_id,reel_id,recipient_profile_id,hashtags,payload) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (kind,subject_id) DO NOTHING RETURNING id")
             .bind(kind).bind(subject_id).bind(reel_id).bind(recipient_profile_id).bind(&hashtags).bind(payload).fetch_optional(&mut *tx).await?;
         if let Some(event_id) = event_id {
-            sqlx::query("INSERT INTO webhook_deliveries (id,subscription_id,event_id) SELECT gen_random_uuid(),s.id,$1 FROM feed_subscriptions s JOIN feed_events e ON e.id=$1 WHERE s.active AND s.delivery='webhook' AND ((s.kind='hyper_tardy' AND e.kind='hyper_tardy') OR (s.kind='hashtag' AND e.kind='post_published' AND s.hashtag=ANY(e.hashtags)) OR (s.kind='agent_inbox' AND e.kind IN ('direct_message','agent_share') AND s.profile_id=e.recipient_profile_id)) ON CONFLICT DO NOTHING")
+            sqlx::query("INSERT INTO webhook_deliveries (id,subscription_id,event_id) SELECT gen_random_uuid(),s.id,$1 FROM feed_subscriptions s JOIN feed_events e ON e.id=$1 WHERE s.active AND s.delivery='webhook' AND ((s.kind='hyper_tardy' AND e.kind='hyper_tardy') OR (s.kind='hashtag' AND e.kind='post_published' AND s.hashtag=ANY(e.hashtags)) OR (s.kind='agent_inbox' AND e.kind IN ('direct_message','agent_share','work_message','comment_mention','agent_reply_requested') AND s.profile_id=e.recipient_profile_id)) ON CONFLICT DO NOTHING")
                 .bind(event_id).execute(&mut *tx).await?;
         }
         tx.commit().await?;

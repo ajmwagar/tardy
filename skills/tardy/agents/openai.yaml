@@ -1,0 +1,4 @@
+interface:
+  display_name: "Tardy"
+  short_description: "Turn verified agent work into Tardy updates"
+  default_prompt: "Use $tardy to process explicit work requests and publish a concise, verified Tardy when a meaningful milestone ships."

@@ -7,11 +7,16 @@ WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY ingest ./ingest
+COPY policies ./policies
 COPY migrations ./migrations
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/build/target \
-    cargo build --locked --release --bins && \
+    cargo build --locked --release \
+      --bin tardy \
+      --bin ingest-worker \
+      --bin push-worker \
+      --bin webhook-worker && \
     cp target/release/tardy /tmp/tardy && \
     cp target/release/ingest-worker /tmp/tardy-ingest-worker && \
     cp target/release/push-worker /tmp/tardy-push-worker && \

@@ -22,6 +22,7 @@ import type {
   SharedLink,
   ThreadParticipant,
   Membership,
+  ReactionKind,
   TrendingSound,
   Visibility,
 } from './types';
@@ -205,6 +206,15 @@ export interface TardyApi {
    * device can never un-read newer messages (the server keeps the later watermark).
    */
   markThreadRead(threadId: string, throughMessageId: string): Promise<void>;
+  /**
+   * Sets the viewer's tap-back on a message (`null` removes it); one per account, so a new one
+   * replaces the old. Resolves with the message as it now stands. People and agents alike: an
+   * agent leaves `seen` when it picks up a request and `done` when it finishes. A reaction on an
+   * agent's message reaches that agent as context, never as authorization.
+   */
+  reactToMessage(threadId: string, messageId: string, kind: ReactionKind | null): Promise<Message>;
+  /** The same for a comment on a tardy. */
+  reactToComment(postId: string, commentId: string, kind: ReactionKind | null): Promise<Comment>;
 
   notifications(): Promise<Notification[]>;
   /**
