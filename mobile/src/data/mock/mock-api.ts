@@ -11,6 +11,7 @@ import {
   withOverride,
   type PushDecision,
 } from '@/notifications/preferences';
+import { autopayCovers, limitMessage, PLANS, type PlanId } from '@/membership/plans';
 import { canonicalUrl, linkProvider, youtubeId } from '@/share/links';
 import { searchRanked } from '@/share/search';
 import { threadKind } from '@/share/sections';
@@ -30,7 +31,10 @@ import type {
   ProjectMembership,
   PushTokenRegistration,
   SignedIn,
+  AutopayMandate,
+  Membership,
   MessageAttachment,
+  PaymentRail,
   SharedLink,
   ThreadParticipant,
   ThreadRef,
@@ -74,6 +78,10 @@ function forbidden(what: string): never {
   throw new TardyApiError('forbidden', `Not allowed: ${what}`);
 }
 
+const DAY_MS = 86_400_000;
+/** The managed agent the Free demo runs: opus.backend stands in for it. */
+const MOCK_DEMO_AGENT = 'a-opus-be';
+
 /** How long mock enrichment takes to go from queued to ready. */
 const MOCK_ENRICH_MS = 1500;
 
@@ -90,6 +98,8 @@ export type MockTardyApiOptions = {
   viewerId?: string | null;
   /** Where the mock server keeps sessions and onboarding across relaunches. */
   persistence?: MockPersistence;
+  /** The viewer's plan. Defaults to Builder, paid by card, so the fixture agents fit. */
+  plan?: PlanId;
   /** Accounts the viewer follows. Defaults to the fixture follow graph. */
   following?: Iterable<string>;
   memberships?: readonly ProjectMembership[];
@@ -149,7 +159,13 @@ export class MockTardyApi implements TardyApi {
     memberships = MEMBERSHIPS,
     latencyMs = LATENCY_MS,
     persistence,
+    plan = 'builder',
   }: MockTardyApiOptions = {}) {
+    this.plan = plan;
+    if (plan !== 'free') {
+      this.paidThrough = Date.now() + 12 * DAY_MS;
+      this.paidWith = 'stripe';
+    }
     this.auth = new MockAuthServer(persistence, viewerId);
     this.latencyMs = latencyMs;
     this.following = new Set(following);
@@ -591,6 +607,76 @@ export class MockTardyApi implements TardyApi {
   }
 
   private avatarRolls = 0;
+  // Membership (one viewer's worth: the mock's billing is per instance).
+  private plan: PlanId;
+  private paidThrough?: number;
+  private paidWith?: PaymentRail;
+  private autopay: AutopayMandate | null = null;
+  private demoEndsAt?: number;
+
+  private membershipNow(): Membership {
+    const owned = [...this.accountsById.values()].filter((a) => a.kind === 'agent' && this.ownsAgent(a));
+    const demo: Membership['demo'] =
+      this.demoEndsAt === undefined
+        ? { status: 'available' }
+        : this.demoEndsAt > Date.now()
+          ? { status: 'running', agentId: MOCK_DEMO_AGENT, endsAt: new Date(this.demoEndsAt).toISOString() }
+          : { status: 'used' };
+    return {
+      plan: this.plan,
+      ...(this.paidThrough !== undefined && { paidThrough: new Date(this.paidThrough).toISOString() }),
+      ...(this.paidWith && { paidWith: this.paidWith }),
+      usage: {
+        managed: owned.filter((a) => a.hosting === 'managed').length,
+        connected: owned.filter((a) => a.hosting !== 'managed').length,
+      },
+      demo: this.plan === 'free' ? demo : { status: 'used' },
+      autopay: this.autopay,
+    };
+  }
+
+  async membership() {
+    this.signedIn();
+    return this.delay(this.membershipNow());
+  }
+
+  async approveAutopay({ plan, payerAgentId, maxCentsPerMonth }: { plan: PlanId; payerAgentId: string; maxCentsPerMonth: number }) {
+    this.signedIn();
+    const agent = this.visibleAccount(payerAgentId, `agent ${payerAgentId}`);
+    if (agent.kind !== 'agent' || !agent.ownedByViewer) forbidden(`agent ${payerAgentId} (not yours)`);
+    if (plan === 'free') throw new TardyApiError('invalid', 'Free has nothing to pay for.');
+    if (maxCentsPerMonth < PLANS[plan].monthlyCents) throw new TardyApiError('invalid', `The cap must cover ${PLANS[plan].name}.`);
+    this.autopay = { plan, payerAgentId, maxCentsPerMonth, approvedAt: new Date().toISOString() };
+    return this.delay(this.membershipNow());
+  }
+
+  async revokeAutopay() {
+    this.signedIn();
+    this.autopay = null;
+    return this.delay(this.membershipNow());
+  }
+
+  async startManagedDemo() {
+    this.signedIn();
+    if (this.plan !== 'free') throw new TardyApiError('invalid', 'The demo is for Free plans.');
+    if (this.demoEndsAt !== undefined) throw new TardyApiError('invalid', 'The demo is one per account.');
+    this.demoEndsAt = Date.now() + (PLANS.free.demoHours ?? 0) * 3_600_000;
+    return this.delay(this.membershipNow());
+  }
+
+  /**
+   * DEV ONLY: what the agent's cron does on renewal day, minus the wallet: pay by x402 within
+   * the approval. Refuses without one, exactly as the server does.
+   */
+  async simulateAutopayRun(): Promise<Membership> {
+    const m = this.autopay;
+    if (!m) throw new TardyApiError('forbidden', 'No auto-pay approval: the agent must not pay.');
+    if (!autopayCovers(m, { plan: m.plan, payerAgentId: m.payerAgentId, cents: PLANS[m.plan].monthlyCents })) forbidden('charge over the approved cap');
+    this.plan = m.plan;
+    this.paidThrough = Math.max(this.paidThrough ?? 0, Date.now()) + 30 * DAY_MS;
+    this.paidWith = 'x402';
+    return this.delay(this.membershipNow());
+  }
 
   async generateAvatar() {
     const me = this.visibleAccount(this.viewerId);
@@ -602,6 +688,10 @@ export class MockTardyApi implements TardyApi {
   async claimAgent(code: string) {
     this.signedIn();
     if (code.trim().toUpperCase() !== MOCK_AGENT_CLAIM_CODE) throw new TardyApiError('invalid', 'That code is wrong or expired. Codes last 72 hours.');
+    const m = this.membershipNow();
+    const hosting = this.accountsById.get(MOCK_CLAIMABLE_AGENT)?.hosting ?? 'connected';
+    const full = limitMessage(PLANS[m.plan], m.usage, hosting, m.demo.status === 'running');
+    if (full) throw new TardyApiError('forbidden', full);
     this.claimedAgents.add(MOCK_CLAIMABLE_AGENT);
     return this.delay(undefined);
   }

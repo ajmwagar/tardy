@@ -1,4 +1,5 @@
 import { NOTIFICATION_KINDS } from '@/notifications/preferences';
+import type { PlanId } from '@/membership/plans';
 import { parseTardyUrl } from '@/share/links';
 
 import type {
@@ -19,6 +20,8 @@ import type {
   ProjectRole,
   Session,
   SharedLink,
+  AutopayMandate,
+  Membership,
   SharedPostRef,
   SignedIn,
   Story,
@@ -90,6 +93,7 @@ export const account: Decoder<Account> = object<Account>({
   visibility: optional(oneOf(VISIBILITIES)),
   viewerRole: optional(oneOf(PROJECT_ROLES)),
   ownedByViewer: optional(boolean),
+  hosting: optional(oneOf(['managed', 'connected'] as const)),
 });
 
 const media: Decoder<MediaItem> = tagged<MediaItem>('type', {
@@ -218,6 +222,35 @@ export const conversation: Decoder<ThreadRef & { lastMessage?: Message; unreadCo
   kind: wire('mode', oneOf(MODES)),
   lastMessage: optional(message),
   unreadCount: optional(integer),
+});
+
+const PLAN_IDS = allOf<PlanId>()(['free', 'builder', 'studio']);
+
+const mandate: Decoder<AutopayMandate> = object<AutopayMandate>({
+  plan: oneOf(PLAN_IDS),
+  payerAgentId: string,
+  maxCentsPerMonth: integer,
+  approvedAt: wire('approved_at', isoTime),
+});
+
+const demo: Decoder<Membership['demo']> = tagged<Membership['demo']>('status', {
+  available: object<Extract<Membership['demo'], { status: 'available' }>>({ status: oneOf(['available']) }),
+  running: object<Extract<Membership['demo'], { status: 'running' }>>({
+    status: oneOf(['running']),
+    agentId: string,
+    endsAt: wire('ends_at', isoTime),
+  }),
+  used: object<Extract<Membership['demo'], { status: 'used' }>>({ status: oneOf(['used']) }),
+});
+
+/** `GET /v1/membership` (proposed). */
+export const membership: Decoder<Membership> = object<Membership>({
+  plan: oneOf(PLAN_IDS),
+  paidThrough: wire('paid_through', optional(isoTime)),
+  paidWith: optional(oneOf(['stripe', 'x402'] as const)),
+  usage: object<Membership['usage']>({ managed: integer, connected: integer }),
+  demo,
+  autopay: nullable(mandate),
 });
 
 export const sharedLink: Decoder<SharedLink> = object<SharedLink>({

@@ -69,6 +69,17 @@ export default function SettingsScreen() {
         )}
       </Section>
 
+      <Section title="Membership">
+        <PressableScale style={styles.row} scaleTo={0.98} onPress={() => void openWebCheckout('membership')} accessibilityRole="button">
+          <Icon name="person.2.badge.gearshape" size={20} color={colors.text} />
+          <View style={styles.grow}>
+            <Text style={styles.rowTitle}>Plan and payment</Text>
+            <Text style={type.secondary}>Opens your membership on the Tardy website.</Text>
+          </View>
+          <Icon name="arrow.up.right" size={14} color={colors.textSecondary} weight="bold" />
+        </PressableScale>
+      </Section>
+
       <Section title="Agents">
         <PressableScale style={styles.row} scaleTo={0.98} onPress={() => router.push('/claim-agent')} accessibilityRole="button">
           <Icon name="person.crop.circle.badge.checkmark" size={20} color={colors.text} />

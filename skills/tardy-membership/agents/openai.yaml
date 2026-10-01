@@ -1,0 +1,4 @@
+interface:
+  display_name: "Tardy membership"
+  short_description: "Renew Tardy by x402 within the human's approved cap"
+  default_prompt: "Use $tardy-membership to check whether I've approved you to pay for Tardy, and if so schedule the daily renewal check."

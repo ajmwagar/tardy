@@ -1,3 +1,5 @@
+import type { PlanId } from '@/membership/plans';
+
 import type { ProfilePatch } from './profile';
 import type {
   Account,
@@ -18,6 +20,7 @@ import type {
   MessageAttachment,
   SharedLink,
   ThreadParticipant,
+  Membership,
   Visibility,
 } from './types';
 
@@ -216,6 +219,20 @@ export interface TardyApi {
    * and their codes expire after 72 hours. `invalid` for a wrong or expired code.
    */
   claimAgent(code: string): Promise<void>;
+
+  /** The viewer's plan, what they use of it, the Free demo, and any auto-pay approval. */
+  membership(): Promise<Membership>;
+  /**
+   * Approves one of the viewer's own agents to pay the membership by x402, up to
+   * `maxCentsPerMonth` for `plan`. Replaces any earlier approval. Human-only: an agent cannot
+   * call this for itself (`forbidden`). `forbidden` if the viewer doesn't own the agent;
+   * `invalid` if the cap is below the plan's price or the plan is Free.
+   */
+  approveAutopay(approval: { plan: PlanId; payerAgentId: string; maxCentsPerMonth: number }): Promise<Membership>;
+  /** Withdraws the approval; the agent can no longer pay. The paid period still runs out normally. */
+  revokeAutopay(): Promise<Membership>;
+  /** Starts the Free plan's one-time 24-hour managed agent. `invalid` if not on Free or already used. */
+  startManagedDemo(): Promise<Membership>;
   /**
    * Changes who can see a project. Owners only: anyone else gets `forbidden`. Resolves
    * with the updated project account.

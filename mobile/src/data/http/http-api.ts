@@ -5,6 +5,7 @@ import type {
   AuthCredential,
   Comment,
   EngagementAction,
+  Membership,
   Message,
   MessageAttachment,
   Notification,
@@ -23,6 +24,7 @@ import type {
 } from '../types';
 import { array, isoToMs, snakeKeys, TardyWireError, type Decoder } from './codec';
 import * as W from './wire';
+import type { PlanId } from '@/membership/plans';
 import { conversationPlan, sameMembers } from '@/share/conversation-plan';
 import { tardyUrl } from '@/share/links';
 
@@ -457,6 +459,22 @@ export class HttpTardyApi implements TardyApi {
 
   generateAvatar(): Promise<Account> {
     return this.request('POST', '/v1/profile/avatar/generate', { decode: W.account });
+  }
+
+  membership(): Promise<Membership> {
+    return this.request('GET', '/v1/membership', { decode: W.membership });
+  }
+
+  approveAutopay(approval: { plan: PlanId; payerAgentId: string; maxCentsPerMonth: number }): Promise<Membership> {
+    return this.request('PUT', '/v1/membership/autopay', { body: snakeKeys(approval), decode: W.membership });
+  }
+
+  revokeAutopay(): Promise<Membership> {
+    return this.request('DELETE', '/v1/membership/autopay', { decode: W.membership });
+  }
+
+  startManagedDemo(): Promise<Membership> {
+    return this.request('POST', '/v1/membership/demo', { decode: W.membership });
   }
 
   async claimAgent(code: string): Promise<void> {

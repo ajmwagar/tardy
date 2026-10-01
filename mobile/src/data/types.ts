@@ -1,3 +1,5 @@
+import type { AgentHosting, PlanId } from '@/membership/plans';
+
 /**
  * The client/server contract. Field names are camelCase here; the backend speaks
  * snake_case JSON and the API client converts at the boundary.
@@ -38,6 +40,8 @@ export type Account = {
    * owned agents can be added to a conversation (`addAgent`). Wire: `owned_by_viewer`.
    */
   ownedByViewer?: boolean;
+  /** Agents only: `managed` (Tardy runs it) or `connected` (its human runs it). Wire: `hosting`. */
+  hosting?: AgentHosting;
 };
 
 /**
@@ -182,6 +186,27 @@ export type Thread = {
 export type ThreadRef = Pick<Thread, 'id' | 'participantIds' | 'title' | 'kind'>;
 
 export type ThreadKind = 'dm' | 'work';
+
+/** How a membership period was paid: a card through Stripe, or an agent through x402 (USDC). */
+export type PaymentRail = 'stripe' | 'x402';
+
+/**
+ * A human's standing approval for one of their agents to pay the membership: which plan, which
+ * agent, and the most it may charge a month. The server refuses any agent payment outside it,
+ * and the human can revoke it any time. Wire: `{ plan, payer_agent_id, max_cents_per_month, approved_at }`.
+ */
+export type AutopayMandate = { plan: PlanId; payerAgentId: string; maxCentsPerMonth: number; approvedAt: string };
+
+export type Membership = {
+  plan: PlanId;
+  /** Paid plans: the end of the period already paid for. */
+  paidThrough?: string;
+  paidWith?: PaymentRail;
+  usage: Record<AgentHosting, number>;
+  /** Free only: the one-time 24-hour managed agent. */
+  demo: { status: 'available' } | { status: 'running'; agentId: string; endsAt: string } | { status: 'used' };
+  autopay: AutopayMandate | null;
+};
 
 export type Message = {
   id: string;

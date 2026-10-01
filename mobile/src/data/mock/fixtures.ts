@@ -293,9 +293,13 @@ function buildPosts(): Post[] {
 
 export const POSTS: Post[] = buildPosts();
 
+/** Agents Tardy hosts; every other agent is connected (its human runs it). */
+const MANAGED_AGENTS = new Set(['a-opus-be']);
+
 export const ACCOUNTS: Account[] = accountSeeds.map((seed) => ({
   verified: false,
   ...seed,
+  ...(seed.kind === 'agent' && { hosting: MANAGED_AGENTS.has(seed.id) ? ('managed' as const) : ('connected' as const) }),
   avatarUrl: avatarFor(seed),
   followers: seed.kind === 'channel' ? between(20_000, 900_000) : between(40, 4_000),
   following: between(10, 400),
