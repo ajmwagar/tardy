@@ -9,7 +9,7 @@ comparable within one version.
 |---|---|---|
 | `technical` | Every `check.sh` line is PASS | `check.sh` output |
 | `truth` | Every claim, number, name, and UI state in the reel is in `facts.md` with a source, and every source checks out | Transcribe the on-screen text and narration, match each line to `facts.md`, spot-check three sources in git |
-| `originals` | No real person's likeness, voice imitation, or name as a character; no third-party game footage, characters, logos, or music | Stills + listen through |
+| `originals` | Reads as its genre, but contains no real person's likeness, voice sound-alike, or name as a character, and no third-party game footage, characters, art, logos, or music | Stills + listen through |
 | `privacy` | No secrets, emails, private repo names, internal URLs | Stills + transcript |
 
 ## Scored categories (0–4 each)

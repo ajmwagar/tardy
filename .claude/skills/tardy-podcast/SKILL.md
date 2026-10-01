@@ -20,7 +20,8 @@ needs room for three exchanges. If it can't hold attention for 30s, it's an Expl
 ## The script
 
 - Two **original** hosts with names, two distinct Kokoro voices, and a consistent seat each
-  (left/right). Never a real podcaster's name, voice, or show format by name.
+  (left/right). Look and sound like a real podcast clip (mics, headphones, waveform, crosstalk);
+  never a real podcaster's name, voice, or show.
 - Three exchanges: **claim** (believer states the change), **objection** (skeptic raises the real
   cost, from the PR or its review comments), **resolution** (the fact that settles it, from `facts.md`).
 - Every technical claim either host makes is in `facts.md`. The bickering can be invented; the

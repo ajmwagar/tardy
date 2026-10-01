@@ -19,11 +19,14 @@ Duration **20–35s** (`check.sh <run> 20 35`). Past brag's cap because it's a l
 
 ## Layout
 
-- **Top half:** two **original** cartoon hosts (flat, tardy palette, made for this reel or reused
-  from earlier tardy reels), karaoke captions between them. Never existing cartoon characters or
-  their voices.
-- **Bottom half:** gameplay, **generated in the composition**: an endless runner, a parkour block
-  course, or a driving loop built in HTML/canvas/three.js. No captured footage from any real game.
+- **Top half:** two cartoon hosts in the classic brainrot setup (a clueless big guy and a scheming
+  small one bickering over the recap), drawn fresh in flat tardy-palette style, with their own names
+  and Kokoro voices. Karaoke captions between them. The setup is the genre; the character designs
+  and voices are ours.
+- **Bottom half:** gameplay that looks like the real thing at a glance, **generated in the
+  composition** (HTML/canvas/three.js): a three-lane runner over train roofs, a first-person block
+  parkour course, or a third-person city driving loop. Genre-accurate camera, speed, and HUD; our own
+  character, world art, and no game's name or logo.
   The world is themed on the repo: jump over commit hashes, dodge red CI blocks, collect PR coins.
 - Divider in Tardy yellow.
 
@@ -39,5 +42,6 @@ Duration **20–35s** (`check.sh <run> 20 35`). Past brag's cap because it's a l
 ## Grade on (type criteria for the rubric)
 
 - Every item is a real, sourced event; a viewer could reconstruct the sprint from the captions.
-- Gameplay and hosts are original; nothing resembles a specific game or show.
+- Reads as brainrot in one glance; nothing is lifted from a specific game or show (none of its
+  characters, art, names, logos, or voices).
 - Readable at speed: each item's caption holds at least 0.3s per word.

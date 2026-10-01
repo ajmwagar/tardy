@@ -15,8 +15,8 @@ is only what differs for launches.
 ```
 
 Duration **15–25s** (brag's window; `check.sh <run> 15 25`). `--voice` is optional; trailer cards
-alone work, and the narrator, if used, is a generic deep trailer voice, never an imitation of a
-real actor.
+alone work, and the narrator, if used, is the classic deep, gravelly trailer voice: slow, every phrase a
+pronouncement. The archetype, not any real actor.
 
 ## Beats
 

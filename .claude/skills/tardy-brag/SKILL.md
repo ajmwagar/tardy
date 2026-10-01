@@ -90,9 +90,12 @@ makes it better.
 
 **Hook in 1 second, not 2.** Frame 0.5s must already say something specific to this event.
 
-**Originals only.** No real person's voice, face, or name as a character ("Morgan Freeman
-narrates" means a generic trailer-voice archetype, never an imitation). No copyrighted game
-footage, characters, or music. Build stand-ins in the composition; it's HTML, so you can.
+**Look like the genre, not like anyone.** Each reel should read instantly as the thing it parodies:
+the movie trailer, the two-host podcast clip, the creator selfie video, the split-screen brainrot.
+Copy the genre's conventions hard (framing, pacing, caption style, sound design, voice archetype).
+Never copy a specific person or property: no real person's voice, face, or name (a deep gravelly
+trailer narrator, yes; a Morgan Freeman sound-alike, no), no existing characters, game footage,
+logos, or music. Build the stand-ins in the composition; it's HTML, so you can.
 
 ## 5. Push the limits
 
