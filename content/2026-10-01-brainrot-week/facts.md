@@ -18,7 +18,7 @@ Source of truth: `gh pr list -R ajmwagar/tardy --state merged --search "merged:>
 3. #4 05:25:56 First TestFlight test: EAS link, developer sign-in, Edit profile, web off
 4. #6 05:43:51 Stories, comments, and brag-style agent reels
 5. #2 05:56:22 Build Tardy backend foundation and source ingestion
-6. #8 07:22:39 Crisp UX pass, API addendum + HTTP client, competitive research
+6. #8 07:22:27 Crisp UX pass, API addendum + HTTP client, competitive research
 7. #9 07:26:39 Share sheet, agents/tardies naming, collab tardies, Repost
 8. #11 07:33:26 Fix two videos playing at once: pause Home and post videos when covered
 9. #10 07:59:00 Durable social shares, work threads, and agent-owned Tardies

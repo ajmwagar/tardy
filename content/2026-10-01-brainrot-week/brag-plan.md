@@ -57,7 +57,18 @@ the trimmed voice clips; see `composition/index.html` `LINES`.
 
 brag's `happy-beats-business-moves-vol-9` (114.8 BPM) as the bed, ducked to ~0.14 under the voices.
 Coins on `bong`, the crash on a heavy soft impact plus an error blip, the finale on a bell.
-Music license: brag's README says to verify the ende.app terms before redistributing.
+Music license: CC BY 4.0, Sascha Ende (same series as the app's bundled reels; see
+`mobile/assets/reels/CREDITS.txt`). Credited in `share-copy.txt`.
+
+## Revision 1 (after grade: revise, 68.75)
+
+- Proof: the real brainrot reel #6 shipped plays in a phone card (11.6–14.6s); PR #11's real fix
+  diff shows after "Bonk" (21.6–23.6s).
+- Combo titles only the three PRs Chonk names, each while he says it.
+- Readable "BUG: 2 videos playing at once" callout (19.35–21.45s).
+- Loudness normalized to -14 LUFS at the poster bake.
+- Captions kept full width: the app's action rail is bottom-anchored (from about y=1000), so the
+  top-half captions never sit under it; the skill's safe-zone wording was corrected.
 
 ## Share caption
 

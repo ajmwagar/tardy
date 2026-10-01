@@ -84,7 +84,8 @@ real diff lines from the PR count as "the thing" too.
 the caption block and tab bar at the bottom, and the action rail on the right (`styles.rail`,
 `styles.info` in `mobile/src/app/(tabs)/reels.tsx`; the info block stops 70pt from the right edge,
 about 190px at 1080 wide). Read that file for the current layout, then keep key text out of those
-zones; as of this writing roughly the top 220px, the bottom 480px, and the right 190px. Anything a
+zones. As of this writing, on a 1080×1920 reel: the top 220px, the bottom 480px, and the right 190px
+from about y=1000 down (the rail is bottom-anchored, so text above it may use the full width). Anything a
 viewer must read must survive autoplay on mute: on-screen text or captions carry the story, sound
 makes it better.
 
@@ -117,6 +118,17 @@ least **two** of these, named in `brag-plan.md` under `## Limits pushed`:
 - **A loop:** the last frame matches the first so the reel replays seamlessly in the feed.
 
 ## 6. Grade, then deliver
+
+Render to `brag.raw.mp4`, then bake the poster as frame 0 and normalize loudness in one pass (feeds
+play around -14 LUFS; a raw HyperFrames mix of Kokoro voices lands near -22):
+
+```bash
+ffmpeg -ss <settled-hook-second> -i brag.raw.mp4 -frames:v 1 -q:v 2 brag.jpg
+ffmpeg -i brag.raw.mp4 -i brag.jpg -filter_complex "[0:v][1:v]overlay=0:0:enable='eq(n,0)'[v];[0:a]loudnorm=I=-14:TP=-1.5:LRA=11[a]" \
+  -map "[v]" -map "[a]" -c:v libx264 -crf 18 -pix_fmt yuv420p -c:a aac -b:a 192k -movflags +faststart brag.mp4
+```
+
+Credit the music in `share-copy.txt`: brag's bundled tracks are Sascha Ende, CC BY 4.0.
 
 1. Run `/tardy-brag-grade <run>` in a fresh context (a subagent or a new session), so the builder
    never grades its own work.
