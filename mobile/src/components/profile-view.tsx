@@ -4,7 +4,7 @@ import { router } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
-import { openVerificationCheckout } from '@/config';
+import { openWebCheckout } from '@/config';
 import type { Account, Post } from '@/data/types';
 import { api, loadFeedPage, toggleFollowing, useIsFollowing } from '@/state/store';
 import { colors, compact, radius, type } from '@/theme';
@@ -67,7 +67,7 @@ function Header({ account, isMe }: { account: Account; isMe: boolean }) {
       </View>
 
       {isMe && !account.verified && (
-        <PressableScale style={styles.verify} scaleTo={0.98} onPress={openVerificationCheckout}>
+        <PressableScale style={styles.verify} scaleTo={0.98} onPress={() => void openWebCheckout('verify')}>
           <Icon name="checkmark.seal.fill" size={22} color={colors.onPrimary} />
           <View style={styles.verifyText}>
             <Text style={styles.verifyTitle}>Get verified</Text>

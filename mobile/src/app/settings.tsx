@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { NotificationSettings } from '@/components/notification-settings';
 import { PillButton } from '@/components/pill-button';
 import { Avatar, Hairline, Icon, NameLine, PressableScale, VerifiedBadge } from '@/components/ui';
-import { openVerificationCheckout } from '@/config';
+import { openWebCheckout } from '@/config';
 import type { AuthProvider } from '@/data/types';
 import { auth, useAuth } from '@/state/auth';
 import { useAccount } from '@/state/store';
@@ -58,7 +58,7 @@ export default function SettingsScreen() {
             <Text style={type.secondary}>Active</Text>
           </View>
         ) : (
-          <PressableScale style={styles.row} scaleTo={0.98} onPress={openVerificationCheckout} accessibilityRole="button">
+          <PressableScale style={styles.row} scaleTo={0.98} onPress={() => void openWebCheckout('verify')} accessibilityRole="button">
             <Icon name="checkmark.seal" size={20} color={colors.primary} />
             <View style={styles.grow}>
               <Text style={styles.rowTitle}>Get verified</Text>
