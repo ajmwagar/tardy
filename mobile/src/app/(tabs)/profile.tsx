@@ -1,11 +1,34 @@
 import { router } from 'expo-router';
-import { StyleSheet, Text, View } from 'react-native';
+import { ActionSheetIOS, Alert, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ProfileView } from '@/components/profile-view';
 import { Icon, PressableScale } from '@/components/ui';
-import { useAccount } from '@/state/store';
+import { auth } from '@/state/auth';
+import { reportError, useAccount } from '@/state/store';
 import { colors, type } from '@/theme';
+
+/** The ☰ menu: Settings, or sign out (confirmed, since it ends this device's session). */
+function openMenu() {
+  ActionSheetIOS.showActionSheetWithOptions(
+    { options: ['Settings', 'Sign out', 'Cancel'], destructiveButtonIndex: 1, cancelButtonIndex: 2 },
+    (index) => {
+      if (index === 0) router.push('/settings');
+      if (index === 1) {
+        Alert.alert('Sign out of Tardy?', undefined, [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Sign out',
+            style: 'destructive',
+            onPress: () => {
+              auth.signOut().catch((e: unknown) => reportError(`Sign-out failed: ${e instanceof Error ? e.message : String(e)}`));
+            },
+          },
+        ]);
+      }
+    },
+  );
+}
 
 export default function MyProfileScreen() {
   const insets = useSafeAreaInsets();
@@ -14,7 +37,9 @@ export default function MyProfileScreen() {
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       <View style={styles.bar}>
         <Text style={type.title}>{me?.handle}</Text>
-        <PressableScale onPress={() => router.push('/settings')} accessibilityRole="button" accessibilityLabel="Settings"><Icon name="line.3.horizontal" size={24} /></PressableScale>
+        <PressableScale onPress={openMenu} accessibilityRole="button" accessibilityLabel="Menu">
+          <Icon name="line.3.horizontal" size={24} />
+        </PressableScale>
       </View>
       {me && <ProfileView account={me} isMe />}
     </View>

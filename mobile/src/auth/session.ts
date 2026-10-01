@@ -88,6 +88,28 @@ export function createAuth(deps: AuthDeps) {
     await enter(signedIn);
   }
 
+  /**
+   * Shared by every sign-in method: obtain a credential (null = the user cancelled),
+   * exchange it, enter. Failures land on the sign-in screen with the reason.
+   */
+  async function attempt(getCredential: () => Promise<AuthCredential | null>): Promise<void> {
+    if (state.status !== 'signed_out') throw new Error(`Can't sign in from ${state.status}`);
+    if (state.signingIn) return;
+    set({ status: 'signed_out', signingIn: true, error: null });
+    try {
+      const credential = await getCredential();
+      if (!credential) return set(signedOut());
+      await enter(await deps.api.signIn(credential));
+    } catch (error) {
+      // `enter` may have stored the token before failing; don't resume a half sign-in.
+      try {
+        await deps.storage.clear();
+      } finally {
+        set(signedOut(`Sign-in failed: ${describe(error)}`));
+      }
+    }
+  }
+
   let booting: Promise<void> | null = null;
 
   return {
@@ -109,22 +131,14 @@ export function createAuth(deps: AuthDeps) {
       return booting;
     },
 
-    async signIn(provider: AuthProvider): Promise<void> {
-      if (state.status !== 'signed_out') throw new Error(`Can't sign in from ${state.status}`);
-      if (state.signingIn) return;
-      set({ status: 'signed_out', signingIn: true, error: null });
-      try {
-        const credential = await deps.identity.authorize(provider);
-        if (!credential) return set(signedOut());
-        await enter(await deps.api.signIn(credential));
-      } catch (error) {
-        // `enter` may have stored the token before failing; don't resume a half sign-in.
-        try {
-          await deps.storage.clear();
-        } finally {
-          set(signedOut(`Sign-in failed: ${describe(error)}`));
-        }
-      }
+    /** One-tap providers (GitHub, Apple, Google, X): runs the provider's sheet, then signs in. */
+    signIn(provider: AuthProvider): Promise<void> {
+      return attempt(() => deps.identity.authorize(provider));
+    },
+
+    /** Passwordless email, with the code `api.requestEmailCode(email)` sent. */
+    signInWithEmail(email: string, code: string): Promise<void> {
+      return attempt(async () => ({ provider: 'email', email, code }));
     },
 
     /**

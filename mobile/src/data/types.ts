@@ -243,11 +243,12 @@ export type EngagementAction =
 // MARK: auth
 
 /**
- * Identity providers Tardy accepts. GitHub is primary (Tardy's users are developers
- * whose agents work in repos); Apple's credential shape is already in the contract so
- * shipping it is client UI plus server work, not a contract change.
+ * Identity providers Tardy accepts. GitHub is primary (Tardy's users are developers whose
+ * agents work in repos). Every provider's credential shape is in the contract, so turning
+ * one on is client UI plus server work, not a contract change. Apple is required by App
+ * Review guideline 4.8 once any third-party login (GitHub, Google, X) ships.
  */
-export type AuthProvider = 'github' | 'apple';
+export type AuthProvider = 'github' | 'apple' | 'google' | 'x' | 'email';
 
 /**
  * One-time proof from an identity provider, exchanged for a Tardy session. The server
@@ -260,7 +261,16 @@ export type AuthProvider = 'github' | 'apple';
  */
 export type AuthCredential =
   | { provider: 'github'; code: string; codeVerifier: string; redirectUri: string }
-  | { provider: 'apple'; identityToken: string; authorizationCode: string; nonce: string; fullName?: string };
+  | { provider: 'apple'; identityToken: string; authorizationCode: string; nonce: string; fullName?: string }
+  /** Google Sign-In (covers Gmail): the ID token, plus the raw nonce whose hash is in it. */
+  | { provider: 'google'; idToken: string; nonce: string }
+  /** X (Twitter) OAuth 2.0 with PKCE, the same shape as GitHub's web flow. */
+  | { provider: 'x'; code: string; codeVerifier: string; redirectUri: string }
+  /**
+   * Passwordless email: the address and the one-time 6-digit code `requestEmailCode` sent
+   * to it. Codes expire after 10 minutes and allow 5 attempts (server-enforced).
+   */
+  | { provider: 'email'; email: string; code: string };
 
 /**
  * A signed-in device. One-way door: the client persists only `token` (in the keychain,

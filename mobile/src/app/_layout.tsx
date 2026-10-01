@@ -47,6 +47,7 @@ export default function RootLayout() {
         <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.bg } }}>
           <Stack.Protected guard={gate === 'signed_out'}>
             <Stack.Screen name="sign-in" options={{ animation: 'fade' }} />
+            <Stack.Screen name="sign-in-email" />
           </Stack.Protected>
           <Stack.Protected guard={gate === 'onboarding'}>
             <Stack.Screen name="onboarding" options={{ animation: 'fade' }} />

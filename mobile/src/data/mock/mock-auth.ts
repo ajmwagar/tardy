@@ -1,3 +1,5 @@
+import { PROVIDERS } from '@/auth/providers';
+
 import { TardyApiError } from '../api';
 import type { AuthCredential, AuthProvider, Session } from '../types';
 
@@ -18,7 +20,18 @@ export type MockPersistence = {
 export const MOCK_IDENTITIES: Readonly<Record<string, string>> = {
   'github:jamesmerrill': 'me',
   'apple:000123.james': 'me',
+  'google:james@fpl.dev': 'me',
+  'x:jamesmerrill': 'me',
+  'email:james@fpl.dev': 'me',
 };
+
+/**
+ * The mock's emailed code. A real server sends a random code by email; the mock "sends"
+ * this one so testers can sign in. Dev and mock only.
+ */
+export const MOCK_EMAIL_CODE = '123456';
+
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
  * Mock credentials: the code (GitHub) or identity token (Apple) is `mock:<subject>`.
@@ -37,7 +50,17 @@ export const mockCredential = {
     authorizationCode: 'mock-code',
     nonce: 'mock-nonce',
   }),
+  google: (email: string): AuthCredential => ({ provider: 'google', idToken: `mock:${email}`, nonce: 'mock-nonce' }),
+  x: (username: string): AuthCredential => ({
+    provider: 'x',
+    code: `mock:${username}`,
+    codeVerifier: 'mock-verifier',
+    redirectUri: 'tardy://auth/x',
+  }),
+  email: (email: string, code: string): AuthCredential => ({ provider: 'email', email, code }),
 };
+
+
 
 const SESSION_TTL_MS = 90 * 24 * 3_600_000;
 
@@ -56,15 +79,28 @@ function unauthenticated(message: string): never {
   throw new TardyApiError('unauthenticated', message);
 }
 
+/** The provider's user id the credential proves, or '' if the mock can't verify it. */
 function subjectOf(credential: AuthCredential): string {
-  const proof = credential.provider === 'github' ? credential.code : credential.identityToken;
-  return proof.startsWith('mock:') ? proof.slice('mock:'.length) : '';
+  const mock = (proof: string) => (proof.startsWith('mock:') ? proof.slice('mock:'.length) : '');
+  switch (credential.provider) {
+    case 'github':
+    case 'x':
+      return mock(credential.code);
+    case 'apple':
+      return mock(credential.identityToken);
+    case 'google':
+      return mock(credential.idToken);
+    case 'email':
+      return credential.email.trim().toLowerCase();
+  }
 }
 
 export class MockAuthServer {
   private db: Db = emptyDb();
   private loaded: Promise<void> | null = null;
   private current: Session | null = null;
+  /** Outstanding email codes by address (a real server would also expire them). */
+  private emailCodes = new Map<string, string>();
 
   constructor(
     private readonly persistence: MockPersistence | undefined,
@@ -106,10 +142,22 @@ export class MockAuthServer {
     return this.current;
   }
 
+  /** Records that a code was "sent" to `email` (the mock's code is fixed). */
+  requestEmailCode(email: string): void {
+    const address = email.trim().toLowerCase();
+    if (!EMAIL.test(address)) throw new TardyApiError('invalid', 'That doesn’t look like an email address.');
+    this.emailCodes.set(address, MOCK_EMAIL_CODE);
+  }
+
   async signIn(credential: AuthCredential): Promise<Session> {
     await this.load();
+    if (credential.provider === 'email') {
+      const address = credential.email.trim().toLowerCase();
+      if (this.emailCodes.get(address) !== credential.code.trim()) unauthenticated('That code is wrong or expired.');
+      this.emailCodes.delete(address);
+    }
     const accountId = MOCK_IDENTITIES[`${credential.provider}:${subjectOf(credential)}`];
-    if (!accountId) unauthenticated(`${credential.provider === 'github' ? 'GitHub' : 'Apple'} rejected the sign-in`);
+    if (!accountId) unauthenticated(`${PROVIDERS[credential.provider].name} rejected the sign-in`);
     const token = `mock-session-${Math.random().toString(36).slice(2)}${this.now().toString(36)}`;
     const stored: StoredSession = {
       accountId,

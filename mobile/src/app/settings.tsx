@@ -6,12 +6,11 @@ import { NotificationSettings } from '@/components/notification-settings';
 import { PillButton } from '@/components/pill-button';
 import { Avatar, Hairline, Icon, NameLine, PressableScale, VerifiedBadge } from '@/components/ui';
 import { openWebCheckout } from '@/config';
-import type { AuthProvider } from '@/data/types';
+import { PROVIDERS } from '@/auth/providers';
 import { auth, useAuth } from '@/state/auth';
 import { useAccount } from '@/state/store';
 import { colors, radius, type } from '@/theme';
 
-const PROVIDER_NAMES: Record<AuthProvider, string> = { github: 'GitHub', apple: 'Apple' };
 
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
@@ -46,7 +45,7 @@ export default function SettingsScreen() {
             <View style={styles.grow}>
               <Text style={styles.name}>{account.name}</Text>
               <NameLine account={account} style={styles.handle} />
-              <Text style={type.secondary}>Signed in with {PROVIDER_NAMES[session.provider]}</Text>
+              <Text style={type.secondary}>Signed in with {PROVIDERS[session.provider].name}</Text>
             </View>
           </View>
         )}

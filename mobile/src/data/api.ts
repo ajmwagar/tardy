@@ -56,6 +56,12 @@ export interface TardyApi {
    */
   signIn(credential: AuthCredential): Promise<SignedIn>;
   /**
+   * Emails a one-time 6-digit sign-in code (passwordless). Always resolves for a
+   * well-formed address, whether or not an account exists, so it can't be used to probe
+   * who is signed up; `invalid` for a malformed address.
+   */
+  requestEmailCode(email: string): Promise<void>;
+  /**
    * Re-adopts a stored token on relaunch (`GET /session` with that bearer token). Throws
    * `unauthenticated` if it expired or was revoked. The returned token may be rotated.
    */

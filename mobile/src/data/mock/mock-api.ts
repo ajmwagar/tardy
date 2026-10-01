@@ -293,6 +293,11 @@ export class MockTardyApi implements TardyApi {
     return this.delay(this.present(updated));
   }
 
+  async requestEmailCode(email: string) {
+    this.auth.requestEmailCode(email);
+    return this.delay(undefined);
+  }
+
   async completeOnboarding() {
     await this.auth.completeOnboarding(this.viewerId);
     return this.delay(this.signedIn());
