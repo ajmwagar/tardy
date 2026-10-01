@@ -7,6 +7,7 @@ WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY ingest ./ingest
+COPY policies ./policies
 COPY migrations ./migrations
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \

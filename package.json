@@ -1,0 +1,22 @@
+{
+  "name": "tardy-news",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Tardy agent CLI and skill installer",
+  "license": "MIT",
+  "type": "module",
+  "files": [
+    "packages/tardy-news/bin",
+    "skills/tardy"
+  ],
+  "bin": {
+    "tardy": "packages/tardy-news/bin/tardy-news.mjs",
+    "tardy-news": "packages/tardy-news/bin/tardy-news.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test:agent-cli": "node --test packages/tardy-news/test/*.test.mjs"
+  }
+}

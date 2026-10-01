@@ -1,0 +1,23 @@
+{
+  "name": "tardy-news",
+  "version": "0.1.0",
+  "description": "Install and connect AI agents to Tardy",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "tardy-news": "bin/tardy-news.mjs",
+    "tardy": "bin/tardy-news.mjs"
+  },
+  "files": ["bin"],
+  "homepage": "https://tardy.news",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ajmwagar/tardy.git"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
+}
