@@ -12,13 +12,14 @@ counts below were re-run on 2026-10-01 with the commands shown.
 | 4 | "Tagged." | every record carries `tags` (README schema) |
 | 5 | "Filmstripped." | `media/` filmstrips, sampled at fixed timestamps (README "Known limits") |
 | 6 | "Distilled." / "8 patterns worth stealing" | `PATTERNS.md`, sections `## 1.` to `## 8.` (`grep -c '^## [0-9]'` → 8) |
-| 7 | Pattern names and numbers on the chips (01 cold open, 02 word-by-word, 03 product hero with glow, 04 locked headline, 05 real prompt typing, 06 bento, 07 the "Introducing" card) | `PATTERNS.md` section headings 1-7 |
+| 7 | Pattern names and numbers on the chips (01 cold open, 02 word-by-word, 03 product hero with glow, 04 locked headline, 05 prompt typing, 06 bento, 07 the "Introducing" card) | `PATTERNS.md` section headings 1-7 |
 | 8 | "/tardy-ad-refs", a new skill | `.claude/skills/tardy-ad-refs/SKILL.md`, commit `bcaefe5` (updated `09b843c`) |
 | 9 | "cite 1-3 references per reel" | `.claude/skills/tardy-ad-refs/SKILL.md` step 3 ("One to three references") |
 | 10 | "References first. Reel second." | the skill runs at the planning step, before designing (`tardy-ad-refs/SKILL.md` description; `tardy-brag/SKILL.md` §5 "Study real ads first") |
 | 11 | "Built from its own playbook: 7 of 8 patterns" | this run's `brag-plan.md` `## Patterns used` maps each beat to PATTERNS.md 1-7; pattern 8 (short cut-downs) is not used |
 | 12 | The app footage | real tardy app on the iOS simulator (iPhone 17 Pro Max), recorded 2026-10-01 10:56 with `xcrun simctl io booted recordVideo`: Home feed scroll, Reels tab, the "Breaking" reel |
-| 13 | Search results shown in the prompt beat ("01 cold open", "03 product hero with glow", "07 the Introducing card") | PATTERNS.md headings; they are the three patterns this reel's `## References` cite |
+| 13 | Prompt beat: "/tardy-ad-refs launch" typed (a redrawn input, labeled "prompt typing", not a screen capture); "reads PATTERNS.md + index.jsonl"; "brag-plan.md › ## References" followed by 01 cold open, 03 product hero with glow, 07 the "Introducing" card | skill steps 1-2 read PATTERNS.md and query index.jsonl; step 3 writes `## References` into brag-plan.md; the three patterns are the ones this run's `## References` cite |
+| 14 | PATTERNS.md tile listing 01-08 by short name | PATTERNS.md section headings 1-8 |
 
 ## Not claimed
 
