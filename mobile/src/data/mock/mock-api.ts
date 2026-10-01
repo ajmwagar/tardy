@@ -10,6 +10,7 @@ import {
   withOverride,
   type PushDecision,
 } from '@/notifications/preferences';
+import { normalizeProfilePatch, profileProblem, type ProfilePatch } from '../profile';
 
 import { TardyApiError, type TardyApi } from '../api';
 import type {
@@ -276,6 +277,16 @@ export class MockTardyApi implements TardyApi {
     const updated = { ...this.accountsById.get(me.id)!, handle };
     this.accountsById.set(me.id, updated);
     await this.auth.claimHandle(me.id, handle);
+    return this.delay(this.present(updated));
+  }
+
+  async updateProfile(patch: ProfilePatch) {
+    const me = this.visibleAccount(this.viewerId);
+    const clean = normalizeProfilePatch(patch);
+    const problem = profileProblem(clean);
+    if (problem) throw new TardyApiError('invalid', problem);
+    const updated = { ...this.accountsById.get(me.id)!, ...clean };
+    this.accountsById.set(me.id, updated);
     return this.delay(this.present(updated));
   }
 

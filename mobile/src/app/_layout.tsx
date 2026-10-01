@@ -77,6 +77,10 @@ export default function RootLayout() {
           <Stack.Screen name="stories/[authorId]" options={{ presentation: 'fullScreenModal', animation: 'fade' }} />
           <Stack.Screen name="post/[postId]" />
           <Stack.Screen
+            name="edit-profile"
+            options={{ presentation: 'modal', headerShown: true, headerTitle: 'Edit profile', headerShadowVisible: false }}
+          />
+          <Stack.Screen
             name="settings"
             options={{ headerShown: true, headerBackButtonDisplayMode: 'minimal', headerTitle: 'Settings', headerShadowVisible: false }}
           />
