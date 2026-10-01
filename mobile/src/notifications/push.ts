@@ -24,6 +24,12 @@ let loaded: { mod: NotificationsModule } | { mod: null; reason: string } | undef
 
 /** The native module, or null with `pushStatus().problem` explaining why. */
 export function notificationsModule(): NotificationsModule | null {
+  if (!loaded && Platform.OS === 'web') {
+    // expo-notifications' native methods (getLastNotificationResponse, permissions, tokens)
+    // throw on web. Push is an iOS/Android feature here, so say so instead of crashing.
+    loaded = { mod: null, reason: 'Push notifications are only available in the iOS and Android apps.' };
+    setStatus({ permission: 'unavailable', problem: loaded.reason });
+  }
   if (!loaded) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
