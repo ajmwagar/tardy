@@ -15,12 +15,14 @@ use crate::media::{MediaError, MediaService, UploadIntent};
 use crate::metrics::Metrics;
 use crate::onboarding::{AccountRegistry, OnboardingError, TemporaryTardyAccount};
 use crate::pg_accounts::{HumanProfile, HumanSession, PgAccountError, PgAccountStore};
-use crate::push::{NotificationPreference, PgPushStore, PushDevice, PushError, RegisterPushDevice};
+use crate::push::{
+    AppNotification, NotificationPreference, PgPushStore, PushDevice, PushError, RegisterPushDevice,
+};
 use crate::ranking::FeedRanker;
 use crate::search::{SearchError, SearchService};
 use crate::social::{
-    AppAccount, Comment, Conversation, ConversationMessage, IdentityKind, PgSocialStore,
-    PostVisibility, SharedLink, SocialError, TardyPost,
+    AppAccount, Comment, Conversation, ConversationMessage, ConversationSummary, IdentityKind,
+    PgSocialStore, PostVisibility, SharedLink, SocialError, TardyPost,
 };
 use crate::store::{MemoryStore, NewLive, NewProfile, NewReel, Store, StoreError};
 use crate::subscriptions::{
@@ -237,6 +239,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             post(send_social_message).get(list_social_messages),
         )
         .route(
+            "/v1/social/conversations/{id}/read",
+            post(mark_social_conversation_read),
+        )
+        .route(
             "/v1/social/conversations/{id}/agents",
             post(summon_social_agent),
         )
@@ -253,6 +259,8 @@ pub fn router(state: Arc<AppState>) -> Router {
             axum::routing::delete(unregister_push_device),
         )
         .route("/v1/push/preferences", put(set_notification_preference))
+        .route("/v1/notifications", get(list_notifications))
+        .route("/v1/notifications/read", post(mark_notifications_read))
         .route("/v1/ad-campaigns", post(create_ad_campaign))
         .route(
             "/v1/ad-campaigns/{id}/funding-intents",
@@ -708,6 +716,35 @@ async fn set_notification_preference(
     ))
 }
 
+async fn list_notifications(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<AppNotification>>, ApiError> {
+    Ok(Json(
+        push_store(&state)?
+            .notifications(authenticated_account(&state, &headers).await?, 100)
+            .await?,
+    ))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct MarkNotificationsRead {
+    through_at_ms: i64,
+}
+
+async fn mark_notifications_read(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<MarkNotificationsRead>,
+) -> Result<StatusCode, ApiError> {
+    let through = chrono::DateTime::from_timestamp_millis(body.through_at_ms)
+        .ok_or_else(|| ApiError::bad_request("invalid notification timestamp"))?;
+    push_store(&state)?
+        .mark_notifications_read(authenticated_account(&state, &headers).await?, through)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 fn push_store(state: &AppState) -> Result<&PgPushStore, ApiError> {
     state.push.as_deref().ok_or_else(|| ApiError {
         status: StatusCode::SERVICE_UNAVAILABLE,
@@ -826,12 +863,33 @@ async fn create_social_conversation(
 async fn list_social_conversations(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-) -> Result<Json<Vec<Conversation>>, ApiError> {
+) -> Result<Json<Vec<ConversationSummary>>, ApiError> {
     Ok(Json(
         social_store(&state)?
             .conversations(authenticated_actor(&state, &headers).await?)
             .await?,
     ))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct MarkConversationRead {
+    through_message_id: Uuid,
+}
+
+async fn mark_social_conversation_read(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(body): Json<MarkConversationRead>,
+) -> Result<StatusCode, ApiError> {
+    social_store(&state)?
+        .mark_read(
+            authenticated_actor(&state, &headers).await?,
+            id,
+            body.through_message_id,
+        )
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Deserialize, ToSchema)]

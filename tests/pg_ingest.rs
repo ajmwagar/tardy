@@ -112,20 +112,32 @@ async fn polling_is_deduplicated_and_enqueues_exactly_once() {
     .await
     .unwrap();
     let source_event_id = uuid::Uuid::new_v4();
+    let actor_id = uuid::Uuid::new_v4();
     let notification = NewNotification {
         source_event_id,
         account_id,
-        category: "hyper_tardy".into(),
+        category: "mention".into(),
         title: "Hyper-Tardy".into(),
         body: "A post is breaking.".into(),
         deep_link: Some("tardy://posts/post-1".into()),
-        data: serde_json::Map::new(),
+        data: serde_json::Map::from_iter([(
+            "actor_id".into(),
+            serde_json::Value::String(actor_id.to_string()),
+        )]),
     };
     assert_eq!(
         push.enqueue(notification.clone()).await.unwrap(),
         source_event_id
     );
     assert_eq!(push.enqueue(notification).await.unwrap(), source_event_id);
+    let notifications = push.notifications(account_id, 50).await.unwrap();
+    assert_eq!(notifications.len(), 1);
+    assert_eq!(notifications[0].actor_id, actor_id);
+    assert!(!notifications[0].read);
+    push.mark_notifications_read(account_id, Utc::now())
+        .await
+        .unwrap();
+    assert!(push.notifications(account_id, 50).await.unwrap()[0].read);
     let deliveries = push
         .claim_deliveries("push-a", ApnsEnvironment::Sandbox, "com.tardy.app", 10)
         .await

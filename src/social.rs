@@ -70,6 +70,15 @@ pub struct Conversation {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ConversationSummary {
+    pub id: Uuid,
+    pub mode: ConversationMode,
+    pub participants: Vec<Uuid>,
+    pub last_message: Option<ConversationMessage>,
+    pub unread_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ConversationMessage {
     pub id: Uuid,
     pub conversation_id: Uuid,
@@ -396,12 +405,29 @@ impl PgSocialStore {
         })
     }
 
-    pub async fn conversations(&self, actor: Uuid) -> Result<Vec<Conversation>, SocialError> {
+    pub async fn conversations(
+        &self,
+        actor: Uuid,
+    ) -> Result<Vec<ConversationSummary>, SocialError> {
         let rows = sqlx::query(
-            "SELECT c.id,c.mode,array_agg(p.profile_id ORDER BY p.joined_at,p.profile_id) AS participants
+            "SELECT c.id,c.mode,array_agg(DISTINCT p.profile_id ORDER BY p.profile_id) AS participants,
+                    mine.last_read_sequence,
+                    last_message.id AS last_id,last_message.sequence AS last_sequence,
+                    last_message.sender_profile_id AS last_sender_profile_id,
+                    last_message.body AS last_body,last_message.shared_link_id AS last_shared_link_id,
+                    last_message.created_at AS last_created_at,
+                    count(DISTINCT unread.id) FILTER (WHERE unread.sender_profile_id<>$1) AS unread_count
              FROM conversations c JOIN conversation_participants mine ON mine.conversation_id=c.id AND mine.profile_id=$1
              JOIN conversation_participants p ON p.conversation_id=c.id
-             GROUP BY c.id,c.mode,c.created_at ORDER BY c.created_at DESC,c.id",
+             LEFT JOIN LATERAL (
+                 SELECT m.id,m.sequence,m.sender_profile_id,m.body,m.shared_link_id,m.created_at
+                 FROM conversation_messages m WHERE m.conversation_id=c.id
+                 ORDER BY m.sequence DESC LIMIT 1
+             ) last_message ON true
+             LEFT JOIN conversation_messages unread ON unread.conversation_id=c.id AND unread.sequence>mine.last_read_sequence
+             GROUP BY c.id,c.mode,c.created_at,mine.last_read_sequence,last_message.id,last_message.sequence,
+                      last_message.sender_profile_id,last_message.body,last_message.shared_link_id,last_message.created_at
+             ORDER BY COALESCE(last_message.created_at,c.created_at) DESC,c.id",
         )
         .bind(actor)
         .fetch_all(&self.pool)
@@ -409,13 +435,57 @@ impl PgSocialStore {
         rows.into_iter()
             .map(|row| {
                 let mode: String = row.try_get("mode")?;
-                Ok(Conversation {
-                    id: row.try_get("id")?,
+                let id = row.try_get("id")?;
+                let last_message = row
+                    .try_get::<Option<Uuid>, _>("last_id")?
+                    .map(|message_id| ConversationMessage {
+                        id: message_id,
+                        conversation_id: id,
+                        sequence: row.try_get("last_sequence").expect("selected with last id"),
+                        sender_profile_id: row
+                            .try_get("last_sender_profile_id")
+                            .expect("selected with last id"),
+                        body: row.try_get("last_body").expect("selected with last id"),
+                        shared_link_id: row
+                            .try_get("last_shared_link_id")
+                            .expect("selected with last id"),
+                        created_at: row
+                            .try_get("last_created_at")
+                            .expect("selected with last id"),
+                    });
+                Ok(ConversationSummary {
+                    id,
                     mode: parse_mode(&mode)?,
                     participants: row.try_get("participants")?,
+                    last_message,
+                    unread_count: row.try_get("unread_count")?,
                 })
             })
             .collect()
+    }
+
+    pub async fn mark_read(
+        &self,
+        actor: Uuid,
+        conversation_id: Uuid,
+        through_message_id: Uuid,
+    ) -> Result<(), SocialError> {
+        let updated = sqlx::query(
+            "UPDATE conversation_participants p SET last_read_sequence=GREATEST(p.last_read_sequence,m.sequence)
+             FROM conversation_messages m
+             WHERE p.conversation_id=$1 AND p.profile_id=$2
+               AND m.id=$3 AND m.conversation_id=p.conversation_id",
+        )
+        .bind(conversation_id)
+        .bind(actor)
+        .bind(through_message_id)
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+        if updated == 0 {
+            return Err(SocialError::NotFound);
+        }
+        Ok(())
     }
 
     pub async fn messages(

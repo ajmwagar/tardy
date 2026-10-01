@@ -5,9 +5,9 @@ use crate::ads::{
 use crate::api::{
     AccountView, AgentShareRequest, ClaimAgentCode, ClaimTardyAccount, CreatePostComment,
     CreateProfile, CreateShare, CreateSharedLink, CreateSocialConversation, CreateThread,
-    ErrorBody, HandoffRequest, PublishReel, PublishSocialPost, RecordEngagement, SearchRequest,
-    SendMessage, SendSocialMessage, SessionCredential, SessionView, SignedInView, StartLive,
-    SummonAgent,
+    ErrorBody, HandoffRequest, MarkConversationRead, MarkNotificationsRead, PublishReel,
+    PublishSocialPost, RecordEngagement, SearchRequest, SendMessage, SendSocialMessage,
+    SessionCredential, SessionView, SignedInView, StartLive, SummonAgent,
 };
 use crate::audio::{
     AttachPostAudio, AudioRelease, AudioTrack, AudioUsage, AudioUsageKind, NewAudioRelease,
@@ -21,11 +21,12 @@ use crate::domain::{
 };
 use crate::media::{MediaAsset, MediaKind, MediaStatus, UploadAuthorization, UploadIntent};
 use crate::onboarding::{Account, AiConsent, ClaimCode, ClaimedAccount, TemporaryTardyAccount};
+use crate::push::AppNotification;
 use crate::push::{ApnsEnvironment, NotificationPreference, PushDevice, RegisterPushDevice};
 use crate::search::SearchResult;
 use crate::social::{
-    Comment, Conversation, ConversationMessage, ConversationMode, IdentityKind, PostVisibility,
-    SharedLink, SocialIdentity, TardyPost,
+    Comment, Conversation, ConversationMessage, ConversationMode, ConversationSummary,
+    IdentityKind, PostVisibility, SharedLink, SocialIdentity, TardyPost,
 };
 use crate::subscriptions::{
     DeliveryMode, FeedEvent, NewSubscription, Subscription, SubscriptionKind,
@@ -49,9 +50,9 @@ use utoipa::OpenApi;
         DeliveryMode, FeedEvent, NewSubscription, Subscription, SubscriptionKind,
         AttachPostAudio, AudioRelease, AudioTrack, AudioUsage, AudioUsageKind, NewAudioRelease,
         NewOriginalTrack, ReleaseType, TrendingAudio,
-        Comment, Conversation, ConversationMessage, ConversationMode, IdentityKind,
+        AppNotification, Comment, Conversation, ConversationMessage, ConversationMode, ConversationSummary, IdentityKind,
         PostVisibility, SharedLink, SocialIdentity, TardyPost, CreatePostComment, SessionCredential, SessionView, SignedInView,
-        CreateSharedLink, CreateSocialConversation, PublishSocialPost, SendSocialMessage, SummonAgent
+        CreateSharedLink, CreateSocialConversation, MarkConversationRead, MarkNotificationsRead, PublishSocialPost, SendSocialMessage, SummonAgent
     )),
     tags(
         (name = "onboarding"), (name = "profiles"), (name = "messaging"),
@@ -240,7 +241,7 @@ pub fn document() -> Value {
             "/v1/social/conversations",
             "listSocialConversations",
             "social",
-            "Conversation",
+            "ConversationSummary",
             200,
             true,
             true,
@@ -263,6 +264,17 @@ pub fn document() -> Value {
             "social",
             "ConversationMessage",
             200,
+            true,
+            true,
+        ),
+        op(
+            "post",
+            "/v1/social/conversations/{id}/read",
+            "markSocialConversationRead",
+            "social",
+            Some("MarkConversationRead"),
+            None,
+            204,
             true,
             true,
         ),
@@ -554,6 +566,27 @@ pub fn document() -> Value {
             "unsavePost",
             "feed",
             None,
+            None,
+            204,
+            true,
+            false,
+        ),
+        array_op(
+            "get",
+            "/v1/notifications",
+            "listNotifications",
+            "notifications",
+            "AppNotification",
+            200,
+            true,
+            false,
+        ),
+        op(
+            "post",
+            "/v1/notifications/read",
+            "markNotificationsRead",
+            "notifications",
+            Some("MarkNotificationsRead"),
             None,
             204,
             true,
