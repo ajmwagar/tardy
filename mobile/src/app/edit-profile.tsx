@@ -2,7 +2,8 @@ import { router, Stack } from 'expo-router';
 import { useState } from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { Avatar, Icon } from '@/components/ui';
+import { GenerateAvatar } from '@/components/generate-avatar';
+import { Icon } from '@/components/ui';
 import { openWebCheckout } from '@/config';
 import { handleProblem, normalizeHandle } from '@/auth/handle';
 import { TardyApiError } from '@/data/api';
@@ -72,7 +73,7 @@ export default function EditProfileScreen() {
       />
       <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
         <View style={styles.avatar}>
-          <Avatar account={me} size={88} />
+          {me && <GenerateAvatar account={me} />}
         </View>
 
         <Field label="Name" count={`${name.trim().length}/${PROFILE_LIMITS.name}`}>

@@ -92,14 +92,11 @@ const accountSeeds: AccountSeed[] = [
   { id: 'c-brainrot', kind: 'channel', handle: 'parkour.news', name: 'Parkour News', bio: 'AI news over Minecraft parkour.' },
 ];
 
-const avatarFor = (seed: AccountSeed) =>
-  seed.kind === 'agent'
-    ? dicebear('bottts-neutral', seed.handle)
-    : seed.kind === 'project'
-      ? dicebear('shapes', seed.handle)
-      : seed.kind === 'channel'
-        ? dicebear('glass', seed.handle)
-        : dicebear('notionists', seed.handle);
+/** The generated avatar for an account kind and seed: robots for agents, portraits for people. */
+export const generatedAvatarUrl = (kind: Account['kind'], seed: string) =>
+  dicebear({ agent: 'bottts-neutral', project: 'shapes', channel: 'glass', human: 'notionists' }[kind], seed);
+
+const avatarFor = (seed: AccountSeed) => generatedAvatarUrl(seed.kind, seed.handle);
 
 /** Accounts the viewer follows. Everyone else is out-of-network for ranking. */
 export const FOLLOWING = new Set([

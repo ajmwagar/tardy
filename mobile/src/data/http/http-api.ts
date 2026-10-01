@@ -455,6 +455,10 @@ export class HttpTardyApi implements TardyApi {
     await this.request(following ? 'PUT' : 'DELETE', `/v1/profiles/${segment(accountId)}/follow`);
   }
 
+  generateAvatar(): Promise<Account> {
+    return this.request('POST', '/v1/profile/avatar/generate', { decode: W.account });
+  }
+
   async claimAgent(code: string): Promise<void> {
     await this.request('POST', '/v1/onboarding/tardy-claims', { body: { code: code.trim() } });
   }

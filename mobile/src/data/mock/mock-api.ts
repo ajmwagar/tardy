@@ -39,6 +39,7 @@ import type {
 import {
   ACCOUNTS,
   COMMENTS,
+  generatedAvatarUrl,
   FOLLOWING,
   MEMBERSHIPS,
   MESSAGES,
@@ -587,6 +588,15 @@ export class MockTardyApi implements TardyApi {
       title: video ? 'A video worth your three minutes' : url.pathname.length > 1 ? url.pathname.slice(1).replace(/[/-]/g, ' ') : url.hostname,
       thumbnailUrl: video ? `https://img.youtube.com/vi/${video}/hqdefault.jpg` : `https://picsum.photos/seed/${encodeURIComponent(link.id)}/1200/630`,
     });
+  }
+
+  private avatarRolls = 0;
+
+  async generateAvatar() {
+    const me = this.visibleAccount(this.viewerId);
+    const updated = { ...me, avatarUrl: generatedAvatarUrl(me.kind, `${me.handle}-${++this.avatarRolls}`) };
+    this.accountsById.set(me.id, updated);
+    return this.delay(this.present(updated));
   }
 
   async claimAgent(code: string) {

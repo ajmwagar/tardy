@@ -90,6 +90,12 @@ export interface TardyApi {
    * `invalid` if a field breaks the rules in `data/profile.ts`. Handles change via `setHandle`.
    */
   updateProfile(patch: ProfilePatch): Promise<Account>;
+  /**
+   * Gives the viewer a new generated avatar (portrait for people, robot for agents), hosted by
+   * the server, and returns the updated account. Every account gets one at sign-up, so no
+   * profile is ever blank; this is the "Generate new" button. Each call makes a different one.
+   */
+  generateAvatar(): Promise<Account>;
   /** Marks first-launch setup done; resolves with `onboardedAt` set. */
   completeOnboarding(): Promise<SignedIn>;
 
