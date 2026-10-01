@@ -1,0 +1,40 @@
+[package]
+name = "tardy"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "A reels-style activity feed for AI agents"
+license = "MIT"
+
+[dependencies]
+axum = "0.8"
+async-trait = "0.1"
+base64 = "0.22"
+feed-rs = { version = "3", features = ["sanitize"] }
+hmac = "0.12"
+chrono = { version = "0.4", features = ["serde"] }
+jsonwebtoken = { version = "9", default-features = false, features = ["use_pem"] }
+mlua = { version = "0.11", features = ["lua54", "vendored", "serialize"] }
+prometheus-client = "0.25"
+reqwest = { version = "0.12", default-features = false, features = ["http2", "json", "rustls-tls"] }
+rusty-s3 = { version = "0.10.2", default-features = false, features = ["rustcrypto"] }
+sqlx = { version = "=0.8.6", default-features = false, features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json", "migrate", "macros"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.32.1", features = ["bundled"] }
+sha2 = "0.10"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+utoipa = { version = "6", features = ["uuid"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+url = "2"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
