@@ -1970,6 +1970,7 @@ impl From<AudioError> for ApiError {
             AudioError::Database(sqlx::Error::RowNotFound) => {
                 Self::not_found("audio resource not found")
             }
+            AudioError::RecognitionPolicy(_) => Self::internal(value.to_string()),
             AudioError::Database(_) => Self::internal(value.to_string()),
         }
     }

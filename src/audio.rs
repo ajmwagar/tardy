@@ -3,6 +3,8 @@ use sqlx::{PgPool, Row};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
+use crate::audio_policy::{AudioRecognitionPolicy, RecognitionFacts, RecognitionPolicyError};
+
 #[derive(Debug, thiserror::Error)]
 pub enum AudioError {
     #[error("audio database: {0}")]
@@ -15,6 +17,8 @@ pub enum AudioError {
     Forbidden,
     #[error("audio rights are not cleared for this use")]
     RightsNotCleared,
+    #[error(transparent)]
+    RecognitionPolicy(#[from] RecognitionPolicyError),
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema)]
@@ -117,11 +121,26 @@ pub struct TrendingAudio {
 #[derive(Clone)]
 pub struct PgAudioStore {
     pool: PgPool,
+    recognition_policy: AudioRecognitionPolicy,
 }
 
 impl PgAudioStore {
     pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            recognition_policy: AudioRecognitionPolicy::default_policy()
+                .expect("embedded audio recognition policy must be valid"),
+        }
+    }
+
+    pub fn with_recognition_policy(
+        pool: PgPool,
+        recognition_policy: AudioRecognitionPolicy,
+    ) -> Self {
+        Self {
+            pool,
+            recognition_policy,
+        }
     }
 
     pub async fn create_release(
@@ -191,12 +210,30 @@ impl PgAudioStore {
         matched: Option<RecognitionMatch>,
     ) -> Result<(), AudioError> {
         let mut tx = self.pool.begin().await?;
+        let attested: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM audio_rights_grants WHERE track_id=$1 AND basis='creator_attestation' AND controls_recording AND controls_composition AND permits_sync AND permits_on_demand_streaming)")
+            .bind(track).fetch_one(&mut *tx).await?;
+        let decision = self.recognition_policy.decide(RecognitionFacts {
+            provider,
+            matched: matched.is_some(),
+            confidence_millionths: matched
+                .as_ref()
+                .map_or(0, |value| value.confidence_millionths),
+            has_isrc: matched.as_ref().is_some_and(|value| value.isrc.is_some()),
+            has_complete_creator_attestation: attested,
+        })?;
         if let Some(value) = matched {
             sqlx::query("INSERT INTO audio_recognition_matches (id,track_id,provider,provider_recording_id,title,artist_name,album_title,isrc,confidence_millionths,attribution,raw_reference) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT DO NOTHING")
                 .bind(Uuid::new_v4()).bind(track).bind(provider).bind(value.provider_recording_id).bind(value.title).bind(value.artist_name).bind(value.album_title).bind(value.isrc).bind(value.confidence_millionths).bind(value.attribution).bind(value.raw_reference).execute(&mut *tx).await?;
-            sqlx::query("UPDATE audio_tracks SET recognition_status='matched',rights_status='pending',attribution_text=$2 WHERE id=$1").bind(track).bind(value.attribution_text).execute(&mut *tx).await?;
+            sqlx::query("UPDATE audio_tracks SET recognition_status=$2,rights_status=$3,attribution_text=$4 WHERE id=$1").bind(track).bind(&decision.recognition_status).bind(&decision.rights_status).bind(value.attribution_text).execute(&mut *tx).await?;
         } else {
-            sqlx::query("UPDATE audio_tracks SET recognition_status='no_match',rights_status='cleared' WHERE id=$1 AND EXISTS (SELECT 1 FROM audio_rights_grants WHERE track_id=$1 AND basis='creator_attestation' AND controls_recording AND controls_composition AND permits_sync AND permits_on_demand_streaming)").bind(track).execute(&mut *tx).await?;
+            sqlx::query(
+                "UPDATE audio_tracks SET recognition_status=$2,rights_status=$3 WHERE id=$1",
+            )
+            .bind(track)
+            .bind(&decision.recognition_status)
+            .bind(&decision.rights_status)
+            .execute(&mut *tx)
+            .await?;
         }
         tx.commit().await?;
         Ok(())

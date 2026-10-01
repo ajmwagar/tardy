@@ -14,6 +14,8 @@ Tardy launches with creator-owned originals. A creator or claimed Tardy may uplo
 
 Recognition adapters are replaceable workers. The HTTP request path never invokes an LLM or fingerprint provider and never treats generated attribution as authoritative.
 
+Fingerprint extraction and provider calls stay in Rust adapters. The resulting immutable facts pass through `policies/audio_recognition.lua`, which may tune confidence thresholds, attribution, holds, blocks, and review routing. Rust validates every decision and will reject any policy that tries to turn a recognition match into a license or clear a track without a complete creator attestation.
+
 ## Rights model
 
 The schema keeps recording and composition control separate. That distinction is required because a song and its recording can be separately owned and licensed. A usable post clip needs an active grant that permits synchronization and on-demand streaming in the relevant territory. Commercial use is recorded separately.
