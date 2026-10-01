@@ -2,6 +2,13 @@ use crate::domain::{FeedItem, LiveStatus};
 use mlua::{Function, Lua, StdLib, Table, Value};
 use std::cmp::Ordering;
 
+pub mod x_value_model;
+
+pub use x_value_model::XValueModelRanker;
+
+/// Selects the For You ranker; unset means `lua`.
+pub const RANKER_ENV: &str = "TARDY_RANKER";
+
 const DEFAULT_POLICY: &str = r#"
 function score(item, now_ms)
   local age_minutes = math.max(0, now_ms - item.published_at_ms) / 60000
@@ -20,6 +27,43 @@ pub enum RankingError {
     Lua(#[from] mlua::Error),
     #[error("ranking policy must return a finite number")]
     InvalidScore,
+    #[error("unknown ranker {0:?}; set TARDY_RANKER to `lua` or `x-value-model`")]
+    UnknownRanker(String),
+}
+
+/// The For You ranker, chosen once at startup. Lua stays the default; X's value model is
+/// opt-in with `TARDY_RANKER=x-value-model`.
+pub enum FeedRanker {
+    Lua(LuaRanker),
+    XValueModel(XValueModelRanker),
+}
+
+impl FeedRanker {
+    pub fn from_env() -> Result<Self, RankingError> {
+        match std::env::var(RANKER_ENV) {
+            Ok(name) => Self::from_name(Some(&name)),
+            Err(std::env::VarError::NotPresent) => Self::from_name(None),
+            Err(std::env::VarError::NotUnicode(name)) => Err(RankingError::UnknownRanker(
+                name.to_string_lossy().into_owned(),
+            )),
+        }
+    }
+
+    /// Unknown names fail loudly rather than silently falling back to Lua.
+    pub fn from_name(name: Option<&str>) -> Result<Self, RankingError> {
+        match name.map(str::trim) {
+            None | Some("") | Some("lua") => Ok(Self::Lua(LuaRanker::default_policy()?)),
+            Some("x-value-model") => Ok(Self::XValueModel(XValueModelRanker::default())),
+            Some(other) => Err(RankingError::UnknownRanker(other.into())),
+        }
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Lua(_) => "lua",
+            Self::XValueModel(_) => "x-value-model",
+        }
+    }
 }
 
 /// A deliberately narrow Lua extension point: input facts in, numeric score out.
@@ -140,6 +184,25 @@ mod tests {
             .unwrap();
         assert_eq!(ranked[0], live);
         assert_eq!(ranked[1], fresh_reel);
+    }
+
+    #[test]
+    fn ranker_switch_defaults_to_lua_and_rejects_unknown_names() {
+        for name in [None, Some(""), Some("lua"), Some(" lua ")] {
+            assert_eq!(
+                FeedRanker::from_name(name).unwrap().name(),
+                "lua",
+                "{name:?}"
+            );
+        }
+        assert_eq!(
+            FeedRanker::from_name(Some("x-value-model")).unwrap().name(),
+            "x-value-model"
+        );
+        assert!(matches!(
+            FeedRanker::from_name(Some("phoenix")),
+            Err(RankingError::UnknownRanker(name)) if name == "phoenix"
+        ));
     }
 
     #[test]
