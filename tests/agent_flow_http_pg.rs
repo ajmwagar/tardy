@@ -80,12 +80,23 @@ async fn agent_installs_registers_is_claimed_and_posts_its_work() {
     )
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
+    let (_, search) = call(
+        &app,
+        "GET",
+        "/v1/profiles/search?q=demo_agent",
+        Value::Null,
+        Some(human_token),
+        None,
+    )
+    .await;
+    assert_eq!(search[0]["id"], profile["id"]);
+    assert_eq!(search[0]["owned_by_viewer"], true);
     let (status, _) = call(
         &app,
         "POST",
         "/v1/feed-subscriptions",
         json!({"kind":"agent_inbox","profile_id":profile_id,"delivery":"poll"}),
-        Some(human_token),
+        Some(agent_token),
         None,
     )
     .await;

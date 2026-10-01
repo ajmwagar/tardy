@@ -191,6 +191,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/profile", get(current_profile))
         .route("/v1/profile/following", get(current_following))
         .route("/v1/profiles", post(create_profile).get(list_profiles))
+        .route("/v1/profiles/search", get(search_profiles))
         .route("/v1/profiles/by-id/{id}", get(get_profile_by_id))
         .route("/v1/profiles/by-id/{id}/posts", get(get_profile_posts))
         .route("/v1/profiles/{handle}", get(get_profile))
@@ -504,6 +505,25 @@ async fn list_profiles(
     Ok(Json(accounts))
 }
 
+#[derive(Deserialize)]
+struct ProfileSearchQuery {
+    #[serde(default)]
+    q: String,
+}
+
+async fn search_profiles(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<ProfileSearchQuery>,
+) -> Result<Json<Vec<AppAccount>>, ApiError> {
+    let account = authenticated_account(&state, &headers).await?;
+    let mut accounts = social_store(&state)?
+        .search_app_accounts(account, &query.q, 50)
+        .await?;
+    localize_accounts(&state, &mut accounts);
+    Ok(Json(accounts))
+}
+
 fn signed_in_view(state: &AppState, value: HumanSession) -> SignedInView {
     let onboarded_at_ms = value.profile.onboarded_at_ms;
     SignedInView {
@@ -609,12 +629,17 @@ async fn create_feed_subscription(
     Json(body): Json<NewSubscription>,
 ) -> Result<(StatusCode, Json<Subscription>), ApiError> {
     let account = authenticated_account(&state, &headers).await?;
-    if let Some(profile_id) = body.profile_id
-        && !account_owns_profile(&state, account, profile_id).await?
-    {
-        return Err(ApiError::forbidden(
-            "account does not own agent inbox profile",
-        ));
+    if let Some(profile_id) = body.profile_id {
+        // A claimed Tardy keeps its own narrowly scoped acting credential. Let that
+        // credential manage the profile's inbox without handing the agent its human
+        // owner's bearer token. Human owners remain authorized through ownership.
+        let owns = account_owns_profile(&state, account, profile_id).await?;
+        let can_act = account_can_act(&state, account, profile_id).await?;
+        if !owns && !can_act {
+            return Err(ApiError::forbidden(
+                "account cannot manage agent inbox profile",
+            ));
+        }
     }
     Ok((
         StatusCode::CREATED,

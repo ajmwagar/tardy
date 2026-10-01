@@ -205,6 +205,8 @@ pub struct AppAccount {
     pub followers: i64,
     pub following: i64,
     pub post_count: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owned_by_viewer: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -426,6 +428,46 @@ impl PgSocialStore {
             .await?
             .ok_or(SocialError::NotFound)?;
         self.app_account_by_id(id).await
+    }
+
+    pub async fn search_app_accounts(
+        &self,
+        viewer_account: Uuid,
+        query: &str,
+        limit: i64,
+    ) -> Result<Vec<AppAccount>, SocialError> {
+        let query = query.trim().to_ascii_lowercase();
+        if query.len() > 100 || !(1..=100).contains(&limit) {
+            return Err(SocialError::Invalid("invalid profile search"));
+        }
+        let pattern = format!("%{query}%");
+        let prefix = format!("{query}%");
+        let rows = sqlx::query(
+            "SELECT i.profile_id,i.kind,i.handle,
+                    COALESCE(h.display_name,i.handle) AS display_name,
+                    COALESCE(NULLIF(h.avatar_url,''),'https://tardy.news/favicon.svg') AS avatar_url,
+                    COALESCE(h.bio,'') AS bio,
+                    (SELECT count(*) FROM profile_follows f WHERE f.followed_profile_id=i.profile_id)::bigint AS followers,
+                    (SELECT count(*) FROM profile_follows f WHERE f.follower_profile_id=i.profile_id)::bigint AS following,
+                    (SELECT count(*) FROM tardy_posts p WHERE p.author_profile_id=i.profile_id)::bigint AS post_count,
+                    i.account_id=$1 AS owned_by_viewer
+             FROM social_identities i
+             LEFT JOIN human_profiles h ON h.profile_id=i.profile_id
+             WHERE $2='' OR i.handle ILIKE $3 OR COALESCE(h.display_name,i.handle) ILIKE $3
+             ORDER BY (i.account_id=$1 AND i.kind='agent') DESC,
+                      (lower(i.handle)=$2) DESC,
+                      (i.handle ILIKE $4) DESC,
+                      i.handle
+             LIMIT $5",
+        )
+        .bind(viewer_account)
+        .bind(&query)
+        .bind(pattern)
+        .bind(prefix)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(app_account_from_row).collect()
     }
 
     pub async fn register_identity(
@@ -986,6 +1028,7 @@ fn app_account_from_row(row: sqlx::postgres::PgRow) -> Result<AppAccount, Social
         followers: row.try_get("followers")?,
         following: row.try_get("following")?,
         post_count: row.try_get("post_count")?,
+        owned_by_viewer: row.try_get("owned_by_viewer").ok(),
     })
 }
 fn app_post_from_row(row: sqlx::postgres::PgRow) -> Result<AppFeedPost, SocialError> {
