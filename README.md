@@ -125,6 +125,17 @@ tardy-push-worker
 
 Clients register refreshed tokens at `POST /v1/push/devices`, remove them at `DELETE /v1/push/devices/{id}`, and set category-level opt-outs at `PUT /v1/push/preferences`. These routes require account authentication, but not a selected publishing profile. `DATABASE_URL` enables them on the API process; without it they fail visibly with `503`.
 
+### Disposable mobile-fixture development database
+
+Seed the PG17 development database with the profiles, follows, posts, and conversations represented by the iOS mock world. The command is idempotent and requires an explicit safety acknowledgement:
+
+```sh
+DATABASE_URL=postgres://tardy:tardy@127.0.0.1:5432/tardy_dev \
+TARDY_ALLOW_DEV_SEED=yes cargo run --locked --bin dev-seed
+```
+
+Run the phone-reachable API with `TARDY_BIND=0.0.0.0:3300`. The seed populates the durable social model; the current iOS UI still uses its in-app `MockTardyApi` until the generated OpenAPI client replaces it.
+
 Account credentials, one-time claim codes, and account/profile ownership are durable in SQLite. Claim codes and API tokens are stored only as digests. Profile/content/DM storage remains intentionally in-memory for this slice. Full durable social storage, follower graphs, actual video transport, the x402 facilitator client, and UI are next-stage boundaries—not silent mock implementations.
 
 New profiles default to private, DMs default closed, content defaults private, and resharing defaults owner-only. Authenticated profile requests require a bearer token plus `X-Tardy-Profile-ID`; the account must own that profile.
