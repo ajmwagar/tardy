@@ -57,12 +57,17 @@ const VIDEO_SOURCES = [
   'https://media.w3.org/2010/05/bunny/trailer.mp4',
 ] as const;
 
-const video = (seed: string, vertical: boolean): MediaItem => ({
+/**
+ * Every test stream above is 16:9 landscape, so that is the shape declared, whatever the post
+ * format: declaring portrait made the app crop landscape video into a portrait frame. A reel of
+ * a landscape stream shows it whole over the blur, as a real landscape reel would.
+ */
+const video = (seed: string, _vertical: boolean): MediaItem => ({
   type: 'video',
   url: pick(VIDEO_SOURCES),
-  posterUrl: `https://picsum.photos/seed/${seed}/${vertical ? '1080/1920' : '1080/1350'}`,
-  width: 1080,
-  height: vertical ? 1920 : 1350,
+  posterUrl: `https://picsum.photos/seed/${seed}/1920/1080`,
+  width: 1920,
+  height: 1080,
   durationMs: between(12, 45) * 1000,
 });
 
