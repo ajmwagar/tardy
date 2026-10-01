@@ -31,8 +31,8 @@ export type WebCheckout = keyof typeof WEB_CHECKOUTS;
 export const WEB_PAGES = {
   help: { path: '/help', enables: 'the help center' },
   report: { path: '/help/report', enables: 'problem reports' },
-  terms: { path: '/terms', enables: 'the terms of service' },
-  privacy: { path: '/privacy', enables: 'the privacy policy' },
+  terms: { path: '/terms.html', enables: 'the terms of service' },
+  privacy: { path: '/privacy.html', enables: 'the privacy policy' },
   deleteAccount: { path: '/account/delete', enables: 'account deletion' },
 } as const;
 
