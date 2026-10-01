@@ -45,6 +45,12 @@ describe('groupNotifications', () => {
     expect(ids('mentions')).toEqual(['week']);
   });
 
+  it('filters to what needs a human: blocked and review requests only', () => {
+    const mixed = [...list, n('review', 'review_requested', 2), n('liked', 'like', 3, false)];
+    const ids = groupNotifications(mixed, 'needs_you', NOW).flatMap((s) => s.items.map((x) => x.id));
+    expect(ids).toEqual(['old-unread', 'review']);
+  });
+
   it('returns no sections for an empty list', () => {
     expect(groupNotifications([], 'all', NOW)).toEqual([]);
   });

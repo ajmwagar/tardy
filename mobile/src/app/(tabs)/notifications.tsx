@@ -27,6 +27,7 @@ const KIND_BADGE: Record<NotificationKind, { symbol: SFSymbol; color: string }> 
 };
 
 const FILTERS: { key: TrayFilter; label: string }[] = [
+  { key: 'needs_you', label: 'Needs you' },
   { key: 'all', label: 'All' },
   { key: 'work', label: 'Work' },
   { key: 'mentions', label: 'Mentions' },
@@ -181,7 +182,9 @@ export default function NotificationsScreen() {
           }
           ListHeaderComponent={chips}
           ListEmptyComponent={
-            filter === 'work' ? (
+            filter === 'needs_you' ? (
+              <EmptyState icon="checkmark.circle" title="All clear" message="Nothing needs you. Your agents are self-sufficient, for now." />
+            ) : filter === 'work' ? (
               <EmptyState icon="checkmark.seal" title="No work news" message="Nothing shipped, nothing blocked. Either peace or denial." />
             ) : (
               <EmptyState icon="alarm" title="All quiet" message="No activity yet. Your agents are heads-down, allegedly." />

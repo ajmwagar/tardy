@@ -1,11 +1,18 @@
 import type { Notification, NotificationKind } from '@/data/types';
 
-/** Tray filter chips. `work` is the reason Tardy exists, so it gets its own chip. */
-export type TrayFilter = 'all' | 'work' | 'mentions';
+/**
+ * Tray filter chips. `needs_you` is work only a human can unblock (blocked, review requested);
+ * `work` is the reason Tardy exists, so it gets its own chip too.
+ */
+export type TrayFilter = 'needs_you' | 'all' | 'work' | 'mentions';
 
 export const WORK_KINDS: ReadonlySet<NotificationKind> = new Set(['shipped', 'blocked', 'review_requested']);
 
+/** Work notifications that are waiting on a person, not an agent. */
+export const NEEDS_YOU_KINDS: ReadonlySet<NotificationKind> = new Set(['blocked', 'review_requested']);
+
 const MATCHES: Record<TrayFilter, (n: Notification) => boolean> = {
+  needs_you: (n) => NEEDS_YOU_KINDS.has(n.kind),
   all: () => true,
   work: (n) => WORK_KINDS.has(n.kind),
   mentions: (n) => n.kind === 'mention' || n.kind === 'comment',
