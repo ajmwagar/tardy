@@ -47,20 +47,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     loop {
         let mut state = read_state(&state_path)?;
-        let events = poll(&client, &state).await?;
+        let events = match poll(&client, &state).await {
+            Ok(events) => events,
+            Err(error) => {
+                tracing::warn!(%error, "Tardy inbox unavailable; retrying");
+                tokio::time::sleep(Duration::from_millis(900)).await;
+                continue;
+            }
+        };
         for event in events {
-            if let Some(work) = work_message(&event) {
-                acknowledge(&client, &state, &work).await?;
-                tracing::info!(event_id = event.id, conversation = %work.conversation_id, "drafting Tardy reply");
-                let prompt = reply_prompt(&state.handle, &work);
-                let reply = tokio::task::spawn_blocking({
-                    let workspace = workspace.clone();
-                    move || draft_with_codex(&workspace, &prompt)
-                })
-                .await?
-                .map_err(|error| std::io::Error::other(error.to_string()))?;
-                send_reply(&client, &state, &work.conversation_id, &reply).await?;
-                tracing::info!(event_id = event.id, "posted Tardy reply");
+            if let Err(error) = process_event(&client, &state, &workspace, &event).await {
+                tracing::error!(event_id = event.id, %error, "Tardy event failed; cursor retained for retry");
+                break;
             }
             state.cursor = event.id;
             write_state(&state_path, &state)?;
@@ -70,6 +68,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         tokio::time::sleep(Duration::from_millis(900)).await;
     }
+}
+
+async fn process_event(
+    client: &reqwest::Client,
+    state: &AgentState,
+    workspace: &str,
+    event: &InboxEvent,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(work) = work_message(event) else {
+        return Ok(());
+    };
+    acknowledge(client, state, &work).await?;
+    tracing::info!(event_id = event.id, conversation = %work.conversation_id, "drafting Tardy reply");
+    let prompt = reply_prompt(&state.handle, &work);
+    let workspace = workspace.to_owned();
+    let reply = tokio::task::spawn_blocking(move || draft_with_codex(&workspace, &prompt))
+        .await?
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    send_reply(client, state, &work.conversation_id, &reply).await?;
+    tracing::info!(event_id = event.id, "posted Tardy reply");
+    Ok(())
 }
 
 fn required(name: &str) -> Result<String, Box<dyn std::error::Error>> {
