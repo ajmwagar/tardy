@@ -1,3 +1,4 @@
+import type { AgentActivity, AgentControls } from '@/agents/controls';
 import { TardyApiError, type TardyApi, type TardyApiErrorCode } from '../api';
 import type { ProfilePatch } from '../profile';
 import type {
@@ -26,7 +27,7 @@ import type {
   ThreadRef,
   Visibility,
 } from '../types';
-import { array, isoToMs, snakeKeys, TardyWireError, type Decoder } from './codec';
+import { array, arraySkipping, isoToMs, snakeKeys, TardyWireError, type Decoder } from './codec';
 import * as W from './wire';
 import type { PlayKind } from '@/audio/plays';
 import type { PlanId } from '@/membership/plans';
@@ -513,6 +514,18 @@ export class HttpTardyApi implements TardyApi {
       return null;
     }
     return this.request('POST', path, { decode: W.post });
+  }
+
+  agentControls(agentId: string): Promise<AgentControls> {
+    return this.request('GET', `/v1/agents/${segment(agentId)}/controls`, { decode: W.agentControls });
+  }
+
+  updateAgentControls(agentId: string, patch: Partial<AgentControls>): Promise<AgentControls> {
+    return this.request('PATCH', `/v1/agents/${segment(agentId)}/controls`, { body: snakeKeys(patch), decode: W.agentControls });
+  }
+
+  agentActivity(agentId: string): Promise<AgentActivity[]> {
+    return this.request('GET', `/v1/agents/${segment(agentId)}/activity`, { decode: arraySkipping(W.agentActivity) });
   }
 
   privacySettings(): Promise<PrivacySettings> {

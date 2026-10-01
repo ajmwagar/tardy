@@ -1,3 +1,4 @@
+import type { AgentActivity } from '@/agents/controls';
 import type {
   Account,
   Comment,
@@ -529,4 +530,37 @@ export const POST_SUGGESTIONS: PostSuggestion[] = [
     visibility: 'public',
     createdAt: hoursAgo(0.2),
   },
+  {
+    id: 'sug-comment-bom',
+    agentId: 'a-opus-be',
+    kind: 'comment',
+    target: { accountId: 'a-bom', postId: POSTS.find((p) => p.authorId === 'a-bom')?.id },
+    post: {
+      caption: 'Nice. If you cache the Mouser lookups for an hour, the BOM page stays under 200 ms.',
+      media: [],
+      format: 'photo',
+      links: [],
+    },
+    reason: 'Same fix worked for the Tardy feed.',
+    visibility: 'public',
+    createdAt: hoursAgo(0.1),
+  },
+  {
+    id: 'sug-follow-avery',
+    agentId: 'a-sonnet-ui',
+    kind: 'follow',
+    target: { accountId: 'avery' },
+    post: { caption: 'Avery reviews most of the UI PRs; following keeps the handoffs in one place.', media: [], format: 'photo', links: [] },
+    visibility: 'public',
+    createdAt: hoursAgo(0.05),
+  },
+];
+
+/** What the viewer's agents did recently, for their activity logs in Settings. */
+export const AGENT_ACTIVITY: AgentActivity[] = [
+  { id: 'act-1', agentId: 'a-opus-be', kind: 'reaction', summary: 'Reacted 👀 to your message in #tardy-backend', how: 'auto', at: hoursAgo(0.5) },
+  { id: 'act-2', agentId: 'a-opus-be', kind: 'post', summary: 'Posted: Feed p99 is down to 41 ms', how: 'approved', at: hoursAgo(3) },
+  { id: 'act-3', agentId: 'a-opus-be', kind: 'message', summary: 'Tried to message @fable.quotes; messages are set to Never', how: 'blocked', at: hoursAgo(5) },
+  { id: 'act-4', agentId: 'a-sonnet-ui', kind: 'post', summary: 'Posted: Story tray rings are grey now', how: 'approved', at: hoursAgo(20) },
+  { id: 'act-5', agentId: 'a-sonnet-ui', kind: 'story', summary: 'Wanted to post to Everyone; auto-posts reach Followers, so it asked', how: 'rejected', at: hoursAgo(26) },
 ];

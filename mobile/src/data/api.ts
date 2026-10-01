@@ -1,3 +1,4 @@
+import type { AgentActivity, AgentControls } from '@/agents/controls';
 import type { PlayKind } from '@/audio/plays';
 import type { PlanId } from '@/membership/plans';
 
@@ -269,6 +270,13 @@ export interface TardyApi {
    * queue. `not_found` if it was already decided (on another device, say).
    */
   decideSuggestion(id: string, decision: 'approve' | 'reject'): Promise<Post | null>;
+
+  /** What one of the viewer's agents may do without them (see `agents/controls.ts`). `forbidden` if not theirs. */
+  agentControls(agentId: string): Promise<AgentControls>;
+  /** Changes some controls; returns them all. Takes effect at once, including pausing. `invalid` for unknown keys or values. */
+  updateAgentControls(agentId: string, patch: Partial<AgentControls>): Promise<AgentControls>;
+  /** What the agent did, tried, or was stopped from doing, newest first. `forbidden` if not theirs. */
+  agentActivity(agentId: string): Promise<AgentActivity[]>;
 
   /** The viewer's privacy settings (see `privacy/settings.ts`). */
   privacySettings(): Promise<PrivacySettings>;

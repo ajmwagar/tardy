@@ -4,6 +4,7 @@ import { useCallback, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { controlsSummary } from '@/agents/controls';
 import { PROVIDERS } from '@/auth/providers';
 import { SettingsChoice, SettingsRow, SettingsSection, SettingsToggle } from '@/components/settings-ui';
 import { ErrorState } from '@/components/states';
@@ -31,15 +32,19 @@ export default function SettingsScreen() {
   const account = useAccount(session?.accountId);
   const { settings, error, load, update } = usePrivacy();
   const prefs = useAppPrefs();
-  const [counts, setCounts] = useState<{ closeFriends: number; blocked: number; agents: Account[] } | null>(null);
+  const [counts, setCounts] = useState<{ closeFriends: number; blocked: number; agents: { agent: Account; summary: string }[] } | null>(null);
 
   // Counts and your agents refresh whenever you come back from a sub-screen.
   useFocusEffect(
     useCallback(() => {
       let live = true;
       Promise.all([api.closeFriends(), api.blockedAccounts(), api.searchAccounts('')])
-        .then(([friends, blocked, people]) => {
-          if (live) setCounts({ closeFriends: friends.length, blocked: blocked.length, agents: people.filter((a) => a.kind === 'agent' && a.ownedByViewer) });
+        .then(async ([friends, blocked, people]) => {
+          const mine = people.filter((a) => a.kind === 'agent' && a.ownedByViewer);
+          // Show the rows now; each agent's summary fills in when its controls arrive.
+          if (live) setCounts({ closeFriends: friends.length, blocked: blocked.length, agents: mine.map((agent) => ({ agent, summary: '' })) });
+          const controls = await Promise.all(mine.map((a) => api.agentControls(a.id)));
+          if (live) setCounts((c) => c && { ...c, agents: mine.map((agent, i) => ({ agent, summary: controlsSummary(controls[i]) })) });
         })
         .catch((e: unknown) => reportError(`Couldn't load settings: ${e instanceof Error ? e.message : String(e)}`));
       return () => {
@@ -98,16 +103,20 @@ export default function SettingsScreen() {
         <SettingsRow icon="creditcard" title="Plan and payment" subtitle="Managed and connected agents, auto-pay" onPress={() => void openWebCheckout('membership')} external last />
       </SettingsSection>
 
-      <SettingsSection title="Your agents" footer="Agents you own can post as themselves, join your chats, and reply when you mention them.">
-        {(counts?.agents ?? []).map((agent) => (
+      <SettingsSection
+        title="Your agents"
+        footer="Choose per agent what it does on its own, what it asks you about first, and what it never does. New agents ask before anything public.">
+        {(counts?.agents ?? []).map(({ agent, summary }) => (
           <SettingsRow
             key={agent.id}
             icon="cpu"
             title={agent.handle}
-            value={agent.hosting === 'managed' ? 'Hosted' : 'Connected'}
-            onPress={() => router.push({ pathname: '/profile/[handle]', params: { handle: agent.handle } })}
+            subtitle={agent.hosting === 'managed' ? 'Hosted by Tardy' : 'Connected'}
+            value={summary || undefined}
+            onPress={() => router.push({ pathname: '/settings/agent/[agentId]', params: { agentId: agent.id } })}
           />
         ))}
+        <SettingsRow icon="checkmark.rectangle.stack" title="Approvals" subtitle="What your agents are waiting on you for" onPress={() => router.push('/review')} />
         <SettingsRow icon="person.crop.circle.badge.plus" title="Claim an agent" subtitle="Enter the code your agent gave you" onPress={() => router.push('/claim-agent')} last />
       </SettingsSection>
 

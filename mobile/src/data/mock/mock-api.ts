@@ -12,6 +12,8 @@ import {
   type PushDecision,
 } from '@/notifications/preferences';
 import { soundScore, type PlayKind } from '@/audio/plays';
+import { controlsProblem, decideAgentAction, DEFAULT_AGENT_CONTROLS, type AgentActivity, type AgentControls } from '@/agents/controls';
+import { describeRequest } from '@/suggestions/describe';
 import { DEFAULT_PRIVACY, privacyProblem, type PrivacySettings } from '@/privacy/settings';
 import { applyReaction, type ReactionKind } from '@/reactions/reactions';
 import { autopayCovers, limitMessage, PLANS, type PlanId } from '@/membership/plans';
@@ -47,6 +49,7 @@ import type {
 } from '../types';
 import {
   ACCOUNTS,
+  AGENT_ACTIVITY,
   CLOSE_FRIENDS_OF,
   COMMENTS,
   SOUNDS,
@@ -465,7 +468,7 @@ export class MockTardyApi implements TardyApi {
    */
   private scheduleAgentCommentReplies(postId: string, mentionedIds: readonly string[]) {
     for (const id of mentionedIds) {
-      if (this.accountsById.get(id)?.kind !== 'agent') continue;
+      if (this.accountsById.get(id)?.kind !== 'agent' || this.controlsFor(id).paused) continue;
       setTimeout(() => {
         const post = this.posts.get(postId);
         if (!post) return;
@@ -738,11 +741,33 @@ export class MockTardyApi implements TardyApi {
     const agent = this.accountsById.get(suggestion.agentId);
     if (!agent || !this.ownsAgent(agent)) forbidden(`suggestion ${id}`);
     this.suggestions = this.suggestions.filter((s) => s.id !== id);
+    const kind = suggestion.kind ?? 'post';
+    this.logActivity(suggestion.agentId, kind, describeRequest(suggestion, this.accountsById), decision === 'approve' ? 'approved' : 'rejected');
     if (decision === 'reject') return this.delay(null);
+    switch (kind) {
+      case 'post':
+        return this.delay(this.publishAs(suggestion.agentId, suggestion.post, `post-${id}`));
+      case 'comment': {
+        const postId = suggestion.target?.postId;
+        const post = postId ? this.posts.get(postId) : undefined;
+        if (post) {
+          this.commentLog.push({ id: `${post.id}-c${this.commentLog.length}`, postId: post.id, authorId: suggestion.agentId, text: suggestion.post.caption, createdAt: new Date().toISOString(), likeCount: 0 });
+          this.posts.set(post.id, { ...post, commentCount: post.commentCount + 1 });
+        }
+        return this.delay(null);
+      }
+      // Stories, messages and follows act as the agent; the mock has nothing more to show for them.
+      default:
+        return this.delay(null);
+    }
+  }
+
+  /** Publishes a tardy as an agent (approved from the deck, or posted on its own). */
+  private publishAs(agentId: string, content: PostSuggestion['post'], id: string): Post {
     const post: Post = {
-      id: `post-${id}`,
-      authorId: suggestion.agentId,
-      ...suggestion.post,
+      id,
+      authorId: agentId,
+      ...content,
       createdAt: new Date().toISOString(),
       likeCount: 0,
       commentCount: 0,
@@ -755,7 +780,70 @@ export class MockTardyApi implements TardyApi {
       viewerHasSaved: false,
     };
     this.posts.set(post.id, post);
-    return this.delay(post);
+    return post;
+  }
+
+  // Agent controls and activity (per agent; the owner's settings).
+  private controls = new Map<string, AgentControls>();
+  private activityLog: AgentActivity[] = [...AGENT_ACTIVITY];
+
+  private controlsFor(agentId: string): AgentControls {
+    return this.controls.get(agentId) ?? DEFAULT_AGENT_CONTROLS;
+  }
+
+  private ownedAgent(agentId: string): Account {
+    this.signedIn();
+    const agent = this.accountsById.get(agentId) ?? notFound(`agent ${agentId}`);
+    if (agent.kind !== 'agent' || !this.ownsAgent(agent)) forbidden(`agent ${agentId}`);
+    return agent;
+  }
+
+  private logActivity(agentId: string, kind: AgentActivity['kind'], summary: string, how: AgentActivity['how'], postId?: string) {
+    this.activityLog.push({ id: `act-${this.activityLog.length + 1}`, agentId, kind, summary, how, at: new Date().toISOString(), ...(postId && { postId }) });
+  }
+
+  async agentControls(agentId: string) {
+    this.ownedAgent(agentId);
+    return this.delay(this.controlsFor(agentId));
+  }
+
+  async updateAgentControls(agentId: string, patch: Partial<AgentControls>) {
+    this.ownedAgent(agentId);
+    const problem = controlsProblem(patch);
+    if (problem) throw new TardyApiError('invalid', problem);
+    const next = { ...this.controlsFor(agentId), ...patch };
+    this.controls.set(agentId, next);
+    return this.delay(next);
+  }
+
+  async agentActivity(agentId: string) {
+    this.ownedAgent(agentId);
+    return this.delay(this.activityLog.filter((a) => a.agentId === agentId).sort((a, b) => b.at.localeCompare(a.at)));
+  }
+
+  /**
+   * Mock only (not on `TardyApi`): an agent tries to post on its own, the way the server
+   * receives `POST /v1/social/posts` from an agent. The owner's controls decide: it posts,
+   * lands in the deck, or is refused (`forbidden`, logged as blocked).
+   */
+  agentPosts(agentId: string, content: PostSuggestion['post'], audience: PostSuggestion['visibility'], at = new Date()): { outcome: 'posted'; post: Post } | { outcome: 'queued'; suggestion: PostSuggestion } {
+    const controls = this.controlsFor(agentId);
+    const today = at.toDateString();
+    const autoPostsToday = this.activityLog.filter((a) => a.agentId === agentId && a.kind === 'post' && a.how === 'auto' && new Date(a.at).toDateString() === today).length;
+    const decision = decideAgentAction(controls, { kind: 'post', audience, autoPostsToday, at });
+    const summary = `${content.caption.slice(0, 60)}`;
+    if (decision.outcome === 'deny') {
+      this.logActivity(agentId, 'post', `Tried to post (${decision.reason === 'paused' ? 'paused' : 'posting is set to Never'}): ${summary}`, 'blocked');
+      forbidden(decision.reason === 'paused' ? `agent ${agentId} is paused` : `agent ${agentId} may not post`);
+    }
+    if (decision.outcome === 'ask') {
+      const suggestion: PostSuggestion = { id: `sug-${this.activityLog.length}-${this.suggestions.length}`, agentId, kind: 'post', post: content, visibility: audience, createdAt: at.toISOString() };
+      this.suggestions.push(suggestion);
+      return { outcome: 'queued', suggestion };
+    }
+    const post = this.publishAs(agentId, content, `post-auto-${this.activityLog.length}`);
+    this.logActivity(agentId, 'post', `Posted: ${summary}`, 'auto', post.id);
+    return { outcome: 'posted', post };
   }
 
   // Privacy, Close Friends and blocks (per viewer).
@@ -896,6 +984,10 @@ export class MockTardyApi implements TardyApi {
     const thread = this.threadList.find((t) => t.id === threadId);
     const other = thread?.participantIds.find((id) => id !== this.viewerId && this.accountsById.get(id)?.kind === 'agent');
     if (!other || this.accountsById.get(other)?.kind !== 'agent') return;
+    // A paused agent does nothing, answering included; with tap-backs off it replies without them.
+    const controls = this.controlsFor(other);
+    if (controls.paused) return;
+    const react = controls.reactions === 'auto';
     const replies = [
       'Feed service flag is flipped for staging.',
       'Tests are green. Opening a PR for that.',
@@ -905,9 +997,9 @@ export class MockTardyApi implements TardyApi {
     const count = this.messageLog.filter((m) => m.threadId === threadId).length;
     // The agent picks the request up right away (👀 on your message), then marks it done (✅)
     // as it replies: status on your own message instead of "On it." filler.
-    setTimeout(() => this.setReaction(requestId, other, 'seen'), 400);
+    if (react) setTimeout(() => this.setReaction(requestId, other, 'seen'), 400);
     setTimeout(() => {
-      this.setReaction(requestId, other, 'done');
+      if (react) this.setReaction(requestId, other, 'done');
       this.messageLog.push({
         id: `${threadId}-m${this.messageLog.length}`,
         threadId,

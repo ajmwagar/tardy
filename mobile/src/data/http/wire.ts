@@ -1,3 +1,4 @@
+import type { AgentActivity, AgentControls } from '@/agents/controls';
 import { NOTIFICATION_KINDS } from '@/notifications/preferences';
 import type { PlanId } from '@/membership/plans';
 import { REACTION_KINDS } from '@/reactions/reactions';
@@ -42,6 +43,7 @@ import {
   arraySkipping,
   boolean,
   integer,
+  isRecord,
   isoTime,
   knownOf,
   knownRecord,
@@ -286,6 +288,8 @@ export const trendingSound: Decoder<TrendingSound> = map(
 export const postSuggestion: Decoder<PostSuggestion> = object<PostSuggestion>({
   id: string,
   agentId: wire('agent_profile_id', string),
+  kind: optional(oneOf(['post', 'story', 'comment', 'message', 'follow'] as const)),
+  target: optional(object<NonNullable<PostSuggestion['target']>>({ accountId: wire('account_profile_id', string), postId: optional(string) })),
   post: object<PostSuggestion['post']>({
     caption: string,
     media: array(media),
@@ -299,6 +303,42 @@ export const postSuggestion: Decoder<PostSuggestion> = object<PostSuggestion>({
   visibility: oneOf(['private', 'followers', 'public'] as const),
   createdAt: wire('created_at', isoTime),
 });
+
+const ACTION_MODES = ['auto', 'ask', 'off'] as const;
+const AUDIENCES = ['private', 'followers', 'public'] as const;
+
+/** `GET /v1/agents/{id}/controls`: what one of the viewer's agents may do without them. */
+export const agentControls: Decoder<AgentControls> = object<AgentControls>({
+  paused: boolean,
+  posts: oneOf(ACTION_MODES),
+  stories: oneOf(ACTION_MODES),
+  comments: oneOf(ACTION_MODES),
+  messages: oneOf(ACTION_MODES),
+  follows: oneOf(ACTION_MODES),
+  reactions: oneOf(['auto', 'off'] as const),
+  autoAudience: oneOf(AUDIENCES),
+  dailyLimit: nullable(integer),
+  quietHours: boolean,
+  monthlySpendCents: integer,
+  useYourActivity: boolean,
+  notifyOnAuto: boolean,
+});
+
+const AGENT_ACTION_KINDS = ['post', 'story', 'comment', 'message', 'follow', 'reaction'] as const;
+
+/** One entry of `GET /v1/agents/{id}/activity`. Unknown action kinds (newer servers) are skipped. */
+export const agentActivity: Decoder<AgentActivity | undefined> = (v, path) => {
+  if (isRecord(v) && !(AGENT_ACTION_KINDS as readonly unknown[]).includes(v.kind)) return undefined;
+  return object<AgentActivity>({
+    id: string,
+    agentId: wire('agent_profile_id', string),
+    kind: oneOf(AGENT_ACTION_KINDS),
+    summary: string,
+    how: oneOf(['auto', 'approved', 'rejected', 'blocked'] as const),
+    at: wire('at', isoTime),
+    postId: optional(string),
+  })(v, path);
+};
 
 /** `GET /v1/profile/privacy-settings` (proposed). */
 export const privacySettings: Decoder<PrivacySettings> = object<PrivacySettings>({

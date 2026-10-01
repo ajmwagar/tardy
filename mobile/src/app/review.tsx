@@ -1,7 +1,7 @@
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Alert, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { interpolate, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -9,8 +9,10 @@ import { scheduleOnRN } from 'react-native-worklets';
 
 import { EmptyState, ErrorState, Pulse, SkeletonBlock } from '@/components/states';
 import { Avatar, haptic, Icon, NameLine, PressableScale, StatusPill } from '@/components/ui';
+import { MODE_KEY } from '@/agents/controls';
 import type { PostSuggestion } from '@/data/types';
 import { feedFrameRatio } from '@/media/aspect';
+import { requestVerb } from '@/suggestions/describe';
 import { stampOpacity, swipeOutcome, type SwipeOutcome } from '@/suggestions/swipe';
 import { api, ensureAccounts, reportError, useAccount } from '@/state/store';
 import { colors, IMAGE_TRANSITION_MS, radius } from '@/theme';
@@ -18,8 +20,17 @@ import { colors, IMAGE_TRANSITION_MS, radius } from '@/theme';
 const VISIBILITY_LABEL: Record<PostSuggestion['visibility'], string> = { private: 'Only you', followers: 'Followers', public: 'Public' };
 const FLY_MS = 220;
 
+/** What the right-swipe stamp says: what happens when you say yes. */
+const YES_STAMP: Record<NonNullable<PostSuggestion['kind']>, string> = { post: 'POST', story: 'POST', comment: 'SEND', message: 'SEND', follow: 'FOLLOW' };
+/** "post", "comment": the setting a shortcut loosens, in words. */
+const KIND_NOUN: Record<NonNullable<PostSuggestion['kind']>, string> = { post: 'post', story: 'add to its story', comment: 'comment', message: 'message people', follow: 'follow accounts' };
+
 function SuggestionCard({ suggestion, width }: { suggestion: PostSuggestion; width: number }) {
   const agent = useAccount(suggestion.agentId);
+  const target = useAccount(suggestion.target?.accountId);
+  const accounts = { get: (id: string) => (id === target?.id ? target : undefined) };
+  const kind = suggestion.kind ?? 'post';
+  const publishes = kind === 'post' || kind === 'story';
   const media = suggestion.post.media[0];
   const uri = media?.type === 'video' ? media.posterUrl : media?.url;
   const mediaHeight = Math.min(width / feedFrameRatio(suggestion.post.media), width * 1.1);
@@ -29,7 +40,10 @@ function SuggestionCard({ suggestion, width }: { suggestion: PostSuggestion; wid
         <Avatar account={agent} size={34} />
         <View style={{ flex: 1 }}>
           <NameLine account={agent} />
-          <Text style={styles.wants}>wants to post · {VISIBILITY_LABEL[suggestion.visibility]}</Text>
+          <Text style={styles.wants}>
+            {requestVerb(suggestion, accounts)}
+            {publishes ? ` · ${VISIBILITY_LABEL[suggestion.visibility]}` : ''}
+          </Text>
         </View>
       </View>
       {uri ? <Image source={uri} style={{ width, height: mediaHeight }} contentFit="cover" transition={IMAGE_TRANSITION_MS} /> : null}
@@ -48,8 +62,10 @@ function SuggestionCard({ suggestion, width }: { suggestion: PostSuggestion; wid
 }
 
 /**
- * Review the tardies your agents want to post, one card at a time: swipe right (or tap ✓) to
- * post it as the agent now, left (or ✕) to say no. The agent hears the answer either way.
+ * Approvals: what your agents want to do, one card at a time. Swipe right (or tap ✓) to let
+ * the agent do it now, left (or ✕) to say no; the agent hears the answer either way. Cards
+ * come from your agent controls (Settings → your agent): anything set to "Ask me first", or
+ * an automatic action that hit a limit. A shortcut under the card loosens the control.
  */
 export default function ReviewScreen() {
   const insets = useSafeAreaInsets();
@@ -63,7 +79,7 @@ export default function ReviewScreen() {
   const load = useCallback(async () => {
     try {
       const list = await api.postSuggestions();
-      await ensureAccounts(list.map((s) => s.agentId));
+      await ensureAccounts(list.flatMap((s) => [s.agentId, s.target?.accountId]));
       setQueue(list);
       setError(null);
     } catch (e) {
@@ -78,6 +94,30 @@ export default function ReviewScreen() {
   }, [load]);
 
   const top = queue?.[0];
+  const topKind = top?.kind ?? 'post';
+  const topAgent = useAccount(top?.agentId);
+
+  const alwaysAllow = useCallback(() => {
+    if (!top) return;
+    const key = MODE_KEY[topKind];
+    const handle = topAgent ? `@${topAgent.handle}` : 'this agent';
+    Alert.alert(
+      `Let ${handle} ${KIND_NOUN[topKind]} without asking?`,
+      'It still follows your audience, daily and quiet-hours limits. You can change this in its controls any time.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Allow',
+          onPress: () => {
+            api.updateAgentControls(top.agentId, { [key]: 'auto' }).then(
+              () => haptic.impact(),
+              (e: unknown) => reportError(`Couldn't change that: ${e instanceof Error ? e.message : String(e)}`),
+            );
+          },
+        },
+      ],
+    );
+  }, [top, topKind, topAgent]);
 
   const decide = useCallback(
     async (outcome: Exclude<SwipeOutcome, null>) => {
@@ -133,7 +173,7 @@ export default function ReviewScreen() {
           <Icon name="xmark" size={22} />
         </PressableScale>
         <Text style={styles.title} accessibilityRole="header">
-          Suggested tardies
+          Approvals
         </Text>
         <Text style={styles.count}>{queue ? `${queue.length} left` : ''}</Text>
       </View>
@@ -149,7 +189,11 @@ export default function ReviewScreen() {
           <EmptyState
             icon="checkmark.circle"
             title="All caught up"
-            message={posted > 0 ? `${posted} posted. Your agents will suggest more as they ship.` : 'Your agents will suggest tardies as they ship things.'}
+            message={
+              posted > 0
+                ? `${posted} approved. Your agents ask here when your controls say "Ask me first".`
+                : 'Your agents ask here before doing anything your controls say to ask about.'
+            }
           />
         ) : (
           <>
@@ -159,10 +203,10 @@ export default function ReviewScreen() {
               </Animated.View>
             ) : null}
             <GestureDetector gesture={pan}>
-              <Animated.View style={cardStyle} accessibilityHint="Swipe right to post, left to drop">
+              <Animated.View style={cardStyle} accessibilityHint="Swipe right to allow, left to say no">
                 <SuggestionCard suggestion={top} width={width} />
                 <Animated.View style={[styles.stamp, styles.stampApprove, approveStamp]} pointerEvents="none">
-                  <Text style={[styles.stampText, { color: '#2BE07B' }]}>POST</Text>
+                  <Text style={[styles.stampText, { color: '#2BE07B' }]}>{YES_STAMP[topKind]}</Text>
                 </Animated.View>
                 <Animated.View style={[styles.stamp, styles.stampReject, rejectStamp]} pointerEvents="none">
                   <Text style={[styles.stampText, { color: colors.alarm }]}>NOPE</Text>
@@ -174,14 +218,28 @@ export default function ReviewScreen() {
       </View>
 
       {top ? (
-        <View style={styles.buttons}>
-          <PressableScale style={[styles.round, styles.reject]} onPress={() => fly('reject')} accessibilityRole="button" accessibilityLabel="Don't post">
-            <Icon name="xmark" size={28} color={colors.alarm} weight="bold" />
-          </PressableScale>
-          <PressableScale style={[styles.round, styles.approve]} onPress={() => fly('approve')} accessibilityRole="button" accessibilityLabel="Post it">
-            <Icon name="checkmark" size={28} color="#2BE07B" weight="bold" />
-          </PressableScale>
-        </View>
+        <>
+          <View style={styles.buttons}>
+            <PressableScale style={[styles.round, styles.reject]} onPress={() => fly('reject')} accessibilityRole="button" accessibilityLabel="Say no">
+              <Icon name="xmark" size={28} color={colors.alarm} weight="bold" />
+            </PressableScale>
+            <PressableScale style={[styles.round, styles.approve]} onPress={() => fly('approve')} accessibilityRole="button" accessibilityLabel="Allow it">
+              <Icon name="checkmark" size={28} color="#2BE07B" weight="bold" />
+            </PressableScale>
+          </View>
+          <View style={styles.shortcuts}>
+            <PressableScale onPress={alwaysAllow} accessibilityRole="button" hitSlop={8}>
+              <Text style={styles.shortcut}>Always allow</Text>
+            </PressableScale>
+            <Text style={styles.dot}>·</Text>
+            <PressableScale
+              onPress={() => router.push({ pathname: '/settings/agent/[agentId]', params: { agentId: top.agentId } })}
+              accessibilityRole="button"
+              hitSlop={8}>
+              <Text style={styles.shortcut}>{topAgent ? `@${topAgent.handle}'s controls` : 'Agent controls'}</Text>
+            </PressableScale>
+          </View>
+        </>
       ) : null}
     </View>
   );
@@ -206,6 +264,9 @@ const styles = StyleSheet.create({
   stampReject: { right: 22, borderColor: colors.alarm, transform: [{ rotate: '14deg' }] },
   stampText: { fontSize: 32, fontWeight: '900', letterSpacing: 2 },
   buttons: { flexDirection: 'row', justifyContent: 'center', gap: 48, paddingTop: 12 },
+  shortcuts: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 8, paddingTop: 14 },
+  shortcut: { color: colors.textSecondary, fontSize: 13.5, fontWeight: '600' },
+  dot: { color: colors.textTertiary },
   round: { width: 68, height: 68, borderRadius: 34, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surface, borderWidth: 2 },
   reject: { borderColor: colors.alarm },
   approve: { borderColor: '#2BE07B' },

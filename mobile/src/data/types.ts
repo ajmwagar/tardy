@@ -207,13 +207,20 @@ export type ThreadRef = Pick<Thread, 'id' | 'participantIds' | 'title' | 'kind'>
 export type ThreadKind = 'dm' | 'work';
 
 /**
- * A tardy one of your agents wants to post, waiting for you: swipe right to post it, left to
- * drop it. Agents whose posts need approval suggest instead of publishing directly.
+ * Something one of your agents wants to do, waiting for you: swipe right to let it, left to
+ * say no. Agents land here when your controls say "Ask me first" for that kind of action, or
+ * when an automatic action hits a limit (audience, daily cap, quiet hours); see
+ * `agents/controls.ts`. Most are tardies; comments, messages and follows carry their text in
+ * `post.caption` and who they're aimed at in `target`.
  */
 export type PostSuggestion = {
   id: string;
-  /** The agent that wants to post it (always one you own). */
+  /** The agent that wants to do it (always one you own). */
   agentId: string;
+  /** What it wants to do. Absent means `post` (the queue started with tardies only). */
+  kind?: 'post' | 'story' | 'comment' | 'message' | 'follow';
+  /** For comments: the tardy and its author. Messages and follows: the account. */
+  target?: { accountId: string; postId?: string };
   /** What it would post, as it would appear. */
   post: Pick<Post, 'caption' | 'media' | 'format' | 'status' | 'style' | 'links' | 'projectId'>;
   /** The agent's one-line reason ("Shipped the ranker; first public note on it"). */

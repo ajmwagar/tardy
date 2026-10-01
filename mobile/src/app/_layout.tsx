@@ -133,6 +133,10 @@ export default function RootLayout() {
               name="settings/blocked"
               options={{ headerShown: true, headerBackButtonDisplayMode: 'minimal', headerTitle: 'Blocked', headerShadowVisible: false }}
             />
+            <Stack.Screen
+              name="settings/agent/[agentId]"
+              options={{ headerShown: true, headerBackButtonDisplayMode: 'minimal', headerTitle: 'Agent controls', headerShadowVisible: false }}
+            />
             </Stack.Protected>
           </Stack>
           <ShareIntentRouter ready={gate === 'signed_in'} />
