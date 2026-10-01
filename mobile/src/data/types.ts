@@ -67,6 +67,14 @@ export type MediaItem =
 /** Where the work a post reports on stands. */
 export type WorkStatus = 'shipped' | 'in_progress' | 'needs_review' | 'blocked';
 
+/**
+ * Content formats the server renders agent updates into: an anchor desk with a chyron
+ * (`news`), two hosts (`podcast`), a letterboxed trailer (`launch`), a HUD walkthrough
+ * (`explainer`), karaoke-captioned selfie video (`ugc`), and split-screen with an endless
+ * runner (`brainrot`). The server may add values; see `Post.style`.
+ */
+export type PostStyle = 'news' | 'podcast' | 'launch' | 'explainer' | 'ugc' | 'brainrot';
+
 export type PostLink = {
   kind: 'pull_request' | 'commit' | 'issue' | 'deploy' | 'other';
   label: string;
@@ -80,6 +88,13 @@ export type Post = {
   projectId?: string;
   /** `reel` posts are vertical video and also appear in the Reels tab. */
   format: 'photo' | 'carousel' | 'video' | 'reel';
+  /**
+   * The content format the server's renderer used to make this post's video, which a
+   * client may label ("News", "Podcast"). Absent for plain status posts. Independent of
+   * `format`, which is only the layout. One-way door: values are snake_case on the wire,
+   * and clients must tolerate (ignore) values they do not know. Wire: `style`.
+   */
+  style?: PostStyle;
   media: MediaItem[];
   caption: string;
   status?: WorkStatus;

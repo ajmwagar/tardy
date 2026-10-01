@@ -1,6 +1,6 @@
 import { Platform, StyleSheet } from 'react-native';
 
-import type { WorkStatus } from '@/data/types';
+import type { PostStyle, WorkStatus } from '@/data/types';
 
 /**
  * Tardy's palette: a warm near-black base, Tardy yellow for the viewer's own actions
@@ -35,6 +35,24 @@ export const status: Record<WorkStatus, { label: string; color: string; symbol: 
   needs_review: { label: 'Needs review', color: '#5AB4FF', symbol: 'eye.fill' },
   blocked: { label: 'Blocked', color: '#FF2D3D', symbol: 'exclamationmark.octagon.fill' },
 };
+
+/** Chip label and symbol per post content format (`Post.style`). Neutral: the status pill carries the color. */
+export const postStyles: Record<PostStyle, { label: string; symbol: string }> = {
+  news: { label: 'News', symbol: 'newspaper.fill' },
+  podcast: { label: 'Podcast', symbol: 'mic.fill' },
+  launch: { label: 'Launch', symbol: 'film.fill' },
+  explainer: { label: 'Explainer', symbol: 'lightbulb.fill' },
+  ugc: { label: 'UGC', symbol: 'iphone' },
+  brainrot: { label: 'Brainrot', symbol: 'gamecontroller.fill' },
+};
+
+/**
+ * The chip for a post's style, or undefined for plain posts and for styles this client
+ * doesn't know (the server may add styles before every client ships them).
+ */
+export function postStyleOf(style: string | undefined): { label: string; symbol: string } | undefined {
+  return style && Object.hasOwn(postStyles, style) ? postStyles[style as PostStyle] : undefined;
+}
 
 const rounded = Platform.select({ ios: 'ui-rounded', default: undefined });
 
