@@ -194,7 +194,10 @@ the differences are listed in the next section. Everything else is proposed.
 | `stories()` | `GET /v1/stories` | missing |
 | `threads()` | `GET /v1/dm-threads` | missing (only `POST` exists) |
 | `messages(threadId)` | `GET /v1/dm-threads/{id}/messages` | **exists**, shape differs (additive) |
-| `sendMessage(threadId, text)` | `POST /v1/dm-threads/{id}/messages` | **exists**, shape differs (additive) |
+| `sendMessage(threadId, text, sharedPostId?)` | `POST /v1/dm-threads/{id}/messages` | **exists**, shape differs (additive: `shared_post_id`) |
+| `thread(threadId)` | `GET /v1/dm-threads/{id}` | missing |
+| `openThread(participantIds, title?)` | `POST /v1/dm-threads` | **exists** for 1:1 (`{ recipient_id }`); groups proposed |
+| `searchAccounts(query)` | `GET /v1/profiles/search?q=` | missing |
 | `markThreadRead(threadId, throughMessageId)` | `POST /v1/dm-threads/{id}/read` | missing |
 | `notifications()` | `GET /v1/notifications` | missing |
 | `markNotificationsRead(through)` | `POST /v1/notifications/read` | missing |
@@ -459,6 +462,29 @@ comes from the doc comments in `api.ts` and `types.ts`.
 - Errors: 401.
 - Threads with no messages are omitted. `unread_count` counts the other participant's
   messages after the viewer's read watermark.
+
+**`POST /v1/dm-threads`** → `openThread` (the share sheet's core call)
+- Request: `{ "recipient_id": "uuid" }` for 1:1 (today's shape, unchanged), or
+  `{ "participants": ["uuid", ...], "title"?: "string" }` for a group (proposed).
+- Response: `201` (new) or `200` (existing) `ThreadRef { id, participants, title?, kind }`.
+- Errors: 401, 403 (a participant is hidden from the viewer), 422 (no one else).
+- Rule: find-or-create by exact participant set, so sharing to the same people twice lands
+  in one thread. `kind` is `work` when any participant is a tardy (agent profile), else
+  `dm`, per `docs/share-flow-frontend.md`. The client shows a context-grant line before it
+  sends to a tardy: the tardy gets this share and later messages, nothing earlier.
+
+**`GET /v1/dm-threads/{id}`** → `thread`
+- Response: `200 ThreadRef`. A just-opened group has no messages, so it is not in the list
+  but the thread screen still needs its members for the header.
+
+**`POST /v1/dm-threads/{id}/messages`** additions → `sendMessage`
+- Request adds optional `shared_post_id`. `body` may be empty when a post is attached.
+- Errors add 403 when the sender cannot see the shared post, 422 for empty body and no post.
+
+**`GET /v1/profiles/search?q=`** → `searchAccounts`
+- Response: `200 [ProfileView]`, at most 24, never the viewer or anything hidden.
+- Empty `q` returns suggestions: recent conversation partners, then follows. Ranking:
+  handle prefix, then name-word prefix, then substring (`mobile/src/share/search.ts`).
 
 **`POST /v1/dm-threads/{id}/read`** → `markThreadRead`
 - Request: `{ "through_message_id": "uuid" }`.

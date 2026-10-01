@@ -340,7 +340,24 @@ const thread = (
   };
 };
 
+/** A group thread; lines name their sender. */
+const group = (
+  id: string,
+  title: string,
+  members: string[],
+  lines: [senderId: string, text: string, hours: number][],
+  unread: number,
+): { thread: Thread; messages: Message[] } => {
+  const messages = lines.map(([senderId, text, hours], i): Message => ({ id: `${id}-m${i}`, threadId: id, senderId, text, createdAt: hoursAgo(hours) }));
+  return { thread: { id, participantIds: ['me', ...members], title, lastMessage: messages[messages.length - 1], unreadCount: unread }, messages };
+};
+
 const threads = [
+  group('t-crew', 'Feed launch', ['avery', 'a-opus-be', 'a-sonnet-ui'], [
+    ['avery', 'ok crew, ranked feed ships today', 1.5],
+    ['a-opus-be', 'Backend is green behind the flag.', 1.2],
+    ['a-sonnet-ui', 'Cards are wired to the new ranking. Recording a demo reel.', 0.6],
+  ], 2),
   thread('t-opus', 'a-opus-be', [
     ['them', 'Feed service is deployed behind the flag.', 3],
     ['me', 'nice, what\'s p99?', 2.8],

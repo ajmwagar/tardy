@@ -1,7 +1,7 @@
 import { router } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import { memo, useState } from 'react';
-import { ActionSheetIOS, Pressable, Share, StyleSheet, Text, View } from 'react-native';
+import { ActionSheetIOS, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type { Post } from '@/data/types';
 import { logEngagement, toggleAlarm, toggleFollowing, toggleLiked, toggleSaved, useAccount, useIsFollowing, usePostState } from '@/state/store';
@@ -55,10 +55,7 @@ export const PostCard = memo(function PostCard({
     router.push({ pathname: '/profile/[handle]', params: { handle: author.handle } });
   };
   const openComments = () => router.push({ pathname: '/comments/[postId]', params: { postId: post.id } });
-  const share = async () => {
-    const result = await Share.share({ message: `${post.caption}\n\n— @${author?.handle} on Tardy` });
-    if (result.action === Share.sharedAction) logEngagement({ type: 'share', postId: post.id });
-  };
+  const share = () => router.push({ pathname: '/share', params: { postId: post.id } });
   const more = () =>
     ActionSheetIOS.showActionSheetWithOptions(
       {

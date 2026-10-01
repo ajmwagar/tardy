@@ -7,7 +7,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ErrorState, Pulse, SkeletonBlock } from '@/components/states';
 import { Avatar, Icon, NameLine, PressableScale, StatusPill } from '@/components/ui';
 import { TardyApiError } from '@/data/api';
-import type { Message, Post, Thread } from '@/data/types';
+import type { Message, Post, ThreadRef } from '@/data/types';
+import { ThreadAvatar } from '@/components/thread-avatar';
+import { isGroup, othersIn, threadLabel } from '@/share/thread-label';
 import { api, ensureAccounts, refreshUnread, reportError, useAccount, useStore } from '@/state/store';
 import { colors, IMAGE_TRANSITION_MS, radius, timeAgo } from '@/theme';
 
@@ -73,11 +75,14 @@ const Bubble = memo(function Bubble({
   row,
   mine,
   showAvatar,
+  showName,
   onRetry,
 }: {
   row: Row;
   mine: boolean;
   showAvatar: boolean;
+  /** Groups: the sender's handle above the first bubble of their run. */
+  showName: boolean;
   onRetry: (row: Row) => void;
 }) {
   const sender = useAccount(row.senderId);
@@ -85,6 +90,7 @@ const Bubble = memo(function Bubble({
     <View style={[styles.bubbleRow, mine ? styles.bubbleRowMine : styles.bubbleRowTheirs]}>
       {!mine && <View style={styles.avatarSlot}>{showAvatar && <Avatar account={sender} size={26} />}</View>}
       <View style={[styles.bubbleColumn, mine && styles.bubbleColumnMine]}>
+        {showName && !mine && sender && <Text style={styles.senderName}>{sender.handle}</Text>}
         {row.sharedPost && <SharedPostCard message={row} />}
         {row.text ? (
           <Pressable
@@ -116,19 +122,20 @@ export default function ThreadScreen() {
   const { threadId } = useLocalSearchParams<{ threadId: string }>();
   const insets = useSafeAreaInsets();
   const meId = useStore((s) => s.accounts.get('me')?.id);
-  const [thread, setThread] = useState<Thread | null>(null);
+  const [thread, setThread] = useState<ThreadRef | null>(null);
   const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
-  const otherId = thread?.participantIds.find((id) => id !== meId);
-  const otherAccount = useAccount(otherId);
+  const group = thread !== null && isGroup(thread);
+  const otherAccount = useAccount(thread ? othersIn(thread, meId)[0] : undefined);
+  const accounts = useStore((s) => s.accounts);
+  const groupLabel = thread && group ? threadLabel(thread, meId, (id) => accounts.get(id)?.handle) : null;
   const lastReadId = useRef<string | null>(null);
 
   const sync = useCallback(async () => {
     try {
-      const [threads, messages] = await Promise.all([api.threads(), api.messages(threadId)]);
-      const current = threads.find((t) => t.id === threadId) ?? null;
-      await ensureAccounts([...(current?.participantIds ?? []), ...messages.map((m) => m.senderId)]);
+      const [current, messages] = await Promise.all([api.thread(threadId), api.messages(threadId)]);
+      await ensureAccounts([...current.participantIds, ...messages.map((m) => m.senderId)]);
       setThread(current);
       // Keep local pending/failed sends; everything else comes from the server.
       setRows((prev) => [...messages, ...(prev ?? []).filter((r) => r.pending || r.failed)]);
@@ -187,18 +194,35 @@ export default function ThreadScreen() {
       return (
         <View>
           {(!older || gap) && <Text style={styles.timeBreak}>{timeAgo(item.createdAt)} ago</Text>}
-          <Bubble row={item} mine={item.senderId === meId} showAvatar={!newer || newer.senderId !== item.senderId} onRetry={retry} />
+          <Bubble
+            row={item}
+            mine={item.senderId === meId}
+            showAvatar={!newer || newer.senderId !== item.senderId}
+            showName={group && (!older || !!gap || older.senderId !== item.senderId)}
+            onRetry={retry}
+          />
         </View>
       );
     },
-    [data, meId, retry],
+    [data, meId, retry, group],
   );
 
   return (
     <View style={styles.screen}>
       <Stack.Screen
         options={{
-          headerTitle: () => (
+          headerTitle: () =>
+            thread && groupLabel !== null ? (
+              <View style={styles.titleRow} accessibilityRole="header" accessibilityLabel={`Group: ${groupLabel}`}>
+                <ThreadAvatar thread={thread} me={meId} size={28} />
+                <View>
+                  <Text style={styles.groupTitle} numberOfLines={1}>
+                    {groupLabel}
+                  </Text>
+                  <Text style={styles.titleSub}>{thread.participantIds.length} members</Text>
+                </View>
+              </View>
+            ) : (
             <Pressable
               style={styles.titleRow}
               accessibilityRole="button"
@@ -210,7 +234,7 @@ export default function ThreadScreen() {
                 {otherAccount?.model && <Text style={styles.titleSub}>{otherAccount.model}</Text>}
               </View>
             </Pressable>
-          ),
+            ),
         }}
       />
       {error && !rows ? (
@@ -231,7 +255,7 @@ export default function ThreadScreen() {
             <TextInput
               value={draft}
               onChangeText={setDraft}
-              placeholder={otherAccount ? `Message ${otherAccount.handle}…` : 'Message…'}
+              placeholder={groupLabel ? `Message ${groupLabel}…` : otherAccount ? `Message ${otherAccount.handle}…` : 'Message…'}
               placeholderTextColor={colors.textTertiary}
               style={styles.input}
               multiline
@@ -260,6 +284,8 @@ export default function ThreadScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  groupTitle: { color: colors.text, fontSize: 15, fontWeight: '700', maxWidth: 220 },
+  senderName: { color: colors.textTertiary, fontSize: 11.5, marginLeft: 12, marginBottom: 2 },
   titleSub: { color: colors.textTertiary, fontSize: 11, fontFamily: 'ui-monospace' },
   list: { paddingHorizontal: 12, paddingVertical: 12, gap: 3 },
   timeBreak: { color: colors.textTertiary, fontSize: 11.5, textAlign: 'center', marginVertical: 12 },

@@ -148,10 +148,23 @@ export type StoryGroup = { authorId: string; stories: Story[] };
 
 export type Thread = {
   id: string;
+  /** Everyone in the thread, viewer included. More than two is a group. */
   participantIds: string[];
+  /** Groups only, and optional there: unnamed groups show their members' handles. */
+  title?: string;
+  /**
+   * `work` when a tardy is in the thread (it receives the messages), else a quiet `dm` no
+   * agent sees. Absent from servers that predate the field: treat as `dm`. Wire: `kind`.
+   */
+  kind?: ThreadKind;
   lastMessage: Message;
   unreadCount: number;
 };
+
+/** A thread as `openThread` returns it: it may have no messages yet. */
+export type ThreadRef = Pick<Thread, 'id' | 'participantIds' | 'title' | 'kind'>;
+
+export type ThreadKind = 'dm' | 'work';
 
 export type Message = {
   id: string;

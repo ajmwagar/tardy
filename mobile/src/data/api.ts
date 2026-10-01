@@ -14,8 +14,12 @@ import type {
   SignedIn,
   StoryGroup,
   Thread,
+  ThreadRef,
   Visibility,
 } from './types';
+
+/** Most results `searchAccounts` returns: one share sheet's worth. */
+export const SEARCH_LIMIT = 24;
 
 /**
  * Why a request failed. `forbidden` means the thing exists but the viewer may not see or
@@ -112,9 +116,31 @@ export interface TardyApi {
   /** The story tray, in display order (see `StoryGroup`). */
   stories(): Promise<StoryGroup[]>;
 
+  /** The viewer's threads that have at least one message, most recent first. */
   threads(): Promise<Thread[]>;
+  /** One thread the viewer is in, messages or not (a just-opened group has none). */
+  thread(threadId: string): Promise<ThreadRef>;
   messages(threadId: string): Promise<Message[]>;
-  sendMessage(threadId: string, text: string): Promise<Message>;
+  /**
+   * Sends a message. With `sharedPostId` it carries that post (`text` may then be empty);
+   * the post must be visible to the sender (`forbidden` otherwise). Each reader still gets
+   * it resolved for them (see `SharedPostRef`). Empty text with no post is `invalid`.
+   */
+  sendMessage(threadId: string, text: string, sharedPostId?: string): Promise<Message>;
+  /**
+   * Finds or starts the thread with exactly these participants; the viewer is implied and
+   * may be omitted. Idempotent: the same set returns the same thread, so sharing to the same
+   * people twice lands in one conversation. Two or more others make a group, named by
+   * `title` when it starts (ignored for an existing thread). `invalid` with no one else;
+   * `forbidden` if any participant is hidden from the viewer.
+   */
+  openThread(participantIds: string[], title?: string): Promise<ThreadRef>;
+  /**
+   * Who the viewer can message, best match first, never the viewer or anything hidden.
+   * An empty query suggests: recent conversations, then accounts they follow. Matches
+   * handle or name prefixes before substrings. At most `SEARCH_LIMIT` results.
+   */
+  searchAccounts(query: string): Promise<Account[]>;
   /**
    * Marks everything in the thread read for the viewer, up to and including `throughMessageId`.
    * A per-thread watermark, not per-message flags: idempotent, and a stale call from another

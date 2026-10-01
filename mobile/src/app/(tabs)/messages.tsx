@@ -5,15 +5,31 @@ import { FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { EmptyState, ErrorState, Pulse, SkeletonBlock } from '@/components/states';
-import { Avatar, Icon, NameLine, PressableScale } from '@/components/ui';
+import { ThreadAvatar } from '@/components/thread-avatar';
+import { Icon, NameLine, PressableScale } from '@/components/ui';
 import type { Thread } from '@/data/types';
+import { matchRank } from '@/share/search';
+import { isWork } from '@/share/sections';
+import { isGroup, othersIn, threadLabel } from '@/share/thread-label';
 import { api, ensureAccounts, refreshUnread, useAccount, useStore } from '@/state/store';
 import { colors, timeAgo, type } from '@/theme';
 
 /** Someone who messaged within this window shows the green "active" dot. */
 const ACTIVE_WINDOW_MS = 60 * 60 * 1000;
 
-const other = (thread: Thread, me: string | undefined) => thread.participantIds.find((id) => id !== me) ?? thread.participantIds[0];
+const other = (thread: Thread, me: string | undefined) => othersIn(thread, me)[0] ?? thread.participantIds[0];
+
+/** A 1:1 thread shows the person (with their badges); a group shows its label. */
+function ThreadName({ thread, me, style }: { thread: Thread; me: string | undefined; style?: object }) {
+  const account = useAccount(other(thread, me));
+  const accounts = useStore((s) => s.accounts);
+  if (!isGroup(thread)) return <NameLine account={account} style={style} />;
+  return (
+    <Text style={[styles.groupName, style]} numberOfLines={1}>
+      {threadLabel(thread, me, (id) => accounts.get(id)?.handle)}
+    </Text>
+  );
+}
 
 function isActive(thread: Thread, me: string | undefined, now: number) {
   return thread.lastMessage.senderId !== me && now - Date.parse(thread.lastMessage.createdAt) < ACTIVE_WINDOW_MS;
@@ -23,7 +39,8 @@ const threadKey = (t: Thread) => t.id;
 const openThread = (thread: Thread) => router.push({ pathname: '/messages/[threadId]', params: { threadId: thread.id } });
 
 const ActiveBubble = memo(function ActiveBubble({ thread, me }: { thread: Thread; me: string | undefined }) {
-  const account = useAccount(other(thread, me));
+  // In a group, "active" is whoever spoke last.
+  const account = useAccount(isGroup(thread) ? thread.lastMessage.senderId : other(thread, me));
   return (
     <PressableScale
       style={styles.active}
@@ -32,32 +49,35 @@ const ActiveBubble = memo(function ActiveBubble({ thread, me }: { thread: Thread
       accessibilityRole="button"
       accessibilityLabel={`${account?.handle ?? 'Someone'}, active now`}>
       <View>
-        <Avatar account={account} size={58} />
+        <ThreadAvatar thread={thread} me={me} size={58} />
         <View style={styles.presence} />
       </View>
       <Text style={styles.activeLabel} numberOfLines={1}>
-        {account?.handle}
+        {isGroup(thread) ? <ThreadName thread={thread} me={me} style={styles.activeLabel} /> : account?.handle}
       </Text>
     </PressableScale>
   );
 });
 
 const ThreadRow = memo(function ThreadRow({ thread, me, now }: { thread: Thread; me: string | undefined; now: number }) {
-  const account = useAccount(other(thread, me));
+  const sender = useAccount(thread.lastMessage.senderId);
   const unread = thread.unreadCount > 0;
   const fromMe = thread.lastMessage.senderId === me;
-  const preview =
-    thread.lastMessage.sharedPost && !thread.lastMessage.text
-      ? 'Shared a post'
-      : `${fromMe ? 'You: ' : ''}${thread.lastMessage.text}`;
+  const who = fromMe ? 'You: ' : isGroup(thread) && sender ? `${sender.handle}: ` : '';
+  const preview = thread.lastMessage.sharedPost && !thread.lastMessage.text ? `${who}Shared a post` : `${who}${thread.lastMessage.text}`;
   return (
     <Pressable style={({ pressed }) => [styles.row, pressed && styles.rowPressed]} onPress={() => openThread(thread)}>
       <View>
-        <Avatar account={account} size={52} />
+        <ThreadAvatar thread={thread} me={me} size={52} />
         {isActive(thread, me, now) && <View style={[styles.presence, styles.presenceSmall]} />}
       </View>
       <View style={styles.rowText}>
-        <NameLine account={account} style={unread ? styles.nameUnread : styles.name} />
+        <View style={styles.nameRow}>
+          <ThreadName thread={thread} me={me} style={unread ? styles.nameUnread : styles.name} />
+          {/* A group with a tardy in it is read by that tardy: say so. (1:1 tardy chats already show the AI badge;
+              a plain DM is never labeled, since no agent sees it.) */}
+          {isGroup(thread) && isWork(thread) && <Text style={styles.workTag}>Work</Text>}
+        </View>
         <Text style={[styles.preview, unread && styles.previewUnread]} numberOfLines={1}>
           {preview} · {timeAgo(thread.lastMessage.createdAt, now)}
         </Text>
@@ -118,10 +138,14 @@ export default function MessagesScreen() {
     if (!threads) return [];
     const q = query.trim().toLowerCase();
     if (!q) return threads;
-    return threads.filter((t) => {
-      const a = accounts.get(other(t, me?.id));
-      return a?.handle.toLowerCase().includes(q) || a?.name.toLowerCase().includes(q);
-    });
+    return threads.filter(
+      (t) =>
+        (t.title && matchRank({ handle: t.title, name: t.title }, q) !== null) ||
+        othersIn(t, me?.id).some((id) => {
+          const a = accounts.get(id);
+          return a && matchRank(a, q) !== null;
+        }),
+    );
   }, [threads, query, accounts, me?.id]);
 
   const active = useMemo(() => (threads ?? []).filter((t) => isActive(t, me?.id, now)), [threads, me?.id, now]);
@@ -166,7 +190,9 @@ export default function MessagesScreen() {
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       <View style={styles.bar}>
         <Text style={type.title} numberOfLines={1} maxFontSizeMultiplier={1.3} accessibilityRole="header">{me?.handle ?? 'messages'}</Text>
-        <Icon name="square.and.pencil" size={24} />
+        <PressableScale onPress={() => router.push('/share')} accessibilityRole="button" accessibilityLabel="New message" hitSlop={10}>
+          <Icon name="square.and.pencil" size={24} />
+        </PressableScale>
       </View>
 
       {error && !threads ? (
@@ -245,6 +271,18 @@ const styles = StyleSheet.create({
   rowPressed: { backgroundColor: colors.surface },
   rowText: { flex: 1, gap: 3 },
   name: { fontWeight: '500' },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  workTag: {
+    color: colors.primary,
+    fontSize: 10.5,
+    fontWeight: '800',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 5,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(255,194,26,0.14)',
+  },
+  groupName: { color: colors.text, fontSize: 14 },
   nameUnread: { fontWeight: '800' },
   preview: { color: colors.textSecondary, fontSize: 13.5 },
   previewUnread: { color: colors.text, fontWeight: '600' },

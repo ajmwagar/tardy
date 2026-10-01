@@ -15,6 +15,7 @@ import type {
   SignedIn,
   StoryGroup,
   Thread,
+  ThreadRef,
   Visibility,
 } from '../types';
 import { array, isoToMs, snakeKeys, TardyWireError, type Decoder } from './codec';
@@ -282,13 +283,31 @@ export class HttpTardyApi implements TardyApi {
     return this.request('GET', '/v1/dm-threads', { decode: array(W.thread) });
   }
 
+  thread(threadId: string): Promise<ThreadRef> {
+    return this.request('GET', `/v1/dm-threads/${segment(threadId)}`, { decode: W.threadRef });
+  }
+
   messages(threadId: string): Promise<Message[]> {
     return this.request('GET', `/v1/dm-threads/${segment(threadId)}/messages`, { decode: array(W.message) });
   }
 
-  sendMessage(threadId: string, text: string): Promise<Message> {
+  sendMessage(threadId: string, text: string, sharedPostId?: string): Promise<Message> {
     // `text` is `body` on the wire (the Rust `SendMessage` field).
-    return this.request('POST', `/v1/dm-threads/${segment(threadId)}/messages`, { body: { body: text }, decode: W.message });
+    return this.request('POST', `/v1/dm-threads/${segment(threadId)}/messages`, {
+      body: { body: text, ...(sharedPostId !== undefined && { shared_post_id: sharedPostId }) },
+      decode: W.message,
+    });
+  }
+
+  openThread(participantIds: string[], title?: string): Promise<ThreadRef> {
+    // The server's 1:1 shape today is `{ recipient_id }`; groups (`participants`, `title`) are proposed.
+    const others = participantIds.filter((id) => id !== this.current?.accountId);
+    const body = others.length === 1 ? { recipient_id: others[0] } : { participants: others, ...(title !== undefined && { title }) };
+    return this.request('POST', '/v1/dm-threads', { body, decode: W.threadRef });
+  }
+
+  searchAccounts(query: string): Promise<Account[]> {
+    return this.request('GET', '/v1/profiles/search', { query: { q: query }, decode: array(W.account) });
   }
 
   async markThreadRead(threadId: string, throughMessageId: string): Promise<void> {

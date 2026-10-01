@@ -22,6 +22,7 @@ import type {
   Story,
   StoryGroup,
   Thread,
+  ThreadRef,
   Visibility,
   WorkStatus,
 } from '../types';
@@ -168,8 +169,18 @@ export const message: Decoder<Message> = object<Message>({
 export const thread: Decoder<Thread> = object<Thread>({
   id: string,
   participantIds: wire('participants', array(string)),
+  title: optional(string),
+  kind: optional(oneOf(['dm', 'work'] as const)),
   lastMessage: message,
   unreadCount: integer,
+});
+
+/** What `POST /v1/dm-threads` returns: a `DirectThread` that may have no messages yet. */
+export const threadRef: Decoder<ThreadRef> = object<ThreadRef>({
+  id: string,
+  participantIds: wire('participants', array(string)),
+  title: optional(string),
+  kind: optional(oneOf(['dm', 'work'] as const)),
 });
 
 /** Notifications of a kind this client does not know are skipped, per the contract. */

@@ -11,9 +11,11 @@ import {
   withOverride,
   type PushDecision,
 } from '@/notifications/preferences';
+import { searchRanked } from '@/share/search';
+import { threadKind } from '@/share/sections';
 import { normalizeProfilePatch, profileProblem, type ProfilePatch } from '../profile';
 
-import { TardyApiError, type TardyApi } from '../api';
+import { SEARCH_LIMIT, TardyApiError, type TardyApi } from '../api';
 import type {
   Account,
   AuthCredential,
@@ -27,6 +29,7 @@ import type {
   ProjectMembership,
   PushTokenRegistration,
   SignedIn,
+  ThreadRef,
   Visibility,
 } from '../types';
 import {
@@ -102,6 +105,15 @@ export class MockTardyApi implements TardyApi {
   private following: Set<string>;
   private history: EngagementAction[] = [];
   private messageLog: Message[] = [...MESSAGES];
+  /** Every thread, fixture and opened; `threads()` lists only those with messages. */
+  private threadList: ThreadRef[] = THREADS.map(({ id, participantIds, title }) => ({
+    id,
+    participantIds,
+    ...(title !== undefined && { title }),
+    kind: this.kindOf(participantIds),
+  }));
+  /** Seeded unread counts for fixture threads, until the viewer reads them. */
+  private seededUnread = new Map(THREADS.map((t) => [t.id, t.unreadCount]));
   private commentLog: Comment[] = [...COMMENTS];
   /** Per (viewer, thread): index into the thread's messages of the last one read. */
   private threadReadThrough = new Map<string, number>();
@@ -219,11 +231,11 @@ export class MockTardyApi implements TardyApi {
 
   /** The viewer's threads, minus any with a participant they can no longer see. */
   private visibleThreads() {
-    return THREADS.filter((t) => t.participantIds.includes(this.viewerId) && t.participantIds.every(this.canSeeAccountId));
+    return this.threadList.filter((t) => t.participantIds.includes(this.viewerId) && t.participantIds.every(this.canSeeAccountId));
   }
 
   private visibleThread(threadId: string) {
-    if (!THREADS.some((t) => t.id === threadId)) notFound(`thread ${threadId}`);
+    if (!this.threadList.some((t) => t.id === threadId)) notFound(`thread ${threadId}`);
     if (!this.visibleThreads().some((t) => t.id === threadId)) forbidden(`thread ${threadId}`);
   }
 
@@ -381,18 +393,24 @@ export class MockTardyApi implements TardyApi {
   }
 
   /** Unread = messages from others after the viewer's watermark; fixtures seed the watermark. */
-  private unreadIn(thread: (typeof THREADS)[number], messages: Message[]) {
+  private unreadIn(thread: ThreadRef, messages: Message[]) {
     const key = `${this.viewerId}:${thread.id}`;
-    const through = this.threadReadThrough.get(key) ?? messages.length - 1 - thread.unreadCount;
+    const through = this.threadReadThrough.get(key) ?? messages.length - 1 - (this.seededUnread.get(thread.id) ?? 0);
     return messages.slice(through + 1).filter((m) => m.senderId !== this.viewerId).length;
   }
 
   async threads() {
-    const threads = this.visibleThreads().map((t) => {
+    const threads = this.visibleThreads().flatMap((t) => {
       const messages = this.messageLog.filter((m) => m.threadId === t.id);
-      return { ...t, lastMessage: this.presentMessage(messages[messages.length - 1]), unreadCount: this.unreadIn(t, messages) };
+      if (messages.length === 0) return [];
+      return [{ ...t, lastMessage: this.presentMessage(messages[messages.length - 1]), unreadCount: this.unreadIn(t, messages) }];
     });
     return this.delay(threads.sort((a, b) => Date.parse(b.lastMessage.createdAt) - Date.parse(a.lastMessage.createdAt)));
+  }
+
+  async thread(threadId: string) {
+    this.visibleThread(threadId);
+    return this.delay(this.threadList.find((t) => t.id === threadId)!);
   }
 
   async messages(threadId: string) {
@@ -400,14 +418,18 @@ export class MockTardyApi implements TardyApi {
     return this.delay(this.messageLog.filter((m) => m.threadId === threadId).map(this.presentMessage));
   }
 
-  async sendMessage(threadId: string, text: string) {
+  async sendMessage(threadId: string, text: string, sharedPostId?: string) {
     this.visibleThread(threadId);
+    const body = text.trim();
+    if (!body && sharedPostId === undefined) throw new TardyApiError('invalid', 'A message needs text or a shared post.');
+    if (sharedPostId !== undefined) this.visiblePost(sharedPostId);
     const message: Message = {
       id: `${threadId}-m${this.messageLog.length}`,
       threadId,
       senderId: this.viewerId,
-      text,
+      text: body,
       createdAt: new Date().toISOString(),
+      ...(sharedPostId !== undefined && { sharedPost: { status: 'available' as const, postId: sharedPostId } }),
     };
     this.messageLog.push(message);
     this.scheduleAgentReply(threadId);
@@ -424,13 +446,50 @@ export class MockTardyApi implements TardyApi {
     return this.delay(undefined);
   }
 
+  private kindOf(participantIds: readonly string[]) {
+    return threadKind(participantIds.flatMap((id) => this.accountsById.get(id) ?? []));
+  }
+
+  async openThread(participantIds: string[], title?: string): Promise<ThreadRef> {
+    const members = [...new Set([this.viewerId, ...participantIds])];
+    if (members.length < 2) throw new TardyApiError('invalid', 'A thread needs someone besides you.');
+    for (const id of members) this.visibleAccount(id, `participant ${id}`);
+    const key = (ids: readonly string[]) => [...ids].sort().join(',');
+    const existing = this.threadList.find((t) => key(t.participantIds) === key(members));
+    if (existing) return this.delay(existing);
+    const name = title?.trim();
+    const thread: ThreadRef = {
+      id: `t-new-${this.threadList.length}`,
+      participantIds: members,
+      ...(members.length > 2 && name ? { title: name } : {}),
+      kind: this.kindOf(members),
+    };
+    this.threadList.push(thread);
+    return this.delay(thread);
+  }
+
+  async searchAccounts(query: string): Promise<Account[]> {
+    const recent = this.visibleThreads()
+      .map((t) => ({ t, last: this.messageLog.findLast((m) => m.threadId === t.id) }))
+      .filter((x) => x.last !== undefined)
+      .sort((a, b) => Date.parse(b.last!.createdAt) - Date.parse(a.last!.createdAt))
+      .flatMap((x) => x.t.participantIds);
+    const order = [...new Set([...recent, ...this.following, ...this.accountsById.keys()])];
+    const candidates = order
+      .filter((id) => id !== this.viewerId && this.canSeeAccountId(id))
+      .map((id) => this.present(this.accountsById.get(id)!))
+      // With no query, suggest only people the viewer already knows, not the whole directory.
+      .filter((a) => query.trim() || recent.includes(a.id) || this.following.has(a.id));
+    return this.delay(searchRanked(candidates, query).slice(0, SEARCH_LIMIT));
+  }
+
   /**
    * Mock only: agents answer DMs a moment later with a status-flavored reply, so the thread
    * screen's polling has something to pick up. The real server relays the agent's own message.
    */
   private scheduleAgentReply(threadId: string) {
-    const thread = THREADS.find((t) => t.id === threadId);
-    const other = thread?.participantIds.find((id) => id !== this.viewerId);
+    const thread = this.threadList.find((t) => t.id === threadId);
+    const other = thread?.participantIds.find((id) => id !== this.viewerId && this.accountsById.get(id)?.kind === 'agent');
     if (!other || this.accountsById.get(other)?.kind !== 'agent') return;
     const replies = [
       'On it. I will post an update when it ships.',

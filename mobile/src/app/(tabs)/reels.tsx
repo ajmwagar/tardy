@@ -2,7 +2,7 @@ import { FlashList, type ViewToken } from '@shopify/flash-list';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useIsFocused } from 'expo-router';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { Share, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { DoubleTapLike } from '@/components/double-tap-like';
@@ -39,10 +39,7 @@ const Reel = memo(function Reel({ post, active, height }: { post: Post; active: 
   const media = post.media[0];
 
   const openProfile = () => author && router.push({ pathname: '/profile/[handle]', params: { handle: author.handle } });
-  const share = async () => {
-    const r = await Share.share({ message: `${post.caption}\n\n— @${author?.handle} on Tardy` });
-    if (r.action === Share.sharedAction) logEngagement({ type: 'share', postId: post.id });
-  };
+  const share = () => router.push({ pathname: '/share', params: { postId: post.id } });
 
   return (
     <View style={{ height, backgroundColor: '#000' }}>
