@@ -1,14 +1,15 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { ActivityIndicator, Linking, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
+import { Linking, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 
 import { TardyApiError } from '@/data/api';
 import type { Account, NotificationKind, NotificationPreferences } from '@/data/types';
 import { devPushAvailable, devPushEvents, emitDevPush } from '@/notifications/dev-trigger';
 import { NOTIFICATION_KINDS, overrideFor, WORK_KINDS, withDefault, withOverride } from '@/notifications/preferences';
 import { requestPushPermission, usePushStatus, type PushStatus } from '@/notifications/push';
-import { api, ensureAccounts, getState } from '@/state/store';
+import { api, ensureAccounts, getState, reportError } from '@/state/store';
 import { colors, radius, type } from '@/theme';
 
+import { ErrorState, Pulse, SkeletonBlock } from './states';
 import { Avatar, Hairline, haptic, Icon, PressableScale } from './ui';
 
 const LABELS: Record<NotificationKind, { title: string; detail: string }> = {
@@ -25,6 +26,23 @@ const SOCIAL_KINDS = NOTIFICATION_KINDS.filter((k) => !WORK_KINDS.includes(k));
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
+/** Shaped like a card of toggle rows. */
+function PrefsSkeleton() {
+  return (
+    <Pulse style={styles.card}>
+      {[0, 1, 2].map((i) => (
+        <View key={i} style={styles.skeletonRow}>
+          <View style={styles.rowText}>
+            <SkeletonBlock style={styles.skeletonTitle} />
+            <SkeletonBlock style={styles.skeletonDetail} />
+          </View>
+          <SkeletonBlock style={styles.skeletonSwitch} />
+        </View>
+      ))}
+    </Pulse>
+  );
+}
+
 /**
  * Push preferences: the device permission, a default per kind, and per-project overrides
  * for agent work. Renders as a plain column (no scroll view) so the settings screen can
@@ -34,7 +52,10 @@ export function NotificationSettings() {
   const push = usePushStatus();
   const [prefs, setPrefs] = useState<NotificationPreferences | null>(null);
   const [projects, setProjects] = useState<Account[]>([]);
+  /** The first load failed (the screen shows a retry); write failures go to the toast. */
   const [error, setError] = useState<string | null>(null);
+  /** Bumped by Retry to refetch. */
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let live = true;
@@ -52,18 +73,17 @@ export function NotificationSettings() {
     return () => {
       live = false;
     };
-  }, []);
+  }, [attempt]);
 
   /** Optimistic write: show `next` now, take the server's answer, or roll back loudly. */
   const save = async (next: NotificationPreferences, write: () => Promise<NotificationPreferences>) => {
     const before = prefs;
     setPrefs(next);
-    setError(null);
     try {
       setPrefs(await write());
     } catch (e) {
       setPrefs(before);
-      setError(message(e));
+      reportError(`Couldn't save that notification setting, so it's back how it was. (${message(e)})`);
     }
   };
 
@@ -78,7 +98,18 @@ export function NotificationSettings() {
       <PermissionCard status={push} />
 
       {!prefs ? (
-        error ? <Text style={styles.error}>{error}</Text> : <ActivityIndicator color={colors.textSecondary} style={styles.loading} />
+        error ? (
+          <ErrorState
+            message="Your notification settings didn't load. Nothing changed."
+            detail={error}
+            onRetry={() => {
+              setError(null);
+              setAttempt((a) => a + 1);
+            }}
+          />
+        ) : (
+          <PrefsSkeleton />
+        )
       ) : (
         <>
           <Section title="Agent work" footer="Posts you've set an alarm on always ping you when their status changes, unless that kind is off here.">
@@ -101,7 +132,6 @@ export function NotificationSettings() {
             </Section>
           )}
 
-          {error && <Text style={styles.error}>{error}</Text>}
         </>
       )}
 
@@ -281,7 +311,10 @@ function DevPushPanel() {
 
 const styles = StyleSheet.create({
   container: { gap: 20 },
-  loading: { marginTop: 20 },
+  skeletonRow: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 44 },
+  skeletonTitle: { width: 120, height: 12 },
+  skeletonDetail: { width: '70%', height: 10 },
+  skeletonSwitch: { width: 51, height: 31, borderRadius: radius.pill },
   section: { gap: 8 },
   sectionTitle: { color: colors.textSecondary, fontSize: 13, fontWeight: '700', paddingHorizontal: 4 },
   footer: { paddingHorizontal: 4 },
@@ -300,6 +333,5 @@ const styles = StyleSheet.create({
   segmentTextSelected: { color: colors.onPrimary },
   primaryButton: { height: 36, borderRadius: radius.pill, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.primary },
   primaryText: { color: colors.onPrimary, fontWeight: '800', fontSize: 14 },
-  error: { color: colors.alarm, fontSize: 13 },
   devResult: { paddingTop: 4 },
 });
