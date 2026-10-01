@@ -10,7 +10,8 @@
       ],
       "pipeline": {
         "type": "static_site",
-        "buildCommand": "mkdir -p dist && cp -R web/public/. dist/ && cp agent/llms.txt dist/llms.txt",
+        "installCommand": "true",
+        "buildCommand": "mkdir -p dist && cp -R web/public/. dist/ && cp agent/llms.txt dist/llms.txt && cp skills/tardy/SKILL.md dist/SKILL.md",
         "publishDir": "dist",
         "framework": "static"
       }
