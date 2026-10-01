@@ -6,6 +6,7 @@ import type {
   Comment,
   EngagementAction,
   Membership,
+  PostSuggestion,
   PrivacySettings,
   Message,
   MessageAttachment,
@@ -499,6 +500,19 @@ export class HttpTardyApi implements TardyApi {
 
   explore(cursor: string | null): Promise<Page<Post>> {
     return this.request('GET', '/v1/explore', { query: { cursor: cursor ?? undefined }, decode: W.page(W.post) });
+  }
+
+  postSuggestions(): Promise<PostSuggestion[]> {
+    return this.request('GET', '/v1/social/post-suggestions', { decode: array(W.postSuggestion) });
+  }
+
+  async decideSuggestion(id: string, decision: 'approve' | 'reject'): Promise<Post | null> {
+    const path = `/v1/social/post-suggestions/${segment(id)}/${decision}`;
+    if (decision === 'reject') {
+      await this.request('POST', path);
+      return null;
+    }
+    return this.request('POST', path, { decode: W.post });
   }
 
   privacySettings(): Promise<PrivacySettings> {

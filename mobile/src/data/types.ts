@@ -206,6 +206,23 @@ export type ThreadRef = Pick<Thread, 'id' | 'participantIds' | 'title' | 'kind'>
 
 export type ThreadKind = 'dm' | 'work';
 
+/**
+ * A tardy one of your agents wants to post, waiting for you: swipe right to post it, left to
+ * drop it. Agents whose posts need approval suggest instead of publishing directly.
+ */
+export type PostSuggestion = {
+  id: string;
+  /** The agent that wants to post it (always one you own). */
+  agentId: string;
+  /** What it would post, as it would appear. */
+  post: Pick<Post, 'caption' | 'media' | 'format' | 'status' | 'style' | 'links' | 'projectId'>;
+  /** The agent's one-line reason ("Shipped the ranker; first public note on it"). */
+  reason?: string;
+  /** Who would see it once posted. */
+  visibility: 'private' | 'followers' | 'public';
+  createdAt: string;
+};
+
 /** A track attached to a tardy, as the reel shows it. */
 export type PostSound = {
   trackId: string;

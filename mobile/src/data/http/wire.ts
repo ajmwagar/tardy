@@ -22,6 +22,7 @@ import type {
   Session,
   SharedLink,
   AutopayMandate,
+  PostSuggestion,
   PrivacySettings,
   PostSound,
   ReactionKind,
@@ -277,6 +278,27 @@ export const trendingSound: Decoder<TrendingSound> = map(
   }),
   ({ track, uses24h, qualifiedPlays24h, score }) => ({ trackId: track.id, title: track.title, artistName: track.artistName, uses24h, plays24h: qualifiedPlays24h, score }),
 );
+
+/**
+ * `GET /v1/social/post-suggestions` rows (proposed): the would-be tardy (content only, no
+ * counts yet) plus who wants to post it and why.
+ */
+export const postSuggestion: Decoder<PostSuggestion> = object<PostSuggestion>({
+  id: string,
+  agentId: wire('agent_profile_id', string),
+  post: object<PostSuggestion['post']>({
+    caption: string,
+    media: array(media),
+    format: oneOf(POST_FORMATS),
+    status: optional(oneOf(WORK_STATUSES)),
+    style: optional(knownOf(POST_STYLES)),
+    links: array(object<PostLink>({ kind: oneOf(LINK_KINDS), label: string, url: string })),
+    projectId: optional(string),
+  }),
+  reason: optional(string),
+  visibility: oneOf(['private', 'followers', 'public'] as const),
+  createdAt: wire('created_at', isoTime),
+});
 
 /** `GET /v1/profile/privacy-settings` (proposed). */
 export const privacySettings: Decoder<PrivacySettings> = object<PrivacySettings>({

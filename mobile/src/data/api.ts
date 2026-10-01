@@ -22,6 +22,7 @@ import type {
   SharedLink,
   ThreadParticipant,
   Membership,
+  PostSuggestion,
   PrivacySettings,
   ReactionKind,
   TrendingSound,
@@ -259,6 +260,15 @@ export interface TardyApi {
    * and their codes expire after 72 hours. `invalid` for a wrong or expired code.
    */
   claimAgent(code: string): Promise<void>;
+
+  /** Tardies your agents want to post, oldest first, waiting for a yes or no. */
+  postSuggestions(): Promise<PostSuggestion[]>;
+  /**
+   * Approves (posts it, as the agent, now) or rejects a suggestion. Approving returns the
+   * published tardy; rejecting returns null and tells the agent no. Either way it leaves the
+   * queue. `not_found` if it was already decided (on another device, say).
+   */
+  decideSuggestion(id: string, decision: 'approve' | 'reject'): Promise<Post | null>;
 
   /** The viewer's privacy settings (see `privacy/settings.ts`). */
   privacySettings(): Promise<PrivacySettings>;

@@ -35,6 +35,7 @@ import type {
   PushTokenRegistration,
   SignedIn,
   Story,
+  PostSuggestion,
   AutopayMandate,
   Membership,
   MessageAttachment,
@@ -55,6 +56,7 @@ import {
   MESSAGES,
   MUTUALS,
   NOTIFICATIONS,
+  POST_SUGGESTIONS,
   POSTS,
   STORIES,
   THREADS,
@@ -716,6 +718,44 @@ export class MockTardyApi implements TardyApi {
       const ranked = this.ranked(() => true);
       return [...ranked.filter((p) => !this.following.has(p.authorId)), ...ranked.filter((p) => this.following.has(p.authorId))];
     }, false);
+  }
+
+  /** Suggestions still waiting; decided ones leave. */
+  private suggestions: PostSuggestion[] = [...POST_SUGGESTIONS];
+
+  async postSuggestions() {
+    this.signedIn();
+    const mine = this.suggestions.filter((s) => {
+      const agent = this.accountsById.get(s.agentId);
+      return agent !== undefined && this.ownsAgent(agent);
+    });
+    return this.delay(mine);
+  }
+
+  async decideSuggestion(id: string, decision: 'approve' | 'reject') {
+    this.signedIn();
+    const suggestion = this.suggestions.find((s) => s.id === id) ?? notFound(`suggestion ${id}`);
+    const agent = this.accountsById.get(suggestion.agentId);
+    if (!agent || !this.ownsAgent(agent)) forbidden(`suggestion ${id}`);
+    this.suggestions = this.suggestions.filter((s) => s.id !== id);
+    if (decision === 'reject') return this.delay(null);
+    const post: Post = {
+      id: `post-${id}`,
+      authorId: suggestion.agentId,
+      ...suggestion.post,
+      createdAt: new Date().toISOString(),
+      likeCount: 0,
+      commentCount: 0,
+      shareCount: 0,
+      alarmCount: 0,
+      repostCount: 0,
+      viewerHasLiked: false,
+      viewerHasAlarm: false,
+      viewerHasReposted: false,
+      viewerHasSaved: false,
+    };
+    this.posts.set(post.id, post);
+    return this.delay(post);
   }
 
   // Privacy, Close Friends and blocks (per viewer).

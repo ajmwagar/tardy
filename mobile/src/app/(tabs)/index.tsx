@@ -10,6 +10,7 @@ import { openFaultMenu } from '@/components/fault-menu';
 import { EmptyState, ErrorState, FeedSkeleton, InlineRetry, PostSkeleton } from '@/components/states';
 import { ActivityButton } from '@/components/activity-button';
 import { StoriesRow } from '@/components/stories-row';
+import { SuggestionsButton } from '@/components/suggestions-button';
 import { Wordmark } from '@/components/wordmark';
 import type { Post, StoryGroup } from '@/data/types';
 import { api, ensureAccounts, loadFeedPage, loadTrending, logEngagement, reportError, useStore } from '@/state/store';
@@ -127,6 +128,7 @@ export default function HomeScreen() {
         </Pressable>
         {/* Breaking sits beside the wordmark, not under it: one header row, more feed. */}
         <BreakingTicker posts={trending} inline />
+        <SuggestionsButton />
         <ActivityButton />
       </View>
 
