@@ -1,5 +1,5 @@
 import { FlashList, type ViewToken } from '@shopify/flash-list';
-import { router } from 'expo-router';
+import { router, useIsFocused } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, RefreshControl, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -100,17 +100,21 @@ export default function HomeScreen() {
   }, []);
 
   const storyAuthors = useMemo(() => new Set(stories.map((s) => s.authorId)), [stories]);
+  // Tabs stay mounted: only play while Home is the screen on top, so opening a tardy, a story,
+  // a sheet or another tab never leaves this video playing underneath (the Reels rule too).
+  const focused = useIsFocused();
+  const playingId = focused ? activeId : null;
   const renderItem = useCallback(
     ({ item }: { item: Post }) => (
       <PostCard
         post={item}
         width={width}
-        active={item.id === activeId}
+        active={item.id === playingId}
         hasStory={storyAuthors.has(item.authorId)}
         onNotInterested={notInterested}
       />
     ),
-    [width, activeId, storyAuthors, notInterested],
+    [width, playingId, storyAuthors, notInterested],
   );
 
   return (
@@ -128,7 +132,7 @@ export default function HomeScreen() {
         data={posts}
         keyExtractor={keyOf}
         renderItem={renderItem}
-        extraData={activeId}
+        extraData={playingId}
         ListHeaderComponent={<StoriesRow groups={stories} />}
         ListEmptyComponent={
           error?.page === 'first' ? (
