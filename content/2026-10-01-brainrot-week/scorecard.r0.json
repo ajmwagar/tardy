@@ -1,0 +1,38 @@
+{
+  "rubric": "v1",
+  "run": "content/2026-10-01-brainrot-week",
+  "type": "brainrot",
+  "video_sha256": "ac151f723cdc31863ac94b9ac95bacb5acafbf5b158865ed8db712f696ca0fa2",
+  "duration_s": 32.0,
+  "graded_at": "2026-10-01T18:00:00Z",
+  "grader": "claude subagent, fresh context",
+  "gates": {
+    "technical": { "pass": true, "evidence": "check.sh: all PASS (1080x1920, 30fps, 32.0s in 20-35s, no black/silence, poster, hyperframes check, palette tokens)" },
+    "truth": { "pass": true, "evidence": "11/11 VO lines and all on-screen PR numbers/titles/clocks match facts.md. Spot-checked via gh (orangej20): 19 merged PRs since 2026-09-24 (#5 closed, #7 open); #1 03:50:01Z -> #19 08:33:31Z = 4h43m30s; #16 08:32:13Z -> #19 08:33:31Z = 78s; PR #2 adds Cargo.toml + src/*.rs (Rust server) and fc0eb20 'against the Rust server'; README line 15 'pre-alpha'. Note: facts.md lists #8 at 07:22:39, gh says 07:22:27; #8's clock is never shown on screen, so not a reel claim, but fix facts.md." },
+    "originals": { "pass": true, "evidence": "Hosts Chonk/Pip are original flat shapes with own names and stock Kokoro voices (am_michael, af_nova); runner is the tardy alarm-clock mascot on generic train roofs, no game name, logo, art or HUD lifted; music is brag's library bed (license caveat noted in brag-plan.md: verify ende.app terms before redistributing)." },
+    "privacy": { "pass": true, "evidence": "Public repo (README invites stars); no people's names, emails, secrets, or internal URLs; #20 'Shroud and Fab Sites' title is not shown (HUD only ticks its clock at 23-24s)." }
+  },
+  "scores": {
+    "hook": { "score": 4, "evidence": "hook-0.5s: '19 PULL REQUESTS / 4 HRS 43 MIN. WATCH.' over a running runner, specific to this event from frame 0 (also the poster)." },
+    "message": { "score": 3, "evidence": "Cold viewer gets 'tardy shipped an iPhone app + Rust server in 19 PRs in under 5 hours' (p20-p50); never says what tardy is or why it matters, only the speed." },
+    "proof": { "score": 1, "evidence": "No captured app UI or diff anywhere; the only 'real' material is PR titles/merge clocks in the HUD cards (p20-p90). Violates tardy-brag law 'at least one beat shows the actual tardy app'." },
+    "type_fit": { "score": 3, "evidence": "Reads as split-screen brainrot instantly (contact sheet); every item is a sourced PR and the sprint is reconstructable from captions + HUD; seamless loop lands (31.9s == 0.1s). Misses: red '2 videos at once' block is ~40px and unreadable at 20.3-21.0s; finale card titles flash by." },
+    "brand": { "score": 3, "evidence": "Palette passes check.sh; yellow for karaoke highlight/HUD, red only for wordmark dot and the bug block; rounded wordmark + 'PRE-ALPHA / STAY TARDY.' at 29.5s. Yellow highlight on every word plus yellow Pip plus yellow HUD dilutes 'yellow = hero action'." },
+    "pacing": { "score": 2, "evidence": "Lines alternate hosts with ~0.15s gaps, no dead beat, captions >=0.3s/word. But 25.2-28.9s finale card swaps a three-title stack (~15 words) roughly every 1s (26.8s vs 27.8s): flash-read. 31.0-31.9s tail shows empty top half before the loop." },
+    "sound": { "score": 3, "evidence": "Judged by measurement, not listening: integrated -22.5 LUFS (quiet for a feed, ~8 LU under -14), true peak -1.5 dBTP, no clipping; voice segments mean -24 to -27 dB vs bed in line gaps -35 to -43 dB (voice 8-17 dB above bed); crash 21.4-22.4s peaks -1.5 dB. Transcripts in data/*.words.json match the script word for word. Works muted: captions + HUD carry every claim." },
+    "craft": { "score": 3, "evidence": "No typos or overflow; nothing readable in the bottom 480px or top 220px. Minor: caption lines reach x~1005 ('Written', 'Obviously.' at 16.0s; 'videos' at 19.2s), into the right 190px column; HUD counter jumps 02->04 and 05->07 without showing #4/#8." }
+  },
+  "limits_pushed": [
+    { "move": "gameplay is the data (coins, crash, HUD clock from facts.md)", "result": "landed" },
+    { "move": "two voices with audio-driven mouths", "result": "landed" },
+    { "move": "word-level karaoke from real transcription", "result": "landed" },
+    { "move": "seamless loop", "result": "landed" }
+  ],
+  "total": 68.75,
+  "verdict": "revise",
+  "fixes": [
+    "Proof (0:13.8-0:16.4 or 0:25.2-0:28.9): replace the abstract runner in one item window with a real simulator capture of the shipped feature (e.g. tap-backs #13 or the share extension #16) staged with device-frame-stage in the bottom half, or a real diff snippet from PR #11 at the crash; nothing in the reel currently shows the actual app.",
+    "Pacing (0:25.2-0:28.9): the finale title stack rotates ~15 words per second; show only the narrated PRs (#13, #16, #17) one per ~1.2s, or hold one static list of all six for the full 3.7s.",
+    "Sound/readability (0:19.2-0:21.4 and master): scale the red '2 videos at once' block label up so it is legible before impact (currently ~40px tall at 20.3s), and normalize the master from -22.5 LUFS to about -14 LUFS (keep true peak <= -1 dBTP); also pull caption max width in so text stays left of x=890."
+  ]
+}

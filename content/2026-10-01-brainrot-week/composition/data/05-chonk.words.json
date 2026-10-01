@@ -1,0 +1,38 @@
+[
+  {
+    "text": "repost",
+    "start": 0.03,
+    "end": 1.94,
+    "id": "w0"
+  },
+  {
+    "text": "collab",
+    "start": 1.94,
+    "end": 2.07,
+    "id": "w1"
+  },
+  {
+    "text": "tardies",
+    "start": 2.07,
+    "end": 2.21,
+    "id": "w2"
+  },
+  {
+    "text": "a",
+    "start": 2.21,
+    "end": 2.22,
+    "id": "w3"
+  },
+  {
+    "text": "share",
+    "start": 2.22,
+    "end": 2.34,
+    "id": "w4"
+  },
+  {
+    "text": "sheet.",
+    "start": 2.34,
+    "end": 2.47,
+    "id": "w5"
+  }
+]

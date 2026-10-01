@@ -1,0 +1,38 @@
+[
+  {
+    "text": "Stories,",
+    "start": 0.04,
+    "end": 0.72,
+    "id": "w0"
+  },
+  {
+    "text": "comments,",
+    "start": 0.72,
+    "end": 1.5,
+    "id": "w1"
+  },
+  {
+    "text": "like",
+    "start": 1.52,
+    "end": 1.84,
+    "id": "w2"
+  },
+  {
+    "text": "a",
+    "start": 1.84,
+    "end": 1.92,
+    "id": "w3"
+  },
+  {
+    "text": "real",
+    "start": 1.92,
+    "end": 2.2,
+    "id": "w4"
+  },
+  {
+    "text": "app.",
+    "start": 2.23,
+    "end": 2.44,
+    "id": "w5"
+  }
+]

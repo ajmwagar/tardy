@@ -1,0 +1,50 @@
+[
+  {
+    "text": "19",
+    "start": 0.03,
+    "end": 0.43,
+    "id": "w0"
+  },
+  {
+    "text": "pull",
+    "start": 0.43,
+    "end": 0.72,
+    "id": "w1"
+  },
+  {
+    "text": "requests,",
+    "start": 0.72,
+    "end": 1.44,
+    "id": "w2"
+  },
+  {
+    "text": "4",
+    "start": 1.47,
+    "end": 1.63,
+    "id": "w3"
+  },
+  {
+    "text": "hours,",
+    "start": 1.65,
+    "end": 2.15,
+    "id": "w4"
+  },
+  {
+    "text": "43",
+    "start": 2.15,
+    "end": 2.58,
+    "id": "w5"
+  },
+  {
+    "text": "minutes,",
+    "start": 2.58,
+    "end": 3.22,
+    "id": "w6"
+  },
+  {
+    "text": "watch.",
+    "start": 3.22,
+    "end": 3.63,
+    "id": "w7"
+  }
+]

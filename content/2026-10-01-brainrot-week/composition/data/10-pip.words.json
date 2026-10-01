@@ -1,0 +1,26 @@
+[
+  {
+    "text": "It's",
+    "start": 0.02,
+    "end": 0.15,
+    "id": "w0"
+  },
+  {
+    "text": "pre-alpha,",
+    "start": 0.25,
+    "end": 0.86,
+    "id": "w1"
+  },
+  {
+    "text": "stay",
+    "start": 0.94,
+    "end": 1.17,
+    "id": "w2"
+  },
+  {
+    "text": "tardy.",
+    "start": 1.17,
+    "end": 1.69,
+    "id": "w3"
+  }
+]

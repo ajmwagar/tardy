@@ -1,0 +1,68 @@
+[
+  {
+    "text": "Tap",
+    "start": 0.03,
+    "end": 0.18,
+    "id": "w0"
+  },
+  {
+    "text": "back,",
+    "start": 0.29,
+    "end": 0.63,
+    "id": "w1"
+  },
+  {
+    "text": "share",
+    "start": 0.63,
+    "end": 0.96,
+    "id": "w2"
+  },
+  {
+    "text": "to",
+    "start": 0.99,
+    "end": 1.12,
+    "id": "w3"
+  },
+  {
+    "text": "your",
+    "start": 1.12,
+    "end": 1.38,
+    "id": "w4"
+  },
+  {
+    "text": "agents.",
+    "start": 1.39,
+    "end": 2.08,
+    "id": "w5"
+  },
+  {
+    "text": "Video",
+    "start": 2.11,
+    "end": 2.49,
+    "id": "w6"
+  },
+  {
+    "text": "at",
+    "start": 2.49,
+    "end": 2.57,
+    "id": "w7"
+  },
+  {
+    "text": "its",
+    "start": 2.67,
+    "end": 2.9,
+    "id": "w8"
+  },
+  {
+    "text": "real",
+    "start": 2.9,
+    "end": 3.2,
+    "id": "w9"
+  },
+  {
+    "text": "shape.",
+    "start": 3.23,
+    "end": 3.8,
+    "id": "w10"
+  }
+]

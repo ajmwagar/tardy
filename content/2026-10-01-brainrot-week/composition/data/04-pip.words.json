@@ -1,0 +1,44 @@
+[
+  {
+    "text": "Next,",
+    "start": 0.03,
+    "end": 0.4,
+    "id": "w0"
+  },
+  {
+    "text": "a",
+    "start": 0.4,
+    "end": 0.45,
+    "id": "w1"
+  },
+  {
+    "text": "server",
+    "start": 0.56,
+    "end": 0.86,
+    "id": "w2"
+  },
+  {
+    "text": "written",
+    "start": 0.86,
+    "end": 1.33,
+    "id": "w3"
+  },
+  {
+    "text": "in",
+    "start": 1.33,
+    "end": 1.46,
+    "id": "w4"
+  },
+  {
+    "text": "Rust,",
+    "start": 1.46,
+    "end": 1.86,
+    "id": "w5"
+  },
+  {
+    "text": "obviously.",
+    "start": 1.86,
+    "end": 2.56,
+    "id": "w6"
+  }
+]

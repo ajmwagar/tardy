@@ -1,0 +1,38 @@
+[
+  {
+    "text": "then",
+    "start": 0.04,
+    "end": 0.24,
+    "id": "w0"
+  },
+  {
+    "text": "messages,",
+    "start": 0.24,
+    "end": 0.75,
+    "id": "w1"
+  },
+  {
+    "text": "notifications,",
+    "start": 0.9,
+    "end": 1.67,
+    "id": "w2"
+  },
+  {
+    "text": "and",
+    "start": 1.79,
+    "end": 1.96,
+    "id": "w3"
+  },
+  {
+    "text": "native",
+    "start": 1.96,
+    "end": 2.36,
+    "id": "w4"
+  },
+  {
+    "text": "reels.",
+    "start": 2.36,
+    "end": 2.69,
+    "id": "w5"
+  }
+]

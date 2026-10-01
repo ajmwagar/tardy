@@ -1,0 +1,38 @@
+{
+  "rubric": "v1",
+  "run": "content/2026-10-01-brainrot-week",
+  "type": "brainrot",
+  "video_sha256": "86927138aad596020788a246093f70b956f096739709c430294be6056b889c3f",
+  "duration_s": 32.0,
+  "graded_at": "2026-10-01T10:58:00Z",
+  "grader": "claude subagent, fresh context, round 2",
+  "gates": {
+    "technical": { "pass": true, "evidence": "check.sh 20 35: all PASS (1080x1920, 30fps, 32.0s, no black/silence, poster, hyperframes check, brand tokens). Note check.sh does not test true peak; see sound." },
+    "truth": { "pass": false, "evidence": "Transcripts (composition/data/*.words.json) match all 11 VO lines; cards/HUD times match gh pr list (as orangej20). Verified: PR #6 adds mobile/assets/reels/brainrot.mp4 (commit 6f23de8 is in #6); both diff lines shown for #11 ('+ const focused = useIsFocused();', '+ const playingId = focused ? activeId : null;') are in gh pr diff 11; fc0eb20 'TardyApi over fetch against the Rust server' exists; #2 touches 27 .rs files. FAILS: (1) PR #7 merged 2026-10-01T10:49:23Z, before facts.md was last written (10:51:24Z) and before brag.mp4 was rendered (10:52:48Z). facts.md says '#7 not merged', which is false; the same query now returns 20 PRs. On screen, 'tardy · this week' + '19 PULL REQUESTS' (0-3.9s, 31.9s loop) and HUD 'MERGED 19/19' (27-31s) present 19 as the week's total, and share-copy.txt 'The last six merged in 78 seconds' is now false. (2) 'It's pre-alpha' (29.0-30.8s) cites the README status line, but that line exists only in the uncommitted working-tree README; the published README (GitHub API, master) has no pre-alpha/status line." },
+    "originals": { "pass": true, "evidence": "Hosts Chonk (grey rounded robot) and Pip (yellow blob) are original flat designs with their own names; runner is the tardy alarm-clock mascot on generic dark train-roof slabs, no game name, logo, characters, or art; Kokoro voices am_michael/af_nova (stock synthetic, not sound-alikes); bed is CC BY 4.0 Sascha Ende, credited in share-copy.txt. Judged from stills and composition; I cannot listen." },
+    "privacy": { "pass": true, "evidence": "No people's names, emails, secrets, or internal URLs in stills, captions, or transcripts. github.com/ajmwagar/tardy in share copy is a public repo (gh repo view: PUBLIC)." }
+  },
+  "scores": {
+    "hook": { "score": 3, "evidence": "hook-0.5s: '19 PULL REQUESTS · 4 HRS 43 MIN · WATCH.' over a runner already sprinting, specific and readable at frame 0. Not a 4: the numbers don't say what was built; 'the iPhone app' arrives at 4.1s. (The count itself is stale; see truth.)" },
+    "message": { "score": 3, "evidence": "Cold viewer gets: tardy went from nothing to an iPhone app (feed, reels, messages, stories, server in Rust, share, tap-backs) in under five hours, one bug fixed, last burst of six PRs in 78s. Why it matters is only implied ('Like a real app', 'pre-alpha')." },
+    "proof": { "score": 3, "evidence": "Real #11 diff lines carry the bug beat (21.6-23.6s, legible at 22.4s); the real brainrot.mp4 #6 shipped plays 11.6-14.64s, but in a ~200px CSS phone frame in the corner (p40-12.80s), not a capture of the app. Real PR numbers and merge times throughout. No simulator capture of the tardy app itself." },
+    "type_fit": { "score": 3, "evidence": "Reads as split-screen brainrot at a glance: two bickering hosts with audio-driven mouths, word-level karaoke, yellow divider, three-lane runner with MERGED n/19 + clock HUD, coins=PRs, red BUG block crash on 'Bonk'. Gameplay is low-fidelity (flat slabs, little sense of speed). 'Readable at speed' broken once: #13 card 'Tap-backs' holds 0.6s (25.15-25.75s)." },
+    "brand": { "score": 3, "evidence": "Near-black bg, yellow for hero/karaoke/HUD/divider, red only for the BUG callout (19.35-21.45s) and the wordmark dot; lowercase 'tardy.' wordmark with red dot at 29.3-31s; 'Stay tardy' sign-off. Palette passes check.sh. Yellow is on nearly every element at once (caption pill, HUD, divider, Pip, mascot), so the hero accent is diluted." },
+    "pacing": { "score": 2, "evidence": "Voice-driven, 0.15s gaps, ends on a loop beat. But: #13 combo card is a 0.6s flash-read (25.15-25.75s); the #6 phone card lingers 0.8s into Pip's 'Next, a server' (13.81-14.64s, a.png 14.5s still shows #6); the #11 diff stays up under 'Then six PRs' with HUD already at 10/19 08:00:37 (22.57-23.6s)." },
+    "sound": { "score": 2, "evidence": "Measured only (cannot listen): ebur128 integrated -14.6 LUFS, LRA 1.5 LU; true peak +3.3 dBFS, sample peak +3.32 dBFS, from a burst in the first 20 ms (0.00-0.02s RMS -13 dB vs -21 dB after); this clips on fixed-point playback and repeats on every loop. From 0.3s on, true peak -1.4 dBTP, voiced segments mean -15.8 to -17.2 dB with bed automation at 0.16, no other overs. Transcripts match script word for word; crash SFX at 21.45s is voice-locked to 'Bonk' (21.39s). Works muted: karaoke captions + cards carry every line." },
+    "craft": { "score": 2, "evidence": "Nothing readable in top 220px, bottom 480px, or right rail; no typos. Flaws: HUD/card pairing contradicts itself in the combo (HUD 'MERGED 14/19 08:32:13' beside '#13' at p80-25.60s, but #13 was 15th at 08:32:17; HUD '16/19 08:32:21' beside '#16', which was 14th at 08:32:13); a coin sprite sits behind the MERGED chip at 25.6s; two-line captions nearly touch the CHONK label (25.6s, 0.5s)." }
+  },
+  "limits_pushed": [
+    { "move": "the gameplay is the data (coins, crash, HUD clock from facts.md)", "result": "landed" },
+    { "move": "two voices with audio-driven mouths", "result": "landed" },
+    { "move": "word-level karaoke from real transcription", "result": "landed" },
+    { "move": "seamless loop (last frame matches first)", "result": "landed" }
+  ],
+  "total": 67.5,
+  "verdict": "blocked",
+  "fixes": [
+    "Truth, 0-3.9s, 27-31s HUD, share-copy.txt: PR #7 merged 10:49:23Z, so 20 PRs merged this week. Re-run the facts query, then either re-scope the claim to the window ('19 PRs in 4h43m', drop 'this week' and the '/19' denominator) or count 20 and add #7; drop 'last' from 'The last six merged in 78 seconds'. Also source 'It's pre-alpha' from something committed (land the README status line) or cut the line.",
+    "Sound, 0.00-0.02s: a +3.3 dBFS transient (true peak +3.3 dBTP) at the very first frame clips and repeats on every loop. Add a 10 ms fade-in on the mix and a true-peak limiter at -1 dBTP after the -14 LUFS normalize in the poster bake; recheck with ebur128=peak=true.",
+    "Combo, 25.15-28.9s: the HUD clock/count contradicts the card (14/19 08:32:13 beside #13; 16/19 08:32:21 beside #16) and #13 holds only 0.6s. Tick the HUD to the shown PR's own merge position/time (or freeze the clock at 08:33:31 during the combo) and hold each card at least 1.2s, e.g. #13 25.15-26.4, #16 26.4-27.7, #17 27.7-28.9. While there, end the #6 phone card at 13.7s so #2 lands with 'Next, a server'."
+  ]
+}
