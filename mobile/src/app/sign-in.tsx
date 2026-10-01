@@ -1,5 +1,4 @@
 import { router } from 'expo-router';
-import * as AppleAuthentication from 'expo-apple-authentication';
 import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -27,27 +26,16 @@ export default function SignInScreen() {
 
       <View style={styles.actions}>
         {error && <Text style={styles.error}>{error}</Text>}
-        {order.map((provider, i) =>
-          provider === 'apple' && !usesMockBackend ? (
-            <AppleAuthentication.AppleAuthenticationButton
-              key={provider}
-              buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.WHITE}
-              buttonType={AppleAuthentication.AppleAuthenticationButtonType.CONTINUE}
-              cornerRadius={999}
-              style={styles.appleButton}
-              onPress={() => void auth.signIn('apple')}
-            />
-          ) : (
-            <PillButton
-              key={provider}
-              label={`Continue with ${PROVIDERS[provider].name}`}
-              icon={PROVIDERS[provider].symbol}
-              variant={i === 0 ? 'primary' : 'secondary'}
-              busy={signingIn}
-              onPress={() => void auth.signIn(provider)}
-            />
-          ),
-        )}
+        {order.map((provider, i) => (
+          <PillButton
+            key={provider}
+            label={`Continue with ${PROVIDERS[provider].name}`}
+            icon={PROVIDERS[provider].symbol}
+            variant={provider === 'apple' && !usesMockBackend ? 'secondary' : i === 0 ? 'primary' : 'secondary'}
+            busy={signingIn}
+            onPress={() => void auth.signIn(provider)}
+          />
+        ))}
         {usesMockBackend && (
           <PillButton
             label="Continue with email"
@@ -85,7 +73,6 @@ const styles = StyleSheet.create({
   hero: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
   tagline: { ...type.secondary, fontSize: 16 },
   actions: { gap: 10 },
-  appleButton: { width: '100%', height: 50 },
   error: { color: colors.alarm, textAlign: 'center', fontSize: 13 },
   fine: { ...type.tiny, textAlign: 'center' },
   legal: { ...type.tiny, textAlign: 'center', lineHeight: 17 },
