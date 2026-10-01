@@ -20,7 +20,7 @@ const VQV_MS = 10_000;
 /**
  * A looping, chrome-less video that plays only while `active`. Shows the poster until the
  * first frame is ready, and an explicit error state if the stream fails.
- * Logs a VQV once the viewer has watched past the threshold.
+ * Logs a VQV once the viewer has watched past the threshold (posts only).
  */
 export function VideoSurface({
   postId,
@@ -28,8 +28,10 @@ export function VideoSurface({
   active,
   contentFit = 'cover',
   fullBleed = false,
+  onReady,
 }: {
-  postId: string;
+  /** The post this video belongs to, for VQV logging. Omit for media that isn't a post (stories). */
+  postId?: string;
   media: VideoMedia;
   active: boolean;
   contentFit?: 'cover' | 'contain';
@@ -39,6 +41,8 @@ export function VideoSurface({
    * blurred, scaled-up copy of the frame that fades into the video.
    */
   fullBleed?: boolean;
+  /** Called when the first frame is ready to play, e.g. to start a story's timer. */
+  onReady?: () => void;
 }) {
   const muted = useStore((s) => s.muted);
   const source = { uri: media.url, useCaching: !media.url.endsWith('.m3u8') };
@@ -57,6 +61,10 @@ export function VideoSurface({
   }, [player, muted]);
 
   useEffect(() => {
+    if (status === 'readyToPlay') onReady?.();
+  }, [status, onReady]);
+
+  useEffect(() => {
     if (active) player.play();
     else player.pause();
   }, [player, active]);
@@ -70,7 +78,7 @@ export function VideoSurface({
     const t = timeUpdate.currentTime;
     if (active && t > last.current) watched.current += (t - last.current) * 1000;
     last.current = t;
-    if (!logged.current && watched.current >= VQV_MS) {
+    if (postId && !logged.current && watched.current >= VQV_MS) {
       logged.current = true;
       logEngagement({ type: 'vqv', postId, watchedMs: Math.round(watched.current) });
     }
