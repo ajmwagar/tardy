@@ -9,6 +9,7 @@ COPY src ./src
 COPY ingest ./ingest
 COPY policies ./policies
 COPY migrations ./migrations
+COPY vendor ./vendor
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/build/target \

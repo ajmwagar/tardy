@@ -1,0 +1,16 @@
+[package]
+name = "xai-value-model"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.88"
+license = "Apache-2.0"
+description = "Vendored copy of X's For You value model (xai-org/x-algorithm, xai-value-model/)"
+repository = "https://github.com/xai-org/x-algorithm"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+md5 = "0.8"
+rustc-hash = "2"

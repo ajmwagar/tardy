@@ -29,6 +29,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 utoipa = { version = "6", features = ["uuid"] }
 uuid = { version = "1", features = ["v4", "serde"] }
+# X's For You value model, vendored (no upstream Cargo.toml); see vendor/xai-value-model/NOTICE.
+xai-value-model = { path = "vendor/xai-value-model" }
 url = "2"
 
 [dev-dependencies]

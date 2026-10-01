@@ -1,7 +1,7 @@
 use crate::domain::{
     DirectMessage, DirectThread, EngagementKind, EngagementReceipt, FeedItem, HyperTardyItem,
     LiveEvent, LiveEventPayload, LiveSession, LiveStatus, Profile, ProfilePrivacy, PublicProfile,
-    Reel, SavedPost, ShareGrant, ShareSubject, Visibility,
+    RankingSignals, Reel, SavedPost, ShareGrant, ShareSubject, Visibility,
 };
 use crate::privacy::PrivacyPolicy;
 use std::collections::{HashMap, HashSet};
@@ -86,6 +86,8 @@ pub trait Store: Send + Sync {
         after: u64,
     ) -> Result<Vec<LiveEvent>, StoreError>;
     fn feed_candidates(&self, viewer_id: Option<Uuid>) -> Result<Vec<FeedItem>, StoreError>;
+    /// Engagement and relationship facts for ranking `feed_candidates` for this viewer.
+    fn ranking_signals(&self, viewer_id: Option<Uuid>) -> Result<RankingSignals, StoreError>;
     fn record_engagement(
         &self,
         actor: Uuid,
@@ -365,6 +367,46 @@ impl Store for MemoryStore {
                 .map(FeedItem::Live),
         );
         Ok(items)
+    }
+
+    fn ranking_signals(&self, viewer_id: Option<Uuid>) -> Result<RankingSignals, StoreError> {
+        let state = self.state.read().map_err(|_| StoreError::Poisoned)?;
+        let mut signals = RankingSignals {
+            // The in-memory store has no follow graph yet; say so instead of claiming
+            // the viewer follows nobody.
+            followed_profiles: None,
+            ..RankingSignals::default()
+        };
+        for engagement in state
+            .engagements
+            .iter()
+            .filter(|engagement| engagement.counted)
+        {
+            let Some(reel) = state.reels.get(&engagement.reel_id) else {
+                continue;
+            };
+            if !PrivacyPolicy::can_view_content(
+                viewer_id,
+                reel.profile_id,
+                reel.visibility,
+                blocked_between(&state, viewer_id, reel.profile_id),
+            ) {
+                continue;
+            }
+            signals
+                .reel_engagement
+                .entry(reel.id)
+                .or_default()
+                .record(engagement.kind);
+            if Some(engagement.profile_id) == viewer_id {
+                signals
+                    .viewer_history_by_author
+                    .entry(reel.profile_id)
+                    .or_default()
+                    .record(engagement.kind);
+            }
+        }
+        Ok(signals)
     }
 
     fn record_engagement(
@@ -820,6 +862,7 @@ fn require_profile(state: &State, id: Uuid) -> Result<(), StoreError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::EngagementCounts;
 
     fn profile(store: &MemoryStore) -> Profile {
         store
@@ -990,6 +1033,88 @@ mod tests {
             store
                 .hyper_tardy(Some(viewer.id), 3_000, 10)
                 .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn ranking_signals_count_unique_engagement_and_the_viewers_history_per_author() {
+        let store = MemoryStore::default();
+        let owner = profile(&store);
+        let new_profile = |handle: &str| {
+            store
+                .create_profile(NewProfile {
+                    handle: handle.into(),
+                    display_name: handle.into(),
+                    bio: String::new(),
+                    privacy: ProfilePrivacy::default(),
+                    created_at_ms: 1,
+                })
+                .unwrap()
+        };
+        let (viewer, other) = (new_profile("viewer"), new_profile("other"));
+        let publish = |visibility| {
+            store
+                .publish_reel(
+                    owner.id,
+                    NewReel {
+                        profile_id: owner.id,
+                        caption: "update".into(),
+                        media_url: "https://media.test/reel.mp4".into(),
+                        poster_url: None,
+                        duration_ms: 10,
+                        visibility,
+                        published_at_ms: 1_000,
+                    },
+                )
+                .unwrap()
+        };
+        let (public, private) = (publish(Visibility::Public), publish(Visibility::Private));
+        let engage = |actor: Uuid, reel: Uuid, kind| {
+            store
+                .record_engagement(actor, reel, Uuid::new_v4(), kind, 2_000)
+                .unwrap()
+        };
+        engage(viewer.id, public.id, EngagementKind::View);
+        engage(viewer.id, public.id, EngagementKind::View); // duplicate: not counted
+        engage(viewer.id, public.id, EngagementKind::Like);
+        engage(other.id, public.id, EngagementKind::View);
+        engage(owner.id, public.id, EngagementKind::Like); // owner: not counted
+        engage(owner.id, private.id, EngagementKind::View);
+
+        let signals = store.ranking_signals(Some(viewer.id)).unwrap();
+        assert_eq!(signals.followed_profiles, None, "no follow graph yet");
+        assert_eq!(
+            signals.reel_engagement.get(&public.id),
+            Some(&EngagementCounts {
+                views: 2,
+                likes: 1,
+                ..Default::default()
+            })
+        );
+        assert!(!signals.reel_engagement.contains_key(&private.id));
+        assert_eq!(
+            signals.viewer_history_by_author.get(&owner.id),
+            Some(&EngagementCounts {
+                views: 1,
+                likes: 1,
+                ..Default::default()
+            })
+        );
+        assert!(
+            store
+                .ranking_signals(None)
+                .unwrap()
+                .viewer_history_by_author
+                .is_empty()
+        );
+
+        store.block_profile(owner.id, viewer.id).unwrap();
+        assert!(
+            store
+                .ranking_signals(Some(viewer.id))
+                .unwrap()
+                .reel_engagement
                 .is_empty()
         );
     }

@@ -15,7 +15,7 @@ use crate::metrics::Metrics;
 use crate::onboarding::{AccountRegistry, OnboardingError, TemporaryTardyAccount};
 use crate::pg_accounts::{PgAccountError, PgAccountStore};
 use crate::push::{NotificationPreference, PgPushStore, PushDevice, PushError, RegisterPushDevice};
-use crate::ranking::LuaRanker;
+use crate::ranking::FeedRanker;
 use crate::search::{SearchError, SearchService};
 use crate::social::{
     Comment, Conversation, ConversationMessage, IdentityKind, PgSocialStore, PostVisibility,
@@ -38,7 +38,7 @@ use uuid::Uuid;
 
 pub struct AppState {
     pub store: Arc<dyn Store>,
-    pub ranker: LuaRanker,
+    pub ranker: FeedRanker,
     pub public_base_url: String,
     pub accounts: Arc<AccountRegistry>,
     pub pg_accounts: Option<Arc<PgAccountStore>>,
@@ -65,7 +65,7 @@ impl AppState {
     ) -> Result<Self, crate::ranking::RankingError> {
         Ok(Self {
             store: Arc::new(MemoryStore::default()),
-            ranker: LuaRanker::default_policy()?,
+            ranker: FeedRanker::Lua(crate::ranking::LuaRanker::default_policy()?),
             public_base_url: public_base_url.into().trim_end_matches('/').to_owned(),
             accounts: Arc::new(AccountRegistry::in_memory().expect("in-memory account registry")),
             pg_accounts: None,
@@ -86,7 +86,7 @@ impl AppState {
     ) -> Result<Self, Box<dyn std::error::Error>> {
         Ok(Self {
             store: Arc::new(MemoryStore::default()),
-            ranker: LuaRanker::default_policy()?,
+            ranker: FeedRanker::from_env()?,
             public_base_url: public_base_url.into().trim_end_matches('/').to_owned(),
             accounts: Arc::new(AccountRegistry::open(path)?),
             pg_accounts: None,
@@ -106,7 +106,7 @@ impl AppState {
     ) -> Result<Self, Box<dyn std::error::Error>> {
         Ok(Self {
             store: Arc::new(MemoryStore::default()),
-            ranker: LuaRanker::default_policy()?,
+            ranker: FeedRanker::from_env()?,
             public_base_url: public_base_url.into().trim_end_matches('/').to_owned(),
             // Unit-only compatibility backend. Production authentication is set by `with_pg_accounts`.
             accounts: Arc::new(AccountRegistry::in_memory()?),
@@ -1125,12 +1125,23 @@ async fn feed(
     if !(1..=100).contains(&query.limit) {
         return Err(ApiError::bad_request("limit must be between 1 and 100"));
     }
-    let mut items = state.ranker.rank(
-        state
-            .store
-            .feed_candidates(optional_authenticated_actor(&state, &headers).await?)?,
-        now_ms()?,
-    )?;
+    let viewer = optional_authenticated_actor(&state, &headers).await?;
+    let candidates = state.store.feed_candidates(viewer)?;
+    let now = now_ms()?;
+    let mut items = match &state.ranker {
+        FeedRanker::Lua(ranker) => ranker.rank(candidates, now)?,
+        FeedRanker::XValueModel(ranker) => {
+            let mut signals = state.store.ranking_signals(viewer)?;
+            // The follow graph lives in the social store (PostgreSQL). Without it the ranker
+            // treats in-network as unknown rather than "follows nobody".
+            if let (Some(viewer), Some(social)) = (viewer, state.social.as_ref()) {
+                let graph = social.follow_graph(viewer).await?;
+                signals.followed_profiles = Some(graph.following);
+                signals.followers = graph.followers;
+            }
+            ranker.rank(candidates, &signals, now)?
+        }
+    };
     items.truncate(query.limit);
     Ok(Json(items))
 }
@@ -2163,6 +2174,86 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn feed_ranker_switch_changes_for_you_order() {
+        let mut state = AppState::in_memory("https://tardy.test").unwrap();
+        let store = state.store.clone();
+        let new_profile = |handle: &str| {
+            store
+                .create_profile(NewProfile {
+                    handle: handle.into(),
+                    display_name: handle.into(),
+                    bio: String::new(),
+                    privacy: ProfilePrivacy::default(),
+                    created_at_ms: 1,
+                })
+                .unwrap()
+        };
+        let now = now_ms().unwrap();
+        let publish = |author: &crate::domain::Profile, published_at_ms| {
+            store
+                .publish_reel(
+                    author.id,
+                    NewReel {
+                        profile_id: author.id,
+                        caption: "update".into(),
+                        media_url: "https://media.test/reel.mp4".into(),
+                        poster_url: None,
+                        duration_ms: 15_000,
+                        visibility: Visibility::Public,
+                        published_at_ms,
+                    },
+                )
+                .unwrap()
+        };
+        let (popular_author, quiet_author) = (new_profile("popular"), new_profile("quiet"));
+        let popular = publish(&popular_author, now - 2 * 3_600_000);
+        let newer = publish(&quiet_author, now - 3_600_000);
+        for index in 0..8 {
+            let fan = new_profile(&format!("fan{index}"));
+            for kind in [
+                EngagementKind::View,
+                EngagementKind::CompletedView,
+                EngagementKind::Like,
+                EngagementKind::Share,
+            ] {
+                store
+                    .record_engagement(fan.id, popular.id, Uuid::new_v4(), kind, now)
+                    .unwrap();
+            }
+        }
+        let feed_ids = |state: AppState| async move {
+            let (status, items) = request(
+                &router(Arc::new(state)),
+                "GET",
+                "/v1/feed",
+                Value::Null,
+                None,
+                None,
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+            items
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|item| item["id"].as_str().unwrap().to_owned())
+                .collect::<Vec<_>>()
+        };
+
+        // Default Lua policy: pure recency.
+        let mut lua = AppState::in_memory("https://tardy.test").unwrap();
+        lua.store = store.clone();
+        let lua_order = feed_ids(lua).await;
+        assert_eq!(lua_order, [newer.id.to_string(), popular.id.to_string()]);
+
+        state.ranker = FeedRanker::from_name(Some("x-value-model")).unwrap();
+        assert_eq!(
+            feed_ids(state).await,
+            [popular.id.to_string(), newer.id.to_string()]
+        );
     }
 
     #[tokio::test]

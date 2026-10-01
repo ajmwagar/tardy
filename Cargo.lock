@@ -1320,6 +1320,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "md5"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ebb8d8732c6a6df3d8f032a82911cfc747e00efb95cc46e8d0acd5b5b88570c"
+
+[[package]]
 name = "mediatype"
 version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2561,6 +2567,7 @@ dependencies = [
  "url",
  "utoipa",
  "uuid",
+ "xai-value-model",
 ]
 
 [[package]]
@@ -3299,6 +3306,14 @@ name = "writeable"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
+
+[[package]]
+name = "xai-value-model"
+version = "0.0.0"
+dependencies = [
+ "md5",
+ "rustc-hash",
+]
 
 [[package]]
 name = "yoke"
