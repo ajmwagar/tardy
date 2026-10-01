@@ -54,6 +54,70 @@ pub enum PostVisibility {
     Public,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AppEngagementKind {
+    Favorite,
+    Unfavorite,
+    Reply,
+    Share,
+    ShareViaDm,
+    ShareViaCopyLink,
+    PhotoExpand,
+    VideoOpen,
+    OpenLink,
+    ProfileClick,
+    Dwell,
+    Vqv,
+    NotInterested,
+    Alarm,
+    Unalarm,
+    Repost,
+    Unrepost,
+    FollowAuthor,
+    UnfollowAuthor,
+}
+
+impl AppEngagementKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Favorite => "favorite",
+            Self::Unfavorite => "unfavorite",
+            Self::Reply => "reply",
+            Self::Share => "share",
+            Self::ShareViaDm => "share_via_dm",
+            Self::ShareViaCopyLink => "share_via_copy_link",
+            Self::PhotoExpand => "photo_expand",
+            Self::VideoOpen => "video_open",
+            Self::OpenLink => "open_link",
+            Self::ProfileClick => "profile_click",
+            Self::Dwell => "dwell",
+            Self::Vqv => "vqv",
+            Self::NotInterested => "not_interested",
+            Self::Alarm => "alarm",
+            Self::Unalarm => "unalarm",
+            Self::Repost => "repost",
+            Self::Unrepost => "unrepost",
+            Self::FollowAuthor => "follow_author",
+            Self::UnfollowAuthor => "unfollow_author",
+        }
+    }
+
+    fn targets_author(self) -> bool {
+        matches!(self, Self::FollowAuthor | Self::UnfollowAuthor)
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+pub struct AppEngagementAction {
+    #[serde(rename = "type")]
+    pub kind: AppEngagementKind,
+    pub post_id: Option<Uuid>,
+    pub author_id: Option<Uuid>,
+    pub ms: Option<u64>,
+    pub watched_ms: Option<u64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SocialIdentity {
     pub profile_id: Uuid,
@@ -162,6 +226,90 @@ pub struct PgSocialStore {
 impl PgSocialStore {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
+    }
+
+    pub async fn record_engagements(
+        &self,
+        viewer: Uuid,
+        actions: &[AppEngagementAction],
+    ) -> Result<(), SocialError> {
+        let mut tx = self.pool.begin().await?;
+        for action in actions {
+            let (post_id, author_id) = if action.kind.targets_author() {
+                if action.post_id.is_some() || action.author_id.is_none() {
+                    return Err(SocialError::Invalid("author engagement target"));
+                }
+                (None, action.author_id)
+            } else {
+                if action.author_id.is_some() || action.post_id.is_none() {
+                    return Err(SocialError::Invalid("post engagement target"));
+                }
+                (action.post_id, None)
+            };
+            let duration = match action.kind {
+                AppEngagementKind::Dwell => action.ms,
+                AppEngagementKind::Vqv => action.watched_ms,
+                _ if action.ms.is_some() || action.watched_ms.is_some() => {
+                    return Err(SocialError::Invalid("unexpected engagement duration"));
+                }
+                _ => None,
+            };
+            if matches!(
+                action.kind,
+                AppEngagementKind::Dwell | AppEngagementKind::Vqv
+            ) && duration.is_none()
+            {
+                return Err(SocialError::Invalid("missing engagement duration"));
+            }
+
+            if let Some(post_id) = post_id {
+                let visible: bool = sqlx::query_scalar(
+                    "SELECT EXISTS(SELECT 1 FROM tardy_posts p WHERE p.id=$1 AND
+                     (p.visibility='public' OR p.author_profile_id=$2 OR
+                      (p.visibility='followers' AND EXISTS(SELECT 1 FROM profile_follows f
+                       WHERE f.follower_profile_id=$2 AND f.followed_profile_id=p.author_profile_id))))",
+                )
+                .bind(post_id)
+                .bind(viewer)
+                .fetch_one(&mut *tx)
+                .await?;
+                if !visible {
+                    continue;
+                }
+            }
+            if let Some(author_id) = author_id {
+                let exists: bool = sqlx::query_scalar(
+                    "SELECT EXISTS(SELECT 1 FROM social_identities WHERE profile_id=$1)",
+                )
+                .bind(author_id)
+                .fetch_one(&mut *tx)
+                .await?;
+                if !exists {
+                    continue;
+                }
+            }
+
+            let duration = duration
+                .map(i64::try_from)
+                .transpose()
+                .map_err(|_| SocialError::Invalid("engagement duration is too large"))?;
+
+            sqlx::query(
+                "INSERT INTO engagement_events
+                 (id,viewer_profile_id,kind,post_id,author_id,duration_ms)
+                 VALUES ($1,$2,$3,$4,$5,$6)",
+            )
+            .bind(Uuid::new_v4())
+            .bind(viewer)
+            .bind(action.kind.as_str())
+            .bind(post_id)
+            .bind(author_id)
+            .bind(duration)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
     }
 
     pub async fn app_feed(

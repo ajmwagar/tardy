@@ -21,15 +21,16 @@ use crate::push::{
 use crate::ranking::FeedRanker;
 use crate::search::{SearchError, SearchService};
 use crate::social::{
-    AppAccount, Comment, Conversation, ConversationMessage, ConversationSummary, IdentityKind,
-    PgSocialStore, PostVisibility, SharedLink, SocialError, TardyPost,
+    AppAccount, AppEngagementAction, Comment, Conversation, ConversationMessage,
+    ConversationSummary, IdentityKind, PgSocialStore, PostVisibility, SharedLink, SocialError,
+    TardyPost,
 };
 use crate::store::{MemoryStore, NewLive, NewProfile, NewReel, Store, StoreError};
 use crate::subscriptions::{
     FeedEvent, NewSubscription, PgSubscriptionStore, Subscription, SubscriptionError,
 };
 use axum::extract::{Path, Query, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Json, Router, middleware};
@@ -226,6 +227,9 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/lives/{id}/end", post(end_live))
         .route("/v1/feed", get(feed))
         .route("/v1/feed/reels", get(reels_feed))
+        .route("/v1/engagements", post(record_app_engagements))
+        .route("/v1/stories", get(stories))
+        .route("/v1/dev/blobs/{name}", get(local_blob))
         .route("/v1/feed/hyper-tardy", get(hyper_tardy_feed))
         .route("/v1/agent-handoffs", post(agent_handoff))
         .route("/v1/agent-shares", post(share_to_agent))
@@ -284,6 +288,32 @@ pub fn router(state: Arc<AppState>) -> Router {
         .layer(middleware::from_fn(move |request, next| {
             crate::metrics::track(metrics.clone(), request, next)
         }))
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub(crate) struct AppEngagementBatch {
+    actions: Vec<AppEngagementAction>,
+}
+
+async fn record_app_engagements(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<AppEngagementBatch>,
+) -> Result<StatusCode, ApiError> {
+    let viewer = authenticated_actor(&state, &headers).await?;
+    if body.actions.is_empty() || body.actions.len() > 500 {
+        return Err(ApiError::unprocessable(
+            "engagement batch must contain 1 to 500 actions",
+        ));
+    }
+    social_store(&state)?
+        .record_engagements(viewer, &body.actions)
+        .await
+        .map_err(|error| match error {
+            SocialError::Invalid(_) => ApiError::unprocessable(error.to_string()),
+            other => other.into(),
+        })?;
+    Ok(StatusCode::ACCEPTED)
 }
 
 /// Session restoration is an explicit route even before the provider exchange lands.
@@ -1458,6 +1488,94 @@ async fn reels_feed(
     Ok(Json(serde_json::json!({"items":items,"next_cursor":null})))
 }
 
+/// Development story tray backed by the same privacy-filtered PG posts as the feed.
+/// Media URLs use a narrow local blob boundary; production can replace those URLs with
+/// R2/CDN objects without changing the mobile Story contract.
+async fn stories(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<serde_json::Value>>, ApiError> {
+    let viewer = Some(authenticated_actor(&state, &headers).await?);
+    let Some(_) = std::env::var_os("TARDY_LOCAL_BLOB_DIR") else {
+        return Ok(Json(Vec::new()));
+    };
+    let posts = social_store(&state)?.app_posts(viewer, None, 50).await?;
+    let media = [
+        "news.jpg",
+        "podcast.jpg",
+        "launch.jpg",
+        "explainer.jpg",
+        "ugc.jpg",
+    ];
+    let mut groups: Vec<(Uuid, Vec<serde_json::Value>)> = Vec::new();
+    for post in posts {
+        let file = media[usize::from(post.id.as_bytes()[0]) % media.len()];
+        let story = serde_json::json!({
+            "id": post.id,
+            "author_id": post.author_id,
+            "media": {
+                "type": "image",
+                "url": format!("{}/v1/dev/blobs/{file}", state.public_base_url),
+                "width": 1080,
+                "height": 1920
+            },
+            "created_at_ms": post.created_at_ms,
+            "seen": false
+        });
+        if let Some((_, stories)) = groups.iter_mut().find(|(id, _)| *id == post.author_id) {
+            stories.push(story);
+        } else {
+            groups.push((post.author_id, vec![story]));
+        }
+    }
+    Ok(Json(
+        groups
+            .into_iter()
+            .map(|(author, stories)| serde_json::json!({"author_id":author,"stories":stories}))
+            .collect(),
+    ))
+}
+
+/// Public development-only blob transport. It deliberately accepts one filename rather
+/// than an arbitrary path, preventing traversal outside `TARDY_LOCAL_BLOB_DIR`.
+async fn local_blob(Path(name): Path<String>) -> Result<Response, ApiError> {
+    if name.is_empty()
+        || name.contains("..")
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'))
+    {
+        return Err(ApiError::bad_request("invalid blob name"));
+    }
+    let root = std::env::var_os("TARDY_LOCAL_BLOB_DIR")
+        .ok_or_else(|| ApiError::not_found("local blobs are disabled"))?;
+    let bytes = tokio::fs::read(std::path::Path::new(&root).join(&name))
+        .await
+        .map_err(|error| match error.kind() {
+            std::io::ErrorKind::NotFound => ApiError::not_found("blob not found"),
+            _ => ApiError::internal(format!("read local blob: {error}")),
+        })?;
+    let content_type = match std::path::Path::new(&name)
+        .extension()
+        .and_then(|value| value.to_str())
+    {
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("png") => "image/png",
+        Some("webp") => "image/webp",
+        Some("mp4") => "video/mp4",
+        Some("webm") => "video/webm",
+        _ => "application/octet-stream",
+    };
+    Ok((
+        [
+            (header::CONTENT_TYPE, content_type),
+            (header::CACHE_CONTROL, "public, max-age=3600"),
+        ],
+        bytes,
+    )
+        .into_response())
+}
+
 /// Discovery is intentionally deterministic until the consented reranker is available:
 /// public/followed content is returned newest-first and private posts never enter the set.
 async fn explore_feed(
@@ -2132,6 +2250,12 @@ impl ApiError {
     fn bad_request(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::BAD_REQUEST,
+            message: message.into(),
+        }
+    }
+    fn unprocessable(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
             message: message.into(),
         }
     }
