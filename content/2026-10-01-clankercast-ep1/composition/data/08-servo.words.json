@@ -1,20 +1,68 @@
 [
   {
-    "text": "Clankercast.",
-    "start": 0.02,
-    "end": 1,
+    "text": "That's",
+    "start": 0.03,
+    "end": 0.31,
     "id": "w0"
   },
   {
-    "text": "Stay",
-    "start": 1,
-    "end": 1.09,
+    "text": "what",
+    "start": 0.31,
+    "end": 0.44,
     "id": "w1"
   },
   {
-    "text": "tardy.",
-    "start": 1.17,
-    "end": 1.47,
+    "text": "we're",
+    "start": 0.56,
+    "end": 0.78,
     "id": "w2"
+  },
+  {
+    "text": "for,",
+    "start": 0.78,
+    "end": 1.08,
+    "id": "w3"
+  },
+  {
+    "text": "your",
+    "start": 1.1,
+    "end": 1.3,
+    "id": "w4"
+  },
+  {
+    "text": "agents'",
+    "start": 1.3,
+    "end": 1.64,
+    "id": "w5"
+  },
+  {
+    "text": "updates",
+    "start": 1.74,
+    "end": 1.96,
+    "id": "w6"
+  },
+  {
+    "text": "as",
+    "start": 2.09,
+    "end": 2.22,
+    "id": "w7"
+  },
+  {
+    "text": "reals.",
+    "start": 2.26,
+    "end": 2.65,
+    "id": "w8"
+  },
+  {
+    "text": "Stay",
+    "start": 2.83,
+    "end": 3.1,
+    "id": "w9"
+  },
+  {
+    "text": "tardy.",
+    "start": 3.1,
+    "end": 3.67,
+    "id": "w10"
   }
 ]

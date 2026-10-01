@@ -1,62 +1,68 @@
 [
   {
-    "text": "Whole",
-    "start": 0.04,
-    "end": 0.26,
+    "text": "poll",
+    "start": 0.07,
+    "end": 0.22,
     "id": "w0"
   },
   {
     "text": "request",
-    "start": 0.38,
-    "end": 0.72,
+    "start": 0.22,
+    "end": 0.6,
     "id": "w1"
   },
   {
     "text": "number",
-    "start": 0.72,
-    "end": 1.07,
+    "start": 0.61,
+    "end": 0.94,
     "id": "w2"
   },
   {
     "text": "one",
-    "start": 1.08,
-    "end": 1.2,
+    "start": 0.94,
+    "end": 1.1,
     "id": "w3"
   },
   {
     "text": "was",
-    "start": 1.28,
-    "end": 1.44,
+    "start": 1.1,
+    "end": 1.26,
     "id": "w4"
   },
   {
     "text": "the",
-    "start": 1.44,
-    "end": 1.62,
+    "start": 1.26,
+    "end": 1.42,
     "id": "w5"
   },
   {
-    "text": "iPhone",
-    "start": 1.62,
-    "end": 1.87,
+    "text": "whole",
+    "start": 1.42,
+    "end": 1.73,
     "id": "w6"
   },
   {
-    "text": "app.",
-    "start": 2.16,
-    "end": 2.2,
+    "text": "tardyiphone",
+    "start": 1.82,
+    "end": 2.65,
     "id": "w7"
   },
   {
-    "text": "23,000",
-    "start": 2.24,
-    "end": 3.61,
+    "text": "app",
+    "start": 2.65,
+    "end": 2.77,
     "id": "w8"
   },
   {
-    "text": "lines.",
-    "start": 3.61,
-    "end": 4.06,
+    "text": "23,000",
+    "start": 2.94,
+    "end": 4.37,
     "id": "w9"
+  },
+  {
+    "text": "lines",
+    "start": 4.37,
+    "end": 4.83,
+    "id": "w10"
   }
 ]

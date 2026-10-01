@@ -268,8 +268,8 @@
         display: block;
         font-family: monospace;
         font-weight: 700;
-        font-size: 29px;
-        line-height: 44px;
+        font-size: 36px;
+        line-height: 54px;
         white-space: pre;
       }
       #wm {
@@ -290,8 +290,8 @@
     </style>
   </head>
   <body>
-    <div id="root" data-composition-id="main" data-start="0" data-duration="30" data-width="1080" data-height="1920">
-      <div id="top" class="layer clip" data-start="0" data-duration="30" data-track-index="0">
+    <div id="root" data-composition-id="main" data-start="0" data-duration="32.5" data-width="1080" data-height="1920">
+      <div id="top" class="layer clip" data-start="0" data-duration="32.5" data-track-index="0">
         <div id="stage">
           <div id="cam" data-layout-allow-overflow>
             <img id="studio-img" src="assets/studio.jpg" alt="" />
@@ -305,10 +305,10 @@
         <div id="divider"></div>
       </div>
 
-      <canvas id="ramp" class="clip" width="1080" height="966" data-start="0" data-duration="30" data-track-index="1"></canvas>
+      <canvas id="ramp" class="clip" width="1080" height="966" data-start="0" data-duration="32.5" data-track-index="1"></canvas>
 
-      <div id="overlay" class="layer clip" data-start="0" data-duration="30" data-track-index="2">
-        <div id="hud">PR <b id="hud-n">20/20</b> · <span id="hud-pr">#7 · 10:49 UTC</span></div>
+      <div id="overlay" class="layer clip" data-start="0" data-duration="32.5" data-track-index="2">
+        <div id="hud">MERGE <b id="hud-n">20/20</b> · <span id="hud-pr">10:49 UTC</span></div>
 
         <div id="c-hook" class="card">
           <span class="meta">03:50 → 10:49 UTC</span>
@@ -342,65 +342,73 @@
           <code>+ const focused = useIsFocused();</code>
           <code>+ const playingId = focused ? activeId : null;</code>
         </div>
-        <div id="c-end" class="card">
+        <div id="c-end" class="card" style="left: 270px; top: 1050px">
+          <span class="meta">IN THE APP NOW</span>
           <div id="wm"><span>tardy</span><span class="dot"></span></div>
-          <span class="meta">CLANKERCAST · STAY TARDY.</span>
+          <span class="title">Your agents' updates, as reels.</span>
         </div>
       </div>
 
+      <!-- the real bundled podcast reel from the app (mobile/assets/reels/podcast.mp4) -->
+      <div id="phone" class="clip" data-start="27.42" data-duration="4.48" data-track-index="3" style="position:absolute; left:40px; top:1050px; width:212px; height:370px; border-radius:30px; background:#22222B; border:2px solid #26262F"></div>
+      <video id="reel" class="clip" src="assets/app-podcast-reel.mp4" data-start="27.42" data-duration="4.48" data-track-index="4" muted playsinline style="position:absolute; left:52px; top:1062px; width:188px; height:346px; border-radius:20px; object-fit:cover"></video>
+
       <!-- sound: brag's bundled bed (Sascha Ende, CC BY 4.0) under StableVoice Chatterbox hosts, Kenney SFX -->
-      <audio id="bed" src="assets/music/bed.mp3" data-start="0" data-duration="30" data-track-index="10" data-volume="1"
-        data-automation='{"version":1,"lanes":[{"target":"volume","points":[{"t":0,"v":0.13},{"t":27.9,"v":0.13},{"t":28.3,"v":0.4},{"t":30,"v":0.13}]}]}'></audio>
-      <audio id="vo-00" src="assets/vo/00-servo.wav" data-start="0.40" data-duration="3.91" data-track-index="11" data-volume="1"></audio>
-      <audio id="vo-01" src="assets/vo/01-torque.wav" data-start="4.66" data-duration="2.66" data-track-index="12" data-volume="1"></audio>
-      <audio id="vo-02" src="assets/vo/02-servo.wav" data-start="7.67" data-duration="3.90" data-track-index="11" data-volume="1"></audio>
-      <audio id="vo-03" src="assets/vo/03-torque.wav" data-start="11.92" data-duration="1.85" data-track-index="12" data-volume="1"></audio>
-      <audio id="vo-04" src="assets/vo/04-servo.wav" data-start="14.12" data-duration="4.50" data-track-index="11" data-volume="1"></audio>
-      <audio id="vo-05" src="assets/vo/05-torque.wav" data-start="18.97" data-duration="2.78" data-track-index="12" data-volume="1"></audio>
-      <audio id="vo-06" src="assets/vo/06-servo.wav" data-start="22.10" data-duration="1.47" data-track-index="11" data-volume="1"></audio>
-      <audio id="vo-07" src="assets/vo/07-torque.wav" data-start="23.92" data-duration="1.95" data-track-index="12" data-volume="1"></audio>
-      <audio id="vo-08" src="assets/vo/08-servo.wav" data-start="26.22" data-duration="1.55" data-track-index="11" data-volume="1"></audio>
-      <audio id="sfx-l0" src="assets/sfx/land.ogg" data-start="2.625" data-duration="0.57" data-track-index="13" data-volume="0.2"></audio>
-      <audio id="sfx-l1" src="assets/sfx/land.ogg" data-start="5.625" data-duration="0.57" data-track-index="13" data-volume="0.2"></audio>
-      <audio id="sfx-l2" src="assets/sfx/land.ogg" data-start="8.625" data-duration="0.57" data-track-index="13" data-volume="0.2"></audio>
-      <audio id="sfx-l3" src="assets/sfx/land.ogg" data-start="11.625" data-duration="0.57" data-track-index="13" data-volume="0.2"></audio>
-      <audio id="sfx-l4" src="assets/sfx/land.ogg" data-start="14.625" data-duration="0.57" data-track-index="13" data-volume="0.2"></audio>
-      <audio id="sfx-l5" src="assets/sfx/land.ogg" data-start="17.625" data-duration="0.57" data-track-index="13" data-volume="0.2"></audio>
-      <audio id="sfx-l6" src="assets/sfx/land.ogg" data-start="20.625" data-duration="0.57" data-track-index="13" data-volume="0.2"></audio>
-      <audio id="sfx-l7" src="assets/sfx/land.ogg" data-start="23.625" data-duration="0.57" data-track-index="13" data-volume="0.2"></audio>
-      <audio id="sfx-l8" src="assets/sfx/land.ogg" data-start="26.625" data-duration="0.57" data-track-index="13" data-volume="0.2"></audio>
-      <audio id="sfx-l9" src="assets/sfx/land.ogg" data-start="29.4" data-duration="0.57" data-track-index="13" data-volume="0.2"></audio>
+      <audio id="bed" src="assets/music/bed.mp3" data-start="0" data-duration="32.5" data-track-index="10" data-volume="1"
+        data-automation='{"version":1,"lanes":[{"target":"volume","points":[{"t":0,"v":0},{"t":0.15,"v":0.13},{"t":31.0,"v":0.13},{"t":31.4,"v":0.4},{"t":32.5,"v":0.13}]}]}'></audio>
+      <!-- VOICE:BEGIN -->
+      <audio id="vo-00-servo" src="assets/vo/00-servo.wav" data-start="0.4" data-duration="3.91" data-track-index="11" data-volume="1"></audio>
+      <audio id="vo-01-torque" src="assets/vo/01-torque.wav" data-start="4.61" data-duration="2.66" data-track-index="12" data-volume="1"></audio>
+      <audio id="vo-02-servo" src="assets/vo/02-servo.wav" data-start="7.57" data-duration="5.01" data-track-index="11" data-volume="1"></audio>
+      <audio id="vo-03-torque" src="assets/vo/03-torque.wav" data-start="12.88" data-duration="1.85" data-track-index="12" data-volume="1"></audio>
+      <audio id="vo-04-servo" src="assets/vo/04-servo.wav" data-start="15.03" data-duration="4.50" data-track-index="11" data-volume="1"></audio>
+      <audio id="vo-05-torque" src="assets/vo/05-torque.wav" data-start="19.83" data-duration="2.78" data-track-index="12" data-volume="1"></audio>
+      <audio id="vo-06-servo" src="assets/vo/06-servo.wav" data-start="22.91" data-duration="1.47" data-track-index="11" data-volume="1"></audio>
+      <audio id="vo-07-torque" src="assets/vo/07-torque.wav" data-start="24.68" data-duration="2.44" data-track-index="12" data-volume="1"></audio>
+      <audio id="vo-08-servo" src="assets/vo/08-servo.wav" data-start="27.42" data-duration="3.55" data-track-index="11" data-volume="1"></audio>
+      <!-- VOICE:END -->
+      <audio id="sfx-l0" src="assets/sfx/land.ogg" data-start="2.844" data-duration="0.57" data-track-index="13" data-volume="0.2"></audio>
+      <audio id="sfx-l1" src="assets/sfx/land.ogg" data-start="6.094" data-duration="0.57" data-track-index="13" data-volume="0.2"></audio>
+      <audio id="sfx-l2" src="assets/sfx/land.ogg" data-start="9.344" data-duration="0.57" data-track-index="13" data-volume="0.2"></audio>
+      <audio id="sfx-l3" src="assets/sfx/land.ogg" data-start="12.594" data-duration="0.57" data-track-index="13" data-volume="0.2"></audio>
+      <audio id="sfx-l4" src="assets/sfx/land.ogg" data-start="15.844" data-duration="0.57" data-track-index="13" data-volume="0.2"></audio>
+      <audio id="sfx-l5" src="assets/sfx/land.ogg" data-start="19.094" data-duration="0.57" data-track-index="13" data-volume="0.2"></audio>
+      <audio id="sfx-l6" src="assets/sfx/land.ogg" data-start="22.344" data-duration="0.57" data-track-index="13" data-volume="0.2"></audio>
+      <audio id="sfx-l7" src="assets/sfx/land.ogg" data-start="25.594" data-duration="0.57" data-track-index="13" data-volume="0.2"></audio>
+      <audio id="sfx-l8" src="assets/sfx/land.ogg" data-start="28.844" data-duration="0.57" data-track-index="13" data-volume="0.2"></audio>
+      <audio id="sfx-l9" src="assets/sfx/land.ogg" data-start="32.094" data-duration="0.57" data-track-index="13" data-volume="0.2"></audio>
     </div>
 
     <script src="data/voice.js"></script>
     <script>
       // Pure function of t: one proxy tween drives render(t), so every frame is reproducible.
-      const DUR = 30;
+      const DUR = 32.5;
 
       // What each host says, as displayed (whisper gives the timing, the script gives the words).
       const DISPLAY = {
         "00-servo": "Welcome back to Clankercast! 20 pull requests in under 7 hours.",
         "01-torque": "And zero reviews. Not one approval.",
-        "02-servo": "Pull request number one was the iPhone app. 23,000 lines!",
+        "02-servo": "Pull request number one was the whole tardy\u00a0iPhone app. 23,000 lines!",
         "03-torque": "Six of them merged with a red check.",
         "04-servo": "Four container builds, two Rust. The app's checks? Green every time they ran.",
         "05-torque": "Okay. And the bug where two videos played at once?",
         "06-servo": "Fixed in 12 lines.",
-        "07-torque": "Heh. Fine. That's actually clean.",
-        "08-servo": "Clankercast. Stay tardy.",
+        "07-torque": "Heh. Fine. Still zero reviews, though.",
+        "08-servo": "That's what we're for! Your agents' updates, as reels. Stay tardy.",
       };
 
       // Receipt cards in the bottom half, one per claim (facts.md).
       const CARDS = [
-        ["c-hook", 0, 4.5],
-        ["c-reviews", 4.66, 7.55],
-        ["c-pr1", 7.67, 11.8],
-        ["c-red", 11.92, 14.0],
-        ["c-checks", 14.12, 18.85],
-        ["c-bug", 18.97, 21.98],
-        ["c-diff", 22.1, 26.1],
-        ["c-end", 26.22, 29.4],
-        ["c-hook", 29.45, 30.01], // back to frame 0 for the loop
+        ["c-hook", 0, 4.45],
+        ["c-reviews", 4.61, 7.45],
+        ["c-pr1", 7.57, 12.76],
+        ["c-red", 12.88, 14.91],
+        ["c-checks", 15.03, 19.71],
+        ["c-bug", 19.83, 22.79],
+        ["c-diff", 22.91, 24.6],
+        ["c-reviews", 24.68, 27.3], // "Still zero reviews"
+        ["c-end", 27.42, 31.9],
+        ["c-hook", 31.95, 32.51], // back to frame 0 for the loop
       ];
 
       // Ramp gates = the 20 merged PRs in merge order, colored by CI (facts.md).
@@ -423,12 +431,13 @@
         const words = DISPLAY[v.id].split(" ");
         if (words.length !== v.words.length) throw new Error(`${v.id}: ${words.length} display words vs ${v.words.length} timed`);
         const timed = words.map((w, i) => [w, v.start + v.words[i][1], v.start + v.words[i][2]]);
-        // chunk: break after sentence punctuation once a chunk has 3+ words, or at 8 words
+        // chunk: break after sentence punctuation once a chunk has 3+ words, or at ~26 characters (two caption lines)
         const chunks = [];
         let cur = [];
         timed.forEach((w) => {
           cur.push(w);
-          if (cur.length >= 8 || (cur.length >= 3 && /[.!?]$/.test(w[0]))) { chunks.push(cur); cur = []; }
+          const chars = cur.reduce((n, x) => n + x[0].length + 1, 0);
+          if (chars >= 26 || (cur.length >= 3 && /[.!?]$/.test(w[0]))) { chunks.push(cur); cur = []; }
         });
         if (cur.length) chunks.push(cur);
         return { ...v, chunks };
@@ -475,7 +484,7 @@
           const lv = level(who, t);
           const talking = L && L.who === who;
           const bars = $(`led-${who}`).children;
-          const blink = ((t + (who === "torque" ? 1.3 : 0)) % 3.75) < 0.12; // 3.75 s divides 30: loop-safe
+          const blink = ((t + (who === "torque" ? 1.3 : 0)) % 3.25) < 0.12; // 3.25 s divides 32.5: loop-safe
           for (let k = 0; k < 2; k++) {
             const e = bars[k];
             e.style.left = `${18 + k * 34}px`;
@@ -565,7 +574,7 @@
         const zc = SPEED * t; // car z
         const camZ = zc - CAR_Z;
         const camY = local(zc).y + CAM_H;
-        const weave = 0.5 * Math.sin((2 * Math.PI * t) / 6);
+        const weave = 0.5 * Math.sin((2 * Math.PI * t) / 6.5);
         const camX = weave * 0.5;
         const landT = ((zc % P) - GAP1) / SPEED; // seconds since the last landing in this period
         const shake = landT >= 0 && landT < 0.25 ? Math.sin(landT * 80) * 10 * (1 - landT / 0.25) : 0;
@@ -645,7 +654,7 @@
             const y = local(it.z).y;
             const col = GATE_COLOR[ci];
             const half = ROAD / 2 + 0.7;
-            const lb = proj(-half, y, it.z), lt = proj(-half, y + 4.4, it.z), rb = proj(half, y, it.z), rt = proj(half, y + 4.4, it.z);
+            const lb = proj(-half, y, it.z), lt = proj(-half, y + 2.2, it.z), rb = proj(half, y, it.z), rt = proj(half, y + 2.2, it.z);
             const w = Math.max(2, lb[2] * 0.35);
             ctx.fillStyle = col;
             ctx.fillRect(lt[0] - w / 2, lt[1], w, lb[1] - lt[1]);
@@ -709,9 +718,9 @@
         // HUD: last gate the car passed (before the first gate this loop, the last one of the last loop)
         let passed = -1;
         for (let kk = Math.floor(zc / P) - 1; kk <= Math.floor(zc / P); kk++) GATE_Z.forEach((gz, j) => { if (kk * P + gz <= zc) passed = (((2 * kk + j) % 20) + 20) % 20; });
-        const [pr, clock] = GATES[passed];
+        const clock = GATES[passed][1];
         $("hud-n").textContent = `${passed + 1}/20`;
-        $("hud-pr").textContent = `#${pr} · ${clock} UTC`;
+        $("hud-pr").textContent = `${clock} UTC`;
       }
 
       function render(t) {

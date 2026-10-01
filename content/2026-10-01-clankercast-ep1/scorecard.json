@@ -1,0 +1,38 @@
+{
+  "rubric": "v1",
+  "run": "content/2026-10-01-clankercast-ep1",
+  "type": "podcast",
+  "video_sha256": "73b731eba90519089adca05fbc4f19a8dd42968b22cedafc508731fd96b200a8",
+  "duration_s": 32.6,
+  "graded_at": "2026-10-01T19:04:19Z",
+  "grader": "claude subagent, fresh context, round 2",
+  "gates": {
+    "technical": { "pass": true, "evidence": "check.sh 30 45: all PASS (1080x1920, 30fps, 32.6s, no black/silence, poster, hyperframes check, palette tokens, 13 stills)" },
+    "truth": { "pass": true, "evidence": "All 9 voice lines and every card match facts.md; re-verified as orangej20 at 19:04Z: 20 merged (#1-#21, #5 CLOSED unmerged), nothing merged after facts timestamp; #1 03:50:01Z -> #7 10:49:23Z = 6h59m22s; reviews=0 on all 20; CI on 16 PRs (#2,#7-#21); container FAILURE #10 #15 #16 #17, rust FAILURE #18 #20; mobile SUCCESS 16/16; #1 'Tardy iOS app (Expo): feed, reels, ranking, auth, push, privacy' +23,055/-0; #11 'Fix two videos playing at once...' +12/-6 and gh pr diff 11 contains both shown lines verbatim; mobile/assets/reels/podcast.mp4 added in 6f23de8 (a PR #6 commit), on master, byte-identical to composition/assets/app-podcast-reel.mp4. HUD merge order/times spot-checked at 2/20, 6/20, 8/20, 14/20, 20/20 and gate colors #16 red, #12 green, #17 red, #7 green." },
+    "originals": { "pass": true, "evidence": "Hosts Servo/Torque and studio are one AI-generated still (GPT Image 2); generic humanoid robots with visor LED faces and headphones, reads as genre (two-host video podcast) without copying a specific character, product, or person; visor helmets faintly recall the robot-DJ trope but no specific design, colors, or marks are copied. Show name original. Voices are stock Chatterbox presets (not audited by ear). Bed is CC BY 4.0 Sascha Ende, credited in share-copy, same stock bed as the shipped launch reel. No third-party logos (neon sign says CLANKERCAST; car plate TARDY)." },
+    "privacy": { "pass": true, "evidence": "Repo ajmwagar/tardy is PUBLIC; only PR numbers, titles, times, and two diff lines shown; no emails, secrets, internal URLs." }
+  },
+  "scores": {
+    "hook": { "score": 3, "evidence": "hook-0.5s: '20 PRs in 6h 59m' card plus two robot hosts under a neon sign is specific to this event; but the caption reading at 0.5s is the generic 'Welcome back to Clankercast!' and the fact is in a smaller card below, so the eye lands on generic text first." },
+    "message": { "score": 3, "evidence": "Cold viewer gets: an app was built in 20 agent PRs in under 7h with zero reviews and six red checks, the app checks stayed green, and tardy turns agent updates into reels (27.4-31s). The point (speed vs review) is clear; the resolution only partly settles the objection, and Torque's callback at 26.5s leaves it open by design." },
+    "proof": { "score": 2, "evidence": "Real diff lines from #11 (useIsFocused / playingId) carry 22.9-25.0s, but only ~2s and two lines. The 'in the app now' beat (27.4-31.9s) is the real bundled podcast.mp4 in a ~190px-wide drawn phone, content unreadable at feed size, and it is a bundled mock reel, not captured app UI. The ramp is data-driven but abstract." },
+    "type_fit": { "score": 2, "evidence": "Trade-off present and the objection is a genuine cost (zero reviews, red CI). Two distinct Chatterbox voices on separate tracks with per-host LED mouths and two-camera framing read as a podcast clip. Fails caption sync: 07-torque silence at 0.24-0.64 and 0.96-1.13s puts 'Still zero reviews though' at ~1.13-2.44s, but words.json times it 2.06-2.42 (up to ~0.9s late, 20-80ms per word); 05-torque 'and' is timed 0.37s inside a silence that ends 0.82s. Two of nine lines miss the ~0.1s bar." },
+    "brand": { "score": 3, "evidence": "Palette tokens pass; yellow for the hero numbers, captions, car; red only for red checks, BUG card, wordmark dot. tardy wordmark with red dot at 27.6-31.9s and 'Stay tardy.' sign-off. Voice is BRAND-adjacent but the end tagline 'Your agents' updates, as reels' is not the BRAND.md tagline and sign-off is truncated." },
+    "pacing": { "score": 3, "evidence": "Nine lines in 31s with ~0.3s gaps, shot changes per speaker; no dead beat. Caption chunking leaves orphans ('under' at 2.0s, 'a' at 13.04s, 'two' at 16.3s) that split the facts mid-phrase; 0.6s tail after 'Stay tardy.' ends at 30.97s while the end card swaps back to the loop card at ~31.9s." },
+    "sound": { "score": 3, "evidence": "Measured, not heard: ebur128 -15.1 LUFS integrated, -1.8 dBTP, LRA 3.4; voice segments mean -15.7 to -18.0 dB vs bed-only gap (4.35-4.6s) -28.1 dB, ~10-12 dB separation; first 0.1s mean -35.8 dB (no frame-0 hit); no clipping. Works muted via captions and receipt cards. words.json vs script: whisper heard 'poll request' (02) and 'reals' (08), so 'pull' and 'reels' may be mispronounced; cut/beat alignment unverifiable without listening." },
+    "craft": { "score": 2, "evidence": "Outside top 220/bottom 480 zones, but the 'IN THE APP NOW' card's 'reels.' runs to x~936 at y~1170, inside the right rail zone (x>890, y>1000). Phone at 29.8s is too small to read. Ramp at 23.6s collapses into a grey wedge with no road. Orphan caption words (13.04s 'a'). No typos." }
+  },
+  "limits_pushed": [
+    { "move": "Generated set, live faces (one still -> multi-camera podcast with LED mouths)", "result": "landed" },
+    { "move": "Real two-voice mix, each voice driving its host's mouth", "result": "landed" },
+    { "move": "The gameplay is the data (gates = PRs in merge order, real CI colors)", "result": "landed" },
+    { "move": "Seamless loop (10 laps; HUD at start shows last PR of the loop)", "result": "landed" }
+  ],
+  "total": 65.0,
+  "verdict": "revise",
+  "fixes": [
+    "24.68-27.12s (07-torque) and 19.83-22.61s (05-torque): caption timings are wrong. Re-align words from the wav's silences (Heh 0.03-0.24, Fine 0.64-0.96, Still/zero/reviews/though across 1.13-2.44; 'and' starts at 0.82 not 0.37) or force-align against the script instead of trusting whisper, so every highlight lands within 0.1s.",
+    "27.4-31.9s: the proof beat is a 190px phone playing a bundled mock reel. Replace it with a real simulator capture of the tardy Reels tab (xcrun simctl io booted recordVideo) staged with device-frame-stage at least ~45% of frame width, and pull the tagline card in so 'reels.' clears x=890.",
+    "22.9-25.0s: hold the #11 diff for the whole Fixed-in-12-lines exchange (22.9-27.1s), bigger, with the -/+ active={item.id === playingId} pair as well, so the one real-code beat carries; and rechunk captions to avoid orphans ('under 7 hours.' together at 2.0s, 'with a red check.' at 13s)."
+  ]
+}

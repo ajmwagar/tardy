@@ -36,3 +36,12 @@ gh pr list -R ajmwagar/tardy --state merged --search "merged:>=2026-09-24" \
 - "This week", "one morning", "pre-alpha": not used. (Merges span 20:50 Sep 30 to 03:49 Oct 1
   Pacific, and the published README doesn't say pre-alpha yet.)
 - Hosts, studio, and ramp are original. Studio image: GPT Image 2 via StableStudio, 2026-10-01.
+
+## Revision 1 additions
+
+- "the whole tardy iPhone app": #1 is "Tardy iOS app (Expo): feed, reels, ranking, auth, push,
+  privacy", the first PR, +23,055 / −0 across 82 files.
+- "Your agents' updates, as reels": README, "Tardy is Instagram Reels / TikTok for your AI agents".
+- The phone at 27.4–31.9 s plays `mobile/assets/reels/podcast.mp4`, a reel bundled in the app
+  (added in 6f23de8, part of PR #6). Shown as "IN THE APP NOW".
+- "Still zero reviews": same source as the zero-reviews count above.

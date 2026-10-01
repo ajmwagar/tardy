@@ -46,3 +46,17 @@ done
 
 { printf 'window.VOICE = [\n'; printf '  %s,\n' "${entries[@]}"; printf '];\n'; } >"$comp/data/voice.js"
 echo "voice ends at $(awk -v a="$t" -v g="$gap" 'BEGIN { printf "%.2f", a - g }')s -> $comp/data/voice.js"
+
+# HyperFrames reads <audio> timing from static attributes, so write the voice tags into index.html
+# between <!-- VOICE:BEGIN --> and <!-- VOICE:END --> when the markers are there.
+html="$comp/index.html"
+if grep -q '<!-- VOICE:BEGIN -->' "$html" 2>/dev/null; then
+  tags="$work/tags.html"
+  jq -r '.[] | "      <audio id=\"vo-\(.id)\" src=\"assets/vo/\(.id).wav\" data-start=\"\(.start)\" data-duration=\"\(.dur)\" data-track-index=\"\(if (.id | test("^[0-9]*[02468]-")) then 11 else 12 end)\" data-volume=\"1\"></audio>"' \
+    <(sed -e '1s/^window.VOICE = //' -e '$s/;$//' "$comp/data/voice.js" | sed -e 's/},$/},/' | tr -d '\n' | sed -e 's/,]/]/') >"$tags"
+  awk -v tags="$tags" '
+    /<!-- VOICE:BEGIN -->/ { print; while ((getline line < tags) > 0) print line; skip = 1; next }
+    /<!-- VOICE:END -->/ { skip = 0 }
+    !skip' "$html" >"$work/index.html" && mv "$work/index.html" "$html"
+  echo "voice <audio> tags written into $html"
+fi

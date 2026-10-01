@@ -28,13 +28,13 @@ tardy. Facts: `facts.md` (as of 2026-10-01T18:32:18Z).
 |---|---|---|---|
 | 0 | Servo | Welcome back to Clankercast! 20 pull requests in under 7 hours. | 20 PRs in 6h 59m |
 | 1 | Torque | And zero reviews. Not one approval. | 0 of 20 approving reviews |
-| 2 | Servo | Pull request number one was the iPhone app. 23,000 lines! | #1 +23,055 |
+| 2 | Servo | Pull request number one was the whole tardy iPhone app. 23,000 lines! | #1 +23,055 |
 | 3 | Torque | Six of them merged with a red check. | #10 #15 #16 #17 #18 #20 |
 | 4 | Servo | Four container builds, two Rust. The app's checks? Green every time they ran. | container ✗4, rust ✗2, mobile ✓16/16 |
 | 5 | Torque | Okay. And the bug where two videos played at once? | BUG card |
 | 6 | Servo | Fixed in 12 lines. | #11 diff, +12 −6 |
-| 7 | Torque | Heh. Fine. That's actually clean. | (diff holds) |
-| 8 | Servo | Clankercast. Stay tardy. | wordmark |
+| 7 | Torque | Heh. Fine. Still zero reviews, though. | 0 approving reviews (callback) |
+| 8 | Servo | That's what we're for! Your agents' updates, as reels. Stay tardy. | the app's real podcast reel in a phone + wordmark |
 
 ## Limits pushed
 
@@ -45,7 +45,7 @@ tardy. Facts: `facts.md` (as of 2026-10-01T18:32:18Z).
 
 ## Spend (agentcash, approved cap $2.00)
 
-Studio image $0.17 · 11 upload slots $0.055 · 11 voice lines $0.22 = **$0.445**.
+Studio image $0.17 · 14 upload slots $0.07 · 14 voice lines $0.28 = **$0.52**.
 Two lines were redone: "PR one" read as "the R1"; Chatterbox spoke "[chuckle]" as a word. The
 rejected takes are in `source/rejected/`.
 
@@ -53,3 +53,21 @@ rejected takes are in `source/rejected/`.
 
 Bed: brag's "Happy Beats / Business Moves" Vol. 10 by Sascha Ende (CC BY 4.0), ducked to 0.13.
 Landing thud on each of the 10 jumps. Baked at -16.5 LUFS, -1.8 dBTP.
+
+## Revision 1 (after grade: revise, 65.0)
+
+- Message: line 2 names "the whole tardy iPhone app"; Torque calls back "still zero reviews";
+  Servo's answer is the joke and the pitch ("That's what we're for! Your agents' updates, as reels").
+- Proof: the app's real bundled podcast reel plays in a phone at the end; the #11 diff is larger.
+- Craft: gates are low banners that pass under the cards; the HUD drops PR numbers (merge count + time).
+- Sound: bed fades in over 0.15 s (no frame-0 hit); baked to -15.1 LUFS / -1.8 dBTP.
+- voice-prep.sh now writes the voice <audio> tags itself between VOICE markers.
+
+## Grades
+
+- Round 1 (first cut): revise, 65.0. Scorecard file was overwritten by round 2; weakest were
+  message 2, proof 2, craft 2.
+- Round 2 (revision 1): revise, 65.0, `scorecard.json`. All gates pass. Weakest: proof 2 (phone too
+  small, diff only ~2 s), type_fit 2 (karaoke up to ~0.9 s late on lines 05 and 07: whisper word
+  timings drift on Chatterbox audio), craft 2 ("reels." reaches x≈936 at y≈1170, ramp collapses to
+  a grey wedge at 23.6 s). Two-round cap reached; next step is the user's call.
