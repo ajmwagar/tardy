@@ -71,3 +71,11 @@ Landing thud on each of the 10 jumps. Baked at -16.5 LUFS, -1.8 dBTP.
   small, diff only ~2 s), type_fit 2 (karaoke up to ~0.9 s late on lines 05 and 07: whisper word
   timings drift on Chatterbox audio), craft 2 ("reels." reaches x≈936 at y≈1170, ramp collapses to
   a grey wedge at 23.6 s). Two-round cap reached; next step is the user's call.
+
+## Revision 2 (after grade: revise, 65.0)
+
+- Proof: a real iOS-simulator recording of the Reels tab (`source/app-reels.mov`) plays in a large
+  phone when Servo says "the whole tardy iPhone app" (7.6–10.4 s) and again at the end.
+- Captions: word timing now comes from `align.js` (speech bursts from each clip's loudness, script
+  phrases mapped onto them, whisper only where it fits), fixing the late highlights on lines 05/07.
+- The end card stays left of x=880; the merge counter hides while a phone is up.

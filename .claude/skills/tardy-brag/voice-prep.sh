@@ -7,6 +7,7 @@
 #     assets/vo/NN-<speaker>.wav     silence-trimmed, 24 kHz mono
 #     data/NN-<speaker>.words.json   word timings (hyperframes transcribe / whisper)
 #     data/voice.js                  window.VOICE = [{id, who, start, dur, words, rms}], rms per 1/30 s
+#     data/align.js                 caption word timing (see align.js)
 #   and prints the line table (id, start, dur, transcript) so the script can be checked by eye.
 # Lines play back to back with <gap> seconds between them (default 0.25), first at <lead-in> (0.3).
 set -euo pipefail
@@ -44,6 +45,7 @@ for f in "${clips[@]}"; do
   t=$(awk -v a="$t" -v b="$dur" -v g="$gap" 'BEGIN { printf "%.2f", a + b + g }')
 done
 
+cp "$(dirname "$0")/align.js" "$comp/data/align.js" # captions time words with it
 { printf 'window.VOICE = [\n'; printf '  %s,\n' "${entries[@]}"; printf '];\n'; } >"$comp/data/voice.js"
 echo "voice ends at $(awk -v a="$t" -v g="$gap" 'BEGIN { printf "%.2f", a - g }')s -> $comp/data/voice.js"
 
