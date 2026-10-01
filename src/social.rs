@@ -209,34 +209,68 @@ impl PgSocialStore {
             .collect()
     }
 
+    /// Posts visible to `viewer`, optionally restricted to one author. The app's first
+    /// feed contract deliberately uses a bounded, non-opaque page: callers return a null
+    /// cursor until keyset pagination is added rather than pretending an offset is stable.
+    pub async fn app_posts(
+        &self,
+        viewer: Option<Uuid>,
+        author: Option<Uuid>,
+        limit: i64,
+    ) -> Result<Vec<AppFeedPost>, SocialError> {
+        let rows = sqlx::query(
+            "SELECT p.id,p.author_profile_id,p.caption,p.created_at,l.canonical_url,
+                    (SELECT count(*) FROM post_comments c WHERE c.post_id=p.id)::bigint AS comment_count
+             FROM tardy_posts p
+             LEFT JOIN shared_links l ON l.id=p.shared_link_id
+             WHERE ($2::uuid IS NULL OR p.author_profile_id=$2)
+               AND (p.visibility='public'
+                    OR p.author_profile_id=$1
+                    OR (p.visibility='followers' AND EXISTS (
+                        SELECT 1 FROM profile_follows f
+                        WHERE f.follower_profile_id=$1 AND f.followed_profile_id=p.author_profile_id)))
+             ORDER BY p.created_at DESC,p.id DESC LIMIT $3",
+        )
+        .bind(viewer)
+        .bind(author)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(app_post_from_row).collect()
+    }
+
     pub async fn app_accounts(&self, ids: &[Uuid]) -> Result<Vec<AppAccount>, SocialError> {
         let rows = sqlx::query(
             "SELECT i.profile_id,i.kind,i.handle,
+                    COALESCE(h.display_name,i.handle) AS display_name,
+                    COALESCE(NULLIF(h.avatar_url,''),'https://tardy.news/favicon.svg') AS avatar_url,
+                    COALESCE(h.bio,'') AS bio,
                     (SELECT count(*) FROM profile_follows f WHERE f.followed_profile_id=i.profile_id)::bigint AS followers,
                     (SELECT count(*) FROM profile_follows f WHERE f.follower_profile_id=i.profile_id)::bigint AS following,
                     (SELECT count(*) FROM tardy_posts p WHERE p.author_profile_id=i.profile_id)::bigint AS post_count
-             FROM social_identities i WHERE i.profile_id=ANY($1)",
+             FROM social_identities i
+             LEFT JOIN human_profiles h ON h.profile_id=i.profile_id
+             WHERE i.profile_id=ANY($1)",
         )
         .bind(ids)
         .fetch_all(&self.pool)
         .await?;
-        rows.into_iter()
-            .map(|row| {
-                let handle: String = row.try_get("handle")?;
-                Ok(AppAccount {
-                    id: row.try_get("profile_id")?,
-                    kind: parse_kind(&row.try_get::<String, _>("kind")?)?,
-                    display_name: handle.clone(),
-                    avatar_url: "https://tardy.news/favicon.svg".into(),
-                    bio: String::new(),
-                    handle,
-                    verified: false,
-                    followers: row.try_get("followers")?,
-                    following: row.try_get("following")?,
-                    post_count: row.try_get("post_count")?,
-                })
-            })
-            .collect()
+        rows.into_iter().map(app_account_from_row).collect()
+    }
+
+    pub async fn app_account_by_id(&self, id: Uuid) -> Result<AppAccount, SocialError> {
+        let accounts = self.app_accounts(&[id]).await?;
+        accounts.into_iter().next().ok_or(SocialError::NotFound)
+    }
+
+    pub async fn app_account_by_handle(&self, handle: &str) -> Result<AppAccount, SocialError> {
+        let handle = normalize_handle(handle)?;
+        let id = sqlx::query_scalar("SELECT profile_id FROM social_identities WHERE handle=$1")
+            .bind(handle)
+            .fetch_optional(&self.pool)
+            .await?
+            .ok_or(SocialError::NotFound)?;
+        self.app_account_by_id(id).await
     }
 
     pub async fn register_identity(
@@ -709,6 +743,45 @@ fn parse_visibility(value: &str) -> Result<PostVisibility, SocialError> {
         "public" => Ok(PostVisibility::Public),
         _ => Err(SocialError::Invalid("persisted visibility")),
     }
+}
+fn app_account_from_row(row: sqlx::postgres::PgRow) -> Result<AppAccount, SocialError> {
+    Ok(AppAccount {
+        id: row.try_get("profile_id")?,
+        kind: parse_kind(&row.try_get::<String, _>("kind")?)?,
+        handle: row.try_get("handle")?,
+        display_name: row.try_get("display_name")?,
+        avatar_url: row.try_get("avatar_url")?,
+        bio: row.try_get("bio")?,
+        verified: false,
+        followers: row.try_get("followers")?,
+        following: row.try_get("following")?,
+        post_count: row.try_get("post_count")?,
+    })
+}
+fn app_post_from_row(row: sqlx::postgres::PgRow) -> Result<AppFeedPost, SocialError> {
+    let link: Option<String> = row.try_get("canonical_url")?;
+    Ok(AppFeedPost {
+        id: row.try_get("id")?,
+        author_id: row.try_get("author_profile_id")?,
+        format: "photo",
+        media: Vec::new(),
+        caption: row.try_get("caption")?,
+        links: link
+            .map(|url| vec![serde_json::json!({"kind":"other","label":"Open link","url":url})])
+            .unwrap_or_default(),
+        created_at: row
+            .try_get::<DateTime<Utc>, _>("created_at")?
+            .timestamp_millis(),
+        like_count: 0,
+        comment_count: row.try_get("comment_count")?,
+        share_count: 0,
+        alarm_count: 0,
+        repost_count: 0,
+        viewer_has_liked: false,
+        viewer_has_alarm: false,
+        viewer_has_reposted: false,
+        viewer_has_saved: false,
+    })
 }
 fn post_from_row(row: &sqlx::postgres::PgRow) -> Result<TardyPost, SocialError> {
     Ok(TardyPost {

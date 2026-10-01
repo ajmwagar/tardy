@@ -186,6 +186,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/profile", get(current_profile))
         .route("/v1/profile/following", get(current_following))
         .route("/v1/profiles", post(create_profile).get(list_profiles))
+        .route("/v1/profiles/by-id/{id}", get(get_profile_by_id))
+        .route("/v1/profiles/by-id/{id}/posts", get(get_profile_posts))
         .route("/v1/profiles/{handle}", get(get_profile))
         .route(
             "/v1/profiles/{profile_id}/follow",
@@ -216,11 +218,12 @@ pub fn router(state: Arc<AppState>) -> Router {
             post(grant_search_consent).delete(revoke_search_consent),
         )
         .route("/v1/search", post(search_posts))
-        .route("/v1/explore", post(explore_posts))
+        .route("/v1/explore", get(explore_feed).post(explore_posts))
         .route("/v1/lives", post(start_live))
         .route("/v1/lives/{id}/events", post(append_event).get(list_events))
         .route("/v1/lives/{id}/end", post(end_live))
         .route("/v1/feed", get(feed))
+        .route("/v1/feed/reels", get(reels_feed))
         .route("/v1/feed/hyper-tardy", get(hyper_tardy_feed))
         .route("/v1/agent-handoffs", post(agent_handoff))
         .route("/v1/agent-shares", post(share_to_agent))
@@ -1379,6 +1382,41 @@ async fn feed(
     Ok(Json(items).into_response())
 }
 
+/// The first mobile reels surface uses the same privacy-filtered update stream as Home.
+/// Posts keep their truthful format; media ingestion can promote actual video posts to
+/// `reel` without this endpoint manufacturing video metadata that does not exist.
+async fn reels_feed(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<FeedQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if !(1..=100).contains(&query.limit) {
+        return Err(ApiError::bad_request("limit must be between 1 and 100"));
+    }
+    let viewer = Some(authenticated_actor(&state, &headers).await?);
+    let items = social_store(&state)?
+        .app_posts(viewer, None, query.limit as i64)
+        .await?;
+    Ok(Json(serde_json::json!({"items":items,"nextCursor":null})))
+}
+
+/// Discovery is intentionally deterministic until the consented reranker is available:
+/// public/followed content is returned newest-first and private posts never enter the set.
+async fn explore_feed(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<FeedQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if !(1..=100).contains(&query.limit) {
+        return Err(ApiError::bad_request("limit must be between 1 and 100"));
+    }
+    let viewer = Some(authenticated_actor(&state, &headers).await?);
+    let items = social_store(&state)?
+        .app_posts(viewer, None, query.limit as i64)
+        .await?;
+    Ok(Json(serde_json::json!({"items":items,"nextCursor":null})))
+}
+
 async fn hyper_tardy_feed(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -1494,10 +1532,41 @@ async fn get_profile(
     Path(handle): Path<String>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, ApiError> {
+    if let Some(social) = &state.social {
+        let _ = authenticated_account(&state, &headers).await?;
+        return Ok(Json(social.app_account_by_handle(&handle).await?).into_response());
+    }
     Ok(Json(state.store.public_profile(
         &handle,
         optional_authenticated_actor(&state, &headers).await?,
-    )?))
+    )?)
+    .into_response())
+}
+
+async fn get_profile_by_id(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<AppAccount>, ApiError> {
+    let _ = authenticated_account(&state, &headers).await?;
+    Ok(Json(social_store(&state)?.app_account_by_id(id).await?))
+}
+
+async fn get_profile_posts(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Query(query): Query<FeedQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if !(1..=100).contains(&query.limit) {
+        return Err(ApiError::bad_request("limit must be between 1 and 100"));
+    }
+    let viewer = Some(authenticated_actor(&state, &headers).await?);
+    social_store(&state)?.app_account_by_id(id).await?;
+    let items = social_store(&state)?
+        .app_posts(viewer, Some(id), query.limit as i64)
+        .await?;
+    Ok(Json(serde_json::json!({"items":items,"nextCursor":null})))
 }
 
 async fn update_privacy(
