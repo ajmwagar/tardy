@@ -138,6 +138,8 @@ fn source() -> SourceDefinition {
         display_name: "Test Source".into(),
         enabled: true,
         limit: 10,
+        poll_interval_seconds: 300,
+        poll_jitter_seconds: 60,
         transport: Transport::Rss {
             url: "https://example.com/feed.xml".into(),
         },
@@ -173,5 +175,6 @@ fn plan() -> TransformPlan {
             slides: vec!["A durable event".into()],
         },
         llm: None,
+        capabilities: vec![],
     }
 }

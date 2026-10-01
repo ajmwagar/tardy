@@ -59,10 +59,13 @@ impl PgIngestStore {
 
     pub async fn sync_sources(&self, sources: &[SourceDefinition]) -> Result<(), PgIngestError> {
         for source in sources {
+            let initial_spread = stable_offset(&source.id, 0, source.poll_interval_seconds);
             sqlx::query(
                 "INSERT INTO source_channels
-                   (id, display_name, enabled, transport, rights_policy, transform_plugin, item_limit)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7)
+                   (id, display_name, enabled, transport, rights_policy, transform_plugin, item_limit,
+                    poll_interval_seconds, poll_jitter_seconds, next_poll_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
+                         now() + make_interval(secs => $10::double precision))
                  ON CONFLICT (id) DO UPDATE SET
                    display_name = excluded.display_name,
                    enabled = excluded.enabled,
@@ -70,6 +73,8 @@ impl PgIngestStore {
                    rights_policy = excluded.rights_policy,
                    transform_plugin = excluded.transform_plugin,
                    item_limit = excluded.item_limit,
+                   poll_interval_seconds = excluded.poll_interval_seconds,
+                   poll_jitter_seconds = excluded.poll_jitter_seconds,
                    updated_at = now()",
             )
             .bind(&source.id)
@@ -79,6 +84,9 @@ impl PgIngestStore {
             .bind(serde_json::to_value(&source.rights)?)
             .bind(&source.transform)
             .bind(i32::try_from(source.limit).map_err(|_| PgIngestError::ItemLimit)?)
+            .bind(i32::try_from(source.poll_interval_seconds).expect("validated poll interval"))
+            .bind(i32::try_from(source.poll_jitter_seconds).expect("validated poll jitter"))
+            .bind(i32::try_from(initial_spread).expect("spread fits PostgreSQL integer"))
             .execute(&self.pool)
             .await?;
         }
@@ -93,7 +101,7 @@ impl PgIngestStore {
         let mut transaction = self.pool.begin().await?;
         let row = sqlx::query(
             "SELECT id, display_name, enabled, transport, rights_policy, transform_plugin,
-                    item_limit, etag, last_modified
+                    item_limit, poll_interval_seconds, poll_jitter_seconds, etag, last_modified
              FROM source_channels
              WHERE enabled AND next_poll_at <= now()
                AND (lease_until IS NULL OR lease_until < now())
@@ -124,6 +132,10 @@ impl PgIngestStore {
             enabled: row.try_get("enabled")?,
             limit: usize::try_from(row.try_get::<i32, _>("item_limit")?)
                 .map_err(|_| PgIngestError::Timestamp)?,
+            poll_interval_seconds: u32::try_from(row.try_get::<i32, _>("poll_interval_seconds")?)
+                .map_err(|_| PgIngestError::Timestamp)?,
+            poll_jitter_seconds: u32::try_from(row.try_get::<i32, _>("poll_jitter_seconds")?)
+                .map_err(|_| PgIngestError::Timestamp)?,
             transport: serde_json::from_value(row.try_get("transport")?)?,
             rights: serde_json::from_value(row.try_get("rights_policy")?)?,
             transform: row.try_get("transform_plugin")?,
@@ -147,6 +159,10 @@ impl PgIngestStore {
         now: DateTime<Utc>,
     ) -> Result<usize, PgIngestError> {
         let mut transaction = self.pool.begin().await?;
+        let schedule_bucket =
+            now.timestamp().unsigned_abs() / u64::from(source.poll_interval_seconds);
+        let jitter = stable_offset(&source.id, schedule_bucket, source.poll_jitter_seconds);
+        let next_poll_seconds = source.poll_interval_seconds + jitter;
         let mut inserted = 0;
         for (item, plan) in items {
             let item_id = Uuid::new_v4();
@@ -206,7 +222,7 @@ impl PgIngestStore {
             "UPDATE source_channels SET
                etag = COALESCE($1, etag), last_modified = COALESCE($2, last_modified),
                consecutive_failures = 0, last_error = NULL,
-               next_poll_at = now() + make_interval(secs => poll_interval_seconds),
+               next_poll_at = $5 + make_interval(secs => $6::double precision),
                lease_owner = NULL, lease_until = NULL, updated_at = now()
              WHERE id = $3 AND lease_owner = $4",
         )
@@ -214,6 +230,8 @@ impl PgIngestStore {
         .bind(last_modified)
         .bind(&source.id)
         .bind(worker)
+        .bind(now)
+        .bind(i32::try_from(next_poll_seconds).expect("validated schedule fits PostgreSQL integer"))
         .execute(&mut *transaction)
         .await?;
         if result.rows_affected() != 1 {
@@ -375,6 +393,19 @@ impl PgIngestStore {
             .rows_affected(),
         )
     }
+}
+
+fn stable_offset(source_id: &str, bucket: u64, maximum: u32) -> u32 {
+    if maximum == 0 {
+        return 0;
+    }
+    let digest = Sha256::digest(format!("{source_id}:{bucket}"));
+    let value = u64::from_be_bytes(
+        digest[..8]
+            .try_into()
+            .expect("SHA-256 prefix is eight bytes"),
+    );
+    (value % (u64::from(maximum) + 1)) as u32
 }
 
 fn require_one(rows_affected: u64) -> Result<(), PgIngestError> {
