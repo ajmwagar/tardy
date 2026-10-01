@@ -1,9 +1,9 @@
 import { TardyApiError } from '@/data/api';
-import { MockTardyApi } from '@/data/mock/mock-api';
+import { MOCK_AGENT_CLAIM_CODE, MockTardyApi } from '@/data/mock/mock-api';
 import { POSTS } from '@/data/mock/fixtures';
 
 import { matchRank, searchRanked } from '../search';
-import { contextGrant, shareSections, threadKind } from '../sections';
+import { contextGrant, promotionNotice, shareSections, threadKind } from '../sections';
 import { share, shareThreadSets } from '../send';
 import { threadLabel } from '../thread-label';
 
@@ -175,5 +175,51 @@ describe('shareSections', () => {
     expect((await client.thread('t-avery')).kind).toBe('dm');
     expect((await client.thread('t-crew')).kind).toBe('work');
     expect((await client.openThread(p('avery', 'a-fw'))).kind).toBe('work');
+  });
+});
+
+describe('promotionNotice', () => {
+  it('names the agent and the context boundary, and warns a DM it is permanent', () => {
+    const dm = promotionNotice('opus.backend', false);
+    expect(dm.title).toBe('Add opus.backend to this chat?');
+    expect(dm.message).toMatch(/can’t be undone/);
+    expect(dm.message).toMatch(/Nothing said before now/);
+    expect(promotionNotice('opus.backend', true).message).not.toMatch(/undone/);
+  });
+});
+
+describe('MockTardyApi.addAgent', () => {
+  it('promotes a DM to work with an owned agent, idempotently', async () => {
+    const client = api();
+    const once = await client.addAgent('t-avery', 'a-opus-be');
+    expect(once.kind).toBe('work');
+    expect(once.participantIds).toContain('a-opus-be');
+    expect((await client.addAgent('t-avery', 'a-opus-be')).participantIds).toEqual(once.participantIds);
+  });
+
+  it('refuses an agent the viewer does not own, until they claim it', async () => {
+    const client = api();
+    await expect(client.addAgent('t-avery', 'a-fw')).rejects.toMatchObject({ code: 'forbidden' });
+    await expect(client.claimAgent('nope')).rejects.toMatchObject({ code: 'invalid' });
+    await client.claimAgent(MOCK_AGENT_CLAIM_CODE.toLowerCase());
+    expect((await client.account('a-fw')).ownedByViewer).toBe(true);
+    await expect(client.addAgent('t-avery', 'a-fw')).resolves.toMatchObject({ kind: 'work' });
+  });
+
+  it('refuses a person', async () => {
+    await expect(api().addAgent('t-avery', 'avery')).rejects.toMatchObject({ code: 'invalid' });
+  });
+});
+
+describe('MockTardyApi.createSharedLink', () => {
+  it('dedupes by canonical URL and rejects non-http', async () => {
+    const client = api();
+    const a = await client.createSharedLink('https://www.youtube.com/watch?v=1&utm_source=x');
+    const b = await client.createSharedLink('https://youtube.com/watch?v=1');
+    expect(b.id).toBe(a.id);
+    expect(a).toMatchObject({ canonicalUrl: 'https://youtube.com/watch?v=1', provider: 'youtube', status: 'queued' });
+    await expect(client.createSharedLink('ftp://x')).rejects.toMatchObject({ code: 'invalid' });
+    const sent = await client.sendMessage('t-avery', '', { sharedLinkId: a.id });
+    expect(sent.sharedLinkId).toBe(a.id);
   });
 });

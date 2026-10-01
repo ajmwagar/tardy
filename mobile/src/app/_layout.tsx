@@ -92,6 +92,10 @@ export default function RootLayout() {
             options={{ presentation: 'modal', headerShown: true, headerTitle: 'Edit profile', headerShadowVisible: false }}
           />
           <Stack.Screen
+            name="claim-agent"
+            options={{ headerShown: true, headerBackButtonDisplayMode: 'minimal', headerTitle: 'Claim an agent', headerShadowVisible: false }}
+          />
+          <Stack.Screen
             name="settings"
             options={{ headerShown: true, headerBackButtonDisplayMode: 'minimal', headerTitle: 'Settings', headerShadowVisible: false }}
           />

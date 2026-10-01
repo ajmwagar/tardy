@@ -10,8 +10,7 @@ import type { ThreadParticipant } from '@/data/types';
  * `unsupported`, and the caller must say so rather than silently drop someone.
  */
 export type ConversationPlan =
-  | { ok: true; recipientId: string; addAgentIds: string[] }
-  | { ok: false; reason: 'nobody' | 'unsupported' };
+  { ok: true; recipientId: string; addAgentIds: string[] } | { ok: false; reason: 'nobody' | 'unsupported' };
 
 export function conversationPlan(participants: readonly ThreadParticipant[], viewerId: string | undefined): ConversationPlan {
   const seen = new Set<string>();

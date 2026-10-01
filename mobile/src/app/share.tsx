@@ -6,7 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { EmptyState, ErrorState, Pulse, SkeletonBlock } from '@/components/states';
 import { ThreadAvatar } from '@/components/thread-avatar';
 import { Avatar, haptic, Icon, PressableScale } from '@/components/ui';
-import type { Account, Thread } from '@/data/types';
+import type { Account, MessageAttachment, SharedLink, Thread } from '@/data/types';
 import { share, type ShareMode } from '@/share/send';
 import { matchRank } from '@/share/search';
 import { contextGrant, shareSections } from '@/share/sections';
@@ -76,6 +76,34 @@ const TargetCell = memo(function TargetCell({
   );
 });
 
+const LINK_STATUS: Record<NonNullable<SharedLink['status']>, string> = {
+  queued: 'Queued for a summary',
+  processing: 'Summarizing…',
+  ready: 'Ready',
+  failed: 'Summary failed. Sharing still works.',
+};
+
+/** The link being shared: where it's from and its enrichment state (kept apart from delivery). */
+function LinkHeader({ url, link, error }: { url: string; link: SharedLink | null; error: string | null }) {
+  return (
+    <View style={styles.linkHeader}>
+      <Icon name="link" size={16} color={colors.link} />
+      <View style={{ flex: 1 }}>
+        <Text style={styles.linkUrl} numberOfLines={1}>
+          {link?.canonicalUrl ?? url}
+        </Text>
+        <Text style={error ? styles.linkError : styles.linkStatus} numberOfLines={2}>
+          {error
+            ? `Can't share this link: ${error}`
+            : link
+              ? `${link.provider} · ${link.status ? LINK_STATUS[link.status] : 'Saved'}`
+              : 'Saving…'}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
 function GridSkeleton() {
   return (
     <Pulse style={styles.skeleton}>
@@ -96,8 +124,27 @@ function GridSkeleton() {
  * to each). Sends to the same people reuse their thread, never a duplicate.
  */
 export default function ShareSheet() {
-  const { postId } = useLocalSearchParams<{ postId?: string }>();
-  const composing = !postId;
+  const { postId, url } = useLocalSearchParams<{ postId?: string; url?: string }>();
+  const composing = !postId && !url;
+  // A link shared into Tardy (share extension or deep link): register it once, show its card.
+  const [link, setLink] = useState<SharedLink | null>(null);
+  const [linkError, setLinkError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!url) return;
+    let live = true;
+    api
+      .createSharedLink(url)
+      .then((l) => live && setLink(l))
+      .catch((e: unknown) => live && setLinkError(e instanceof Error ? e.message : String(e)));
+    return () => {
+      live = false;
+    };
+  }, [url]);
+  const attachment: MessageAttachment | undefined = postId
+    ? { sharedPostId: postId }
+    : link
+      ? { sharedLinkId: link.id }
+      : undefined;
   const insets = useSafeAreaInsets();
   const me = useStore((s) => s.accounts.get('me')?.id);
   const accountsById = useStore((s) => s.accounts);
@@ -189,14 +236,17 @@ export default function ShareSheet() {
     setSelected((prev) => (prev.some((s) => s.key === t.key) ? prev.filter((s) => s.key !== t.key) : [...prev, t]));
   }, []);
 
+  // A link share can't go out until the server has registered the link.
+  const waitingForLink = !!url && !link;
+
   const send = async () => {
-    if (selected.length === 0 || phase !== 'idle') return;
+    if (selected.length === 0 || phase !== 'idle' || waitingForLink) return;
     setPhase('sending');
     const result = await share(api, {
       recipients: pickedPeople,
       threads: pickedGroups,
       mode: effectiveMode,
-      attachment: postId ? { sharedPostId: postId } : undefined,
+      attachment,
       note: composing ? '' : note,
       title: groupName,
     });
@@ -216,12 +266,16 @@ export default function ShareSheet() {
       });
       return;
     }
-    logEngagement({ type: 'share_via_dm', postId });
+    if (postId) logEngagement({ type: 'share_via_dm', postId });
     setPhase('sent');
     setTimeout(() => router.back(), 450);
   };
 
   const shareElsewhere = async () => {
+    if (url) {
+      await Share.share({ message: link?.canonicalUrl ?? url });
+      return;
+    }
     if (!postId) return;
     try {
       const post = await api.post(postId);
@@ -256,6 +310,7 @@ export default function ShareSheet() {
       <Text style={styles.title} accessibilityRole="header">
         {composing ? 'New message' : 'Share'}
       </Text>
+      {url ? <LinkHeader url={url} link={link} error={linkError} /> : null}
       <View style={styles.search}>
         <Icon name="magnifyingglass" size={16} color={colors.textTertiary} />
         <TextInput
@@ -291,32 +346,36 @@ export default function ShareSheet() {
           <EmptyState icon="person.2" title="No one here yet" message="Follow some agents and they'll show up here." />
         )
       ) : (
-        <ScrollView
-          style={styles.scroll}
-          contentInsetAdjustmentBehavior="never"
-          contentContainerStyle={styles.grid}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="on-drag">
-          {sections.map((section) => (
-            <View key={section.title}>
-              <Text style={styles.sectionTitle} accessibilityRole="header">
-                {section.title}
-              </Text>
-              <View style={styles.row}>
-                {section.items.map((item) => (
-                  <TargetCell
-                    key={item.key}
-                    target={item}
-                    label={labelOf(item)}
-                    me={me}
-                    selected={selectedKeys.has(item.key)}
-                    onToggle={toggle}
-                  />
-                ))}
+        // Wrapped and clipped: an iOS form sheet otherwise lays its first scroll view out from the
+        // sheet's top edge, under the title and search field.
+        <View style={styles.scroll}>
+          <ScrollView
+            style={styles.scroll}
+            contentInsetAdjustmentBehavior="never"
+            contentContainerStyle={styles.grid}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag">
+            {sections.map((section) => (
+              <View key={section.title}>
+                <Text style={styles.sectionTitle} accessibilityRole="header">
+                  {section.title}
+                </Text>
+                <View style={styles.row}>
+                  {section.items.map((item) => (
+                    <TargetCell
+                      key={item.key}
+                      target={item}
+                      label={labelOf(item)}
+                      me={me}
+                      selected={selectedKeys.has(item.key)}
+                      onToggle={toggle}
+                    />
+                  ))}
+                </View>
               </View>
-            </View>
-          ))}
-        </ScrollView>
+            ))}
+          </ScrollView>
+        </View>
       )}
 
       {(selected.length > 0 || !composing) && (
@@ -382,7 +441,7 @@ export default function ShareSheet() {
               <PressableScale
                 style={[styles.send, phase === 'sent' && styles.sendDone]}
                 onPress={send}
-                disabled={phase !== 'idle'}
+                disabled={phase !== 'idle' || waitingForLink}
                 accessibilityRole="button"
                 accessibilityLabel={actionLabel}
                 accessibilityState={{
@@ -433,7 +492,20 @@ const styles = StyleSheet.create({
   owner: { color: colors.textTertiary, fontSize: 10.5, marginTop: -4, maxWidth: 84 },
   grant: { flexDirection: 'row', gap: 6, alignItems: 'flex-start' },
   grantText: { flex: 1, color: colors.textSecondary, fontSize: 12.5, lineHeight: 17 },
-  scroll: { flex: 1 },
+  scroll: { flex: 1, overflow: 'hidden' },
+  linkHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginHorizontal: 16,
+    marginBottom: 10,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: colors.elevated,
+  },
+  linkUrl: { color: colors.text, fontSize: 14, fontWeight: '600' },
+  linkStatus: { color: colors.textSecondary, fontSize: 12, marginTop: 2 },
+  linkError: { color: colors.alarm, fontSize: 12, marginTop: 2 },
   grid: { paddingHorizontal: 8, paddingTop: 14, paddingBottom: 16 },
   skeleton: {
     flexDirection: 'row',

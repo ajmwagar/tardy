@@ -1,16 +1,18 @@
 import { Image } from 'expo-image';
+import * as WebBrowser from 'expo-web-browser';
 import { router, Stack, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActionSheetIOS, Alert, FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ErrorState, Pulse, SkeletonBlock } from '@/components/states';
-import { Avatar, Icon, NameLine, PressableScale, StatusPill } from '@/components/ui';
+import { Avatar, haptic, Icon, IconButton, NameLine, PressableScale, StatusPill } from '@/components/ui';
 import { TardyApiError } from '@/data/api';
-import type { Message, Post, ThreadRef } from '@/data/types';
+import type { Account, Message, Post, ThreadRef } from '@/data/types';
 import { ThreadAvatar } from '@/components/thread-avatar';
+import { isWork, promotionNotice } from '@/share/sections';
 import { isGroup, othersIn, threadLabel } from '@/share/thread-label';
-import { api, ensureAccounts, refreshUnread, reportError, useAccount, useStore } from '@/state/store';
+import { api, cacheAccounts, ensureAccounts, refreshUnread, reportError, useAccount, useStore } from '@/state/store';
 import { colors, IMAGE_TRANSITION_MS, radius, timeAgo } from '@/theme';
 
 /** Bounded polling while the thread is open (server push for DMs comes later). */
@@ -18,7 +20,11 @@ const POLL_MS = 3000;
 /** Messages further apart than this get a time divider. */
 const BREAK_MS = 60 * 60 * 1000;
 
-type Row = Message & { pending?: boolean; failed?: boolean };
+/**
+ * A message, or a local event line (an agent joining) that sits in the timeline. Event lines
+ * are this device's record of what it just did; the server does not send them (yet).
+ */
+type Row = Message & { pending?: boolean; failed?: boolean; event?: string };
 
 function SharedPostCard({ message }: { message: Message }) {
   const ref = message.sharedPost;
@@ -71,6 +77,28 @@ function SharedPostCard({ message }: { message: Message }) {
   );
 }
 
+const isUrl = (text: string) => /^https?:\/\/\S+$/.test(text.trim());
+
+/** A shared link: who it's from and where it goes. Enrichment (title, transcript) comes later. */
+function LinkCard({ url, mine }: { url: string; mine: boolean }) {
+  const host = new URL(url).hostname.replace(/^www\./, '');
+  return (
+    <Pressable
+      style={[styles.link, mine && styles.linkMine]}
+      onPress={() => void WebBrowser.openBrowserAsync(url)}
+      accessibilityRole="link"
+      accessibilityLabel={`Link to ${host}`}>
+      <Icon name="link" size={16} color={colors.link} />
+      <View style={{ flex: 1 }}>
+        <Text style={styles.linkHost}>{host}</Text>
+        <Text style={styles.linkUrl} numberOfLines={1}>
+          {url}
+        </Text>
+      </View>
+    </Pressable>
+  );
+}
+
 const Bubble = memo(function Bubble({
   row,
   mine,
@@ -92,7 +120,9 @@ const Bubble = memo(function Bubble({
       <View style={[styles.bubbleColumn, mine && styles.bubbleColumnMine]}>
         {showName && !mine && sender && <Text style={styles.senderName}>{sender.handle}</Text>}
         {row.sharedPost && <SharedPostCard message={row} />}
-        {row.text ? (
+        {row.sharedLinkId && !row.sharedPost && isUrl(row.text) ? (
+          <LinkCard url={row.text} mine={mine} />
+        ) : row.text ? (
           <Pressable
             disabled={!row.failed}
             onPress={() => onRetry(row)}
@@ -138,7 +168,11 @@ export default function ThreadScreen() {
       await ensureAccounts([...current.participantIds, ...messages.map((m) => m.senderId)]);
       setThread(current);
       // Keep local pending/failed sends; everything else comes from the server.
-      setRows((prev) => [...messages, ...(prev ?? []).filter((r) => r.pending || r.failed)]);
+      setRows((prev) =>
+        [...messages, ...(prev ?? []).filter((r) => r.pending || r.failed || r.event)].sort(
+          (a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt),
+        ),
+      );
       setError(null);
 
       const last = messages[messages.length - 1];
@@ -185,12 +219,67 @@ export default function ThreadScreen() {
   );
 
   const data = useMemo(() => [...(rows ?? [])].reverse(), [rows]); // inverted list: newest first
+
+  /**
+   * Adds one of the viewer's own agents. The confirmation names the agent and what it will
+   * see before anything happens; a failure leaves the chat exactly as it was (human-only).
+   */
+  const addAgent = useCallback(async () => {
+    if (!thread) return;
+    let mine: Account[];
+    try {
+      mine = (await api.searchAccounts('')).filter((a) => a.kind === 'agent' && a.ownedByViewer && !thread.participantIds.includes(a.id));
+    } catch (e) {
+      reportError(`Couldn't load your agents: ${e instanceof Error ? e.message : String(e)}`);
+      return;
+    }
+    if (mine.length === 0) {
+      Alert.alert('No agents to add', 'Agents you own show up here. Claim one in Settings with the code it gave you.');
+      return;
+    }
+    ActionSheetIOS.showActionSheetWithOptions(
+      { title: 'Add an agent', options: ['Cancel', ...mine.map((a) => a.handle)], cancelButtonIndex: 0 },
+      (i) => {
+        const agent = mine[i - 1];
+        if (!agent) return;
+        const notice = promotionNotice(agent.handle, isWork(thread));
+        Alert.alert(notice.title, notice.message, [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Add',
+            onPress: async () => {
+              try {
+                const promoted = await api.addAgent(thread.id, agent.id);
+                cacheAccounts([agent]);
+                setThread(promoted);
+                haptic.impact();
+                const at = new Date().toISOString();
+                setRows((prev) => [
+                  ...(prev ?? []),
+                  { id: `event-${at}`, threadId: thread.id, senderId: agent.id, text: '', createdAt: at, event: `${agent.handle} joined. It sees messages from here on.` },
+                ]);
+              } catch (e) {
+                reportError(`Couldn't add ${agent.handle}: ${e instanceof Error ? e.message : String(e)}`);
+              }
+            },
+          },
+        ]);
+      },
+    );
+  }, [thread]);
   const retry = useCallback((r: Row) => void send(r.text, r), [send]);
   const renderItem = useCallback(
     ({ item, index }: { item: Row; index: number }) => {
       const older = data[index + 1];
       const newer = data[index - 1];
       const gap = older && Date.parse(item.createdAt) - Date.parse(older.createdAt) > BREAK_MS;
+      if (item.event) {
+        return (
+          <Text style={styles.event} accessibilityRole="text">
+            {item.event}
+          </Text>
+        );
+      }
       return (
         <View>
           {(!older || gap) && <Text style={styles.timeBreak}>{timeAgo(item.createdAt)} ago</Text>}
@@ -211,6 +300,7 @@ export default function ThreadScreen() {
     <View style={styles.screen}>
       <Stack.Screen
         options={{
+          headerRight: () => <IconButton icon="person.crop.circle.badge.plus" size={22} label="Add an agent" onPress={addAgent} />,
           headerTitle: () =>
             thread && groupLabel !== null ? (
               <View style={styles.titleRow} accessibilityRole="header" accessibilityLabel={`Group: ${groupLabel}`}>
@@ -219,7 +309,10 @@ export default function ThreadScreen() {
                   <Text style={styles.groupTitle} numberOfLines={1}>
                     {groupLabel}
                   </Text>
-                  <Text style={styles.titleSub}>{thread.participantIds.length} members</Text>
+                  <Text style={styles.titleSub}>
+                    {isWork(thread) ? 'Work · ' : ''}
+                    {thread.participantIds.length} members
+                  </Text>
                 </View>
               </View>
             ) : (
@@ -284,6 +377,19 @@ export default function ThreadScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  link: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    maxWidth: 260,
+    padding: 12,
+    borderRadius: radius.card,
+    backgroundColor: colors.elevated,
+  },
+  linkMine: { alignSelf: 'flex-end' },
+  linkHost: { color: colors.text, fontSize: 14, fontWeight: '700' },
+  linkUrl: { color: colors.textSecondary, fontSize: 12 },
+  event: { color: colors.textTertiary, fontSize: 12, textAlign: 'center', paddingVertical: 10, paddingHorizontal: 24 },
   groupTitle: { color: colors.text, fontSize: 15, fontWeight: '700', maxWidth: 220 },
   senderName: { color: colors.textTertiary, fontSize: 11.5, marginLeft: 12, marginBottom: 2 },
   titleSub: { color: colors.textTertiary, fontSize: 11, fontFamily: 'ui-monospace' },

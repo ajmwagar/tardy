@@ -494,7 +494,8 @@ export class MockTardyApi implements TardyApi {
       id: `${threadId}-m${this.messageLog.length}`,
       threadId,
       senderId: this.viewerId,
-      text: body,
+      // Like the server, a link with no note carries its URL as the body.
+      text: body || (linkId !== undefined ? this.links.get(linkId)!.canonicalUrl : ''),
       createdAt: new Date().toISOString(),
       ...(postId !== undefined && { sharedPost: { status: 'available' as const, postId } }),
       ...(linkId !== undefined && { sharedLinkId: linkId }),

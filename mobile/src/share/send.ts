@@ -58,7 +58,8 @@ export async function share(
   const result: ShareResult = { sent: [], failed: [] };
   outcomes.forEach((o, i) => {
     if (o.status === 'fulfilled') result.sent.push(o.value);
-    else result.failed.push({ participantIds: labels[i], error: o.reason instanceof Error ? o.reason.message : String(o.reason) });
+    else
+      result.failed.push({ participantIds: labels[i], error: o.reason instanceof Error ? o.reason.message : String(o.reason) });
   });
   return result;
 }

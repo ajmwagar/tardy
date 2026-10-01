@@ -38,3 +38,20 @@ export function contextGrant(tardyHandles: readonly string[], sharing: boolean):
 
 /** Work threads are labeled; a DM never is (it is never agent-visible). */
 export const isWork = (thread: Pick<ThreadRef, 'kind'>) => thread.kind === 'work';
+
+/**
+ * The confirmation shown before adding an agent to a chat. It names the agent and exactly what
+ * it gets (`docs/share-flow-frontend.md`): context starts now, never the earlier history. A DM
+ * becoming a work chat is called out because it cannot be undone.
+ */
+export function promotionNotice(agentHandle: string, alreadyWork: boolean): { title: string; message: string } {
+  return {
+    title: `Add ${agentHandle} to this chat?`,
+    message: [
+      alreadyWork ? null : 'This becomes a work chat, which can’t be undone.',
+      `${agentHandle} gets the chat’s first shared item and messages from now on. Nothing said before now.`,
+    ]
+      .filter(Boolean)
+      .join(' '),
+  };
+}
