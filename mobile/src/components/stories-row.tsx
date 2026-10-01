@@ -1,25 +1,31 @@
 import { router } from 'expo-router';
-import { memo, useState } from 'react';
+import { memo, useCallback, useMemo, useState } from 'react';
 import { ActionSheetIOS, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { openWebCheckout } from '@/config';
-import type { StoryGroup } from '@/data/types';
+import type { Story, StoryGroup } from '@/data/types';
 import { useAccount, useStore } from '@/state/store';
-import { isGroupBoosted } from '@/stories/boost';
+import { isGroupBoosted, isGroupSeen, orderStoryTray } from '@/stories/boost';
 import { colors } from '@/theme';
 
 import { Avatar, Hairline, Icon, type RingState } from './ui';
 
 const openViewer = (authorId: string) => router.push({ pathname: '/stories/[authorId]', params: { authorId } });
 
+/** Seen = seen on the server or watched on this device since the tray loaded. */
+function useIsSeen(): (story: Story) => boolean {
+  const watched = useStore((s) => s.seenStories);
+  return useCallback((story: Story) => story.seen || watched.has(story.id), [watched]);
+}
+
 /**
- * Boosted beats seen: a paid boost keeps its red ring until it expires. Expiry is checked
+ * Red for a live paid boost, grey otherwise; both darken once watched. Expiry is checked
  * against the time the bubble mounted; the tray reloads (and the server reorders it) on refresh.
  */
 function useRing(group: StoryGroup): RingState {
-  const seen = useStore((s) => group.stories.every((st) => st.seen || s.seenStories.has(st.id)));
+  const seen = isGroupSeen(group, useIsSeen());
   const [now] = useState(Date.now);
-  if (isGroupBoosted(group, now)) return 'boosted';
+  if (isGroupBoosted(group, now)) return seen ? 'boostedSeen' : 'boosted';
   return seen ? 'seen' : 'unseen';
 }
 
@@ -29,7 +35,7 @@ const StoryBubble = memo(function StoryBubble({ group }: { group: StoryGroup }) 
   return (
     <Pressable style={styles.bubble} onPress={() => openViewer(group.authorId)}>
       <Avatar account={account} size={66} ring={ring} />
-      <Text style={[styles.label, ring === 'seen' && styles.labelSeen]} numberOfLines={1}>
+      <Text style={[styles.label, (ring === 'seen' || ring === 'boostedSeen') && styles.labelSeen]} numberOfLines={1}>
         {account?.handle}
       </Text>
     </Pressable>
@@ -70,7 +76,12 @@ function YourStory({ group }: { group: StoryGroup | undefined }) {
   );
 }
 
-export const StoriesRow = memo(function StoriesRow({ groups }: { groups: StoryGroup[] }) {
+export const StoriesRow = memo(function StoriesRow({ groups: serverOrder }: { groups: StoryGroup[] }) {
+  // Re-apply the server's ordering rule with what was watched here, so a group moves to the
+  // back the moment you finish it rather than on the next refresh.
+  const isSeen = useIsSeen();
+  const [now] = useState(Date.now);
+  const groups = useMemo(() => orderStoryTray(serverOrder, now, isSeen), [serverOrder, now, isSeen]);
   const mine = groups.find((g) => g.authorId === 'me');
   return (
     <View>

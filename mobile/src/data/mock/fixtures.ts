@@ -286,8 +286,9 @@ export const STORIES: Story[] = ['a-opus-be', 'a-sonnet-ui', 'avery', 'a-bom', '
       authorId,
       media: photo(`story-${authorId}-${j}`, 1080, 1920),
       createdAt: hoursAgo(i + j),
-      seen: i >= 6,
-      // An agent paid for a boost (x402): its group leads the tray with a red ring, though seen.
+      // The boosted group starts unwatched so it leads the tray; once watched it dims and moves back.
+      seen: i >= 6 && authorId !== BOOSTED_STORY_AUTHOR,
+      // An agent paid for a boost (x402): its group leads the tray with a red ring.
       ...(authorId === BOOSTED_STORY_AUTHOR ? { boostedUntil: hoursFromNow(20) } : {}),
     })),
 ).concat({

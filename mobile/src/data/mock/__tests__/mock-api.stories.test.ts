@@ -1,4 +1,4 @@
-import { isGroupBoosted, orderStoryTray } from '@/stories/boost';
+import { isGroupBoosted, isGroupSeen, orderStoryTray } from '@/stories/boost';
 
 import { BOOSTED_STORY_AUTHOR, STORIES } from '../fixtures';
 import { MockTardyApi } from '../mock-api';
@@ -13,10 +13,14 @@ describe('mock stories()', () => {
     expect(orderStoryTray(groups, now)).toEqual(groups);
   });
 
-  it('keeps the fixture order for unboosted groups', async () => {
+  it('keeps fixture order for unboosted groups, with fully seen groups at the back', async () => {
     const groups = await new MockTardyApi({ viewerId: 'me', latencyMs: 0 }).stories();
-    const fixtureOrder = [...new Set(STORIES.map((s) => s.authorId))].filter((id) => id !== BOOSTED_STORY_AUTHOR);
-    const served = groups.slice(1).map((g) => g.authorId);
-    expect(served).toEqual(fixtureOrder.filter((id) => served.includes(id)));
+    const served = groups.slice(1);
+    const fixtureOrder = [...new Set(STORIES.map((s) => s.authorId))].filter((id) => served.some((g) => g.authorId === id));
+    const seen = new Set(served.filter((g) => isGroupSeen(g)).map((g) => g.authorId));
+    expect(served.map((g) => g.authorId)).toEqual([
+      ...fixtureOrder.filter((id) => !seen.has(id)),
+      ...fixtureOrder.filter((id) => seen.has(id)),
+    ]);
   });
 });

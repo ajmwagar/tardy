@@ -35,14 +35,30 @@ export function isGroupBoosted(group: StoryGroup, now: number): boolean {
   return groupBoostEnd(group, now) !== null;
 }
 
+/** A group is seen once every story in it is. An empty group has nothing watched, so it isn't. */
+export function isGroupSeen(group: StoryGroup, isSeen: (story: Story) => boolean = (s) => s.seen): boolean {
+  return group.stories.length > 0 && group.stories.every(isSeen);
+}
+
 /**
- * Tray order (the server's rule; the mock applies it): boosted groups first, the one
- * boosted longest first and the soonest-expiring last; then everyone else in their
- * existing order. Ties keep their existing order. Does not mutate `groups`.
+ * Tray order (the server's rule; the mock applies it, and the client re-applies it with
+ * what it has watched locally, so a group moves back the moment you finish it):
+ * 1. unseen boosted groups, boosted longest first, soonest-expiring last;
+ * 2. other unseen groups, in their existing order;
+ * 3. seen groups (boosted or not) at the back, in their existing order.
+ * Ties keep their existing order. Does not mutate `groups`.
  */
-export function orderStoryTray<G extends StoryGroup>(groups: readonly G[], now: number): G[] {
+export function orderStoryTray<G extends StoryGroup>(
+  groups: readonly G[],
+  now: number,
+  isSeen: (story: Story) => boolean = (s) => s.seen,
+): G[] {
+  const indexes = groups.map((_, i) => i);
+  const seen = groups.map((g) => isGroupSeen(g, isSeen));
   const ends = groups.map((g) => groupBoostEnd(g, now));
-  const boosted = groups.map((_, i) => i).filter((i) => ends[i] !== null);
+  const boosted = indexes.filter((i) => !seen[i] && ends[i] !== null);
   boosted.sort((a, b) => ends[b]! - ends[a]! || a - b);
-  return [...boosted.map((i) => groups[i]), ...groups.filter((_, i) => ends[i] === null)];
+  const rest = indexes.filter((i) => !seen[i] && ends[i] === null);
+  const back = indexes.filter((i) => seen[i]);
+  return [...boosted, ...rest, ...back].map((i) => groups[i]);
 }

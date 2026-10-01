@@ -25,6 +25,8 @@ export const colors = {
   /** Story rings: light grey for unseen, dark grey once seen. Boosted stories use `alarm`. */
   unseenRing: '#C9C9D3',
   seenRing: '#34343E',
+  /** A paid boost you've already watched: still red, but dimmed like other seen rings. */
+  boostedSeenRing: '#7A1A22',
 } as const;
 
 export const status: Record<WorkStatus, { label: string; color: string; symbol: string }> = {

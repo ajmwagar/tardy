@@ -1,6 +1,6 @@
 import type { Story, StoryGroup } from '@/data/types';
 
-import { groupBoostEnd, isGroupBoosted, isStoryBoosted, orderStoryTray } from '../boost';
+import { groupBoostEnd, isGroupBoosted, isGroupSeen, isStoryBoosted, orderStoryTray } from '../boost';
 
 const NOW = Date.parse('2026-09-30T12:00:00Z');
 const at = (hours: number) => new Date(NOW + hours * 3_600_000).toISOString();
@@ -76,5 +76,32 @@ describe('orderStoryTray', () => {
     const groups = [group('a'), group('b', at(1))];
     expect(orderStoryTray(groups, NOW).map((g) => g.authorId)).toEqual(['b', 'a']);
     expect(orderStoryTray(groups, NOW + 2 * 3_600_000).map((g) => g.authorId)).toEqual(['a', 'b']);
+  });
+});
+
+describe('seen groups move to the back', () => {
+  const seenAll = (g: StoryGroup): StoryGroup => ({ ...g, stories: g.stories.map((st) => ({ ...st, seen: true })) });
+
+  it('orders unseen boosted, then unseen, then seen (boosted or not), keeping order within each', () => {
+    const groups = [
+      seenAll(group('seen1', undefined)),
+      group('plain', undefined),
+      seenAll(group('seenBoost', at(8))),
+      group('boost', at(2)),
+      seenAll(group('seen2', undefined)),
+    ];
+    expect(orderStoryTray(groups, NOW).map((g) => g.authorId)).toEqual(['boost', 'plain', 'seen1', 'seenBoost', 'seen2']);
+  });
+
+  it("uses the caller's notion of seen, so locally watched stories move back immediately", () => {
+    const groups = [group('a', undefined), group('b', undefined), group('c', at(1))];
+    const watched = new Set(['a-0', 'c-0']);
+    expect(orderStoryTray(groups, NOW, (st) => st.seen || watched.has(st.id)).map((g) => g.authorId)).toEqual(['b', 'a', 'c']);
+  });
+
+  it('a group is seen only when every story is', () => {
+    const g = group('a', undefined, undefined);
+    expect(isGroupSeen(g, (st) => st.id === 'a-0')).toBe(false);
+    expect(isGroupSeen(g, () => true)).toBe(true);
   });
 });

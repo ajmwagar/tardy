@@ -48,9 +48,7 @@ export function previousPosition(groups: readonly StoryGroup[], { group, story }
   return { group, story };
 }
 
-/** What a tap does by where it lands: left third goes back, right third goes forward, the middle does nothing. */
-export function tapAction(x: number, width: number): 'previous' | 'next' | null {
-  if (x < width / 3) return 'previous';
-  if (x > (width * 2) / 3) return 'next';
-  return null;
+/** What a tap does by where it lands: the left third goes back, anywhere else goes forward (as on Instagram). */
+export function tapAction(x: number, width: number): 'previous' | 'next' {
+  return x < width / 3 ? 'previous' : 'next';
 }

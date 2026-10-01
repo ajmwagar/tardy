@@ -104,7 +104,7 @@ describe('tapAction', () => {
   it('splits the screen into thirds', () => {
     expect(tapAction(10, 390)).toBe('previous');
     expect(tapAction(129, 390)).toBe('previous');
-    expect(tapAction(195, 390)).toBeNull();
+    expect(tapAction(195, 390)).toBe('next'); // middle third goes forward, as on Instagram
     expect(tapAction(261, 390)).toBe('next');
     expect(tapAction(389, 390)).toBe('next');
   });
