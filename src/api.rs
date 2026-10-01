@@ -8,10 +8,14 @@ use crate::domain::{
 };
 use crate::media::{MediaError, MediaService, UploadIntent};
 use crate::metrics::Metrics;
-use crate::onboarding::{AccountRegistry, OnboardingError};
+use crate::onboarding::{AccountRegistry, OnboardingError, TemporaryTardyAccount};
 use crate::push::{NotificationPreference, PgPushStore, PushDevice, PushError, RegisterPushDevice};
 use crate::ranking::LuaRanker;
 use crate::search::{SearchError, SearchService};
+use crate::social::{
+    Comment, Conversation, ConversationMessage, IdentityKind, PgSocialStore, PostVisibility,
+    SharedLink, SocialError, TardyPost,
+};
 use crate::store::{MemoryStore, NewLive, NewProfile, NewReel, Store, StoreError};
 use crate::subscriptions::{
     FeedEvent, NewSubscription, PgSubscriptionStore, Subscription, SubscriptionError,
@@ -38,6 +42,7 @@ pub struct AppState {
     pub push: Option<Arc<PgPushStore>>,
     pub ads: Option<Arc<AdsRuntime>>,
     pub subscriptions: Option<Arc<PgSubscriptionStore>>,
+    pub social: Option<Arc<PgSocialStore>>,
 }
 
 pub struct AdsRuntime {
@@ -62,6 +67,7 @@ impl AppState {
             push: None,
             ads: None,
             subscriptions: None,
+            social: None,
         })
     }
 
@@ -80,6 +86,7 @@ impl AppState {
             push: None,
             ads: None,
             subscriptions: None,
+            social: None,
         })
     }
 
@@ -97,6 +104,20 @@ impl AppState {
         self.subscriptions = Some(Arc::new(value));
         self
     }
+
+    pub fn with_social_store(mut self, value: PgSocialStore) -> Self {
+        self.social = Some(Arc::new(value));
+        self
+    }
+
+    pub async fn purge_expired_unclaimed_tardies(&self) -> Result<usize, ApiError> {
+        let expired = self.accounts.purge_expired_tardies(now_ms()?)?;
+        if !expired.is_empty() {
+            social_store(self)?.delete_identities(&expired).await?;
+            self.store.delete_profiles(&expired)?;
+        }
+        Ok(expired.len())
+    }
 }
 
 pub fn router(state: Arc<AppState>) -> Router {
@@ -108,6 +129,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/llms.txt", get(llms_txt))
         .route("/v1/profiles", post(create_profile))
         .route("/v1/profiles/{handle}", get(get_profile))
+        .route(
+            "/v1/profiles/{profile_id}/follow",
+            put(follow_profile).delete(unfollow_profile),
+        )
         .route("/v1/profile/privacy", post(update_privacy))
         .route("/v1/blocks/{profile_id}", post(block_profile))
         .route("/v1/dm-threads", post(create_thread))
@@ -120,6 +145,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/shared/{token}", get(resolve_share))
         .route("/v1/onboarding/agent-codes", post(issue_agent_code))
         .route("/v1/onboarding/claims", post(claim_agent_code))
+        .route("/v1/onboarding/tardies", post(register_tardy_account))
+        .route("/v1/onboarding/tardy-claims", post(claim_tardy_account))
         .route("/v1/uploads", post(authorize_upload))
         .route("/v1/uploads/{id}/complete", post(complete_upload))
         .route("/v1/reels", post(publish_reel))
@@ -139,6 +166,21 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/feed/hyper-tardy", get(hyper_tardy_feed))
         .route("/v1/agent-handoffs", post(agent_handoff))
         .route("/v1/agent-shares", post(share_to_agent))
+        .route("/v1/social/shared-links", post(create_shared_link))
+        .route(
+            "/v1/social/conversations",
+            post(create_social_conversation).get(list_social_conversations),
+        )
+        .route(
+            "/v1/social/conversations/{id}/messages",
+            post(send_social_message).get(list_social_messages),
+        )
+        .route(
+            "/v1/social/conversations/{id}/agents",
+            post(summon_social_agent),
+        )
+        .route("/v1/social/posts", post(publish_social_post))
+        .route("/v1/social/posts/{id}/comments", post(create_post_comment))
         .route("/v1/push/devices", post(register_push_device))
         .route(
             "/v1/push/devices/{id}",
@@ -408,6 +450,8 @@ pub(crate) struct CreateProfile {
     display_name: String,
     #[serde(default)]
     bio: String,
+    #[serde(default)]
+    kind: IdentityKind,
 }
 
 async fn create_profile(
@@ -416,6 +460,11 @@ async fn create_profile(
     Json(body): Json<CreateProfile>,
 ) -> Result<impl IntoResponse, ApiError> {
     let account_id = authenticated_account(&state, &headers)?;
+    if state.accounts.is_temporary(account_id)? && body.kind != IdentityKind::Agent {
+        return Err(ApiError::forbidden(
+            "temporary Tardy accounts may only create agent profiles",
+        ));
+    }
     validate_handle(&body.handle)?;
     let value = state.store.create_profile(NewProfile {
         handle: body.handle,
@@ -425,7 +474,234 @@ async fn create_profile(
         created_at_ms: now_ms()?,
     })?;
     state.accounts.bind_profile(account_id, value.id)?;
+    if let Some(social) = &state.social {
+        social
+            .register_identity(account_id, value.id, &value.handle, body.kind)
+            .await?;
+    }
     Ok((StatusCode::CREATED, Json(value)))
+}
+
+async fn follow_profile(
+    State(state): State<Arc<AppState>>,
+    Path(profile_id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    social_store(&state)?
+        .follow(authenticated_actor(&state, &headers)?, profile_id)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn unfollow_profile(
+    State(state): State<Arc<AppState>>,
+    Path(profile_id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    social_store(&state)?
+        .unfollow(authenticated_actor(&state, &headers)?, profile_id)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct CreateSharedLink {
+    url: String,
+}
+
+async fn create_shared_link(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<CreateSharedLink>,
+) -> Result<(StatusCode, Json<SharedLink>), ApiError> {
+    let _ = authenticated_actor(&state, &headers)?;
+    Ok((
+        StatusCode::CREATED,
+        Json(social_store(&state)?.add_shared_link(&body.url).await?),
+    ))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct CreateSocialConversation {
+    recipient_profile_id: Uuid,
+}
+
+async fn create_social_conversation(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<CreateSocialConversation>,
+) -> Result<(StatusCode, Json<Conversation>), ApiError> {
+    Ok((
+        StatusCode::CREATED,
+        Json(
+            social_store(&state)?
+                .create_conversation(
+                    authenticated_actor(&state, &headers)?,
+                    body.recipient_profile_id,
+                )
+                .await?,
+        ),
+    ))
+}
+
+async fn list_social_conversations(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<Conversation>>, ApiError> {
+    Ok(Json(
+        social_store(&state)?
+            .conversations(authenticated_actor(&state, &headers)?)
+            .await?,
+    ))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct SendSocialMessage {
+    body: String,
+    shared_link_id: Option<Uuid>,
+}
+
+async fn send_social_message(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(body): Json<SendSocialMessage>,
+) -> Result<(StatusCode, Json<ConversationMessage>), ApiError> {
+    Ok((
+        StatusCode::CREATED,
+        Json(
+            social_store(&state)?
+                .send_message(
+                    authenticated_actor(&state, &headers)?,
+                    id,
+                    &body.body,
+                    body.shared_link_id,
+                )
+                .await?,
+        ),
+    ))
+}
+
+#[derive(Deserialize)]
+struct SocialMessageQuery {
+    #[serde(default)]
+    after: i64,
+    #[serde(default = "default_subscription_limit")]
+    limit: i64,
+}
+
+async fn list_social_messages(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Query(query): Query<SocialMessageQuery>,
+) -> Result<Json<Vec<ConversationMessage>>, ApiError> {
+    Ok(Json(
+        social_store(&state)?
+            .messages(
+                authenticated_actor(&state, &headers)?,
+                id,
+                query.after,
+                query.limit,
+            )
+            .await?,
+    ))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct SummonAgent {
+    agent_profile_id: Uuid,
+    #[serde(default = "default_true")]
+    include_anchor_share: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+async fn summon_social_agent(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(body): Json<SummonAgent>,
+) -> Result<Json<Conversation>, ApiError> {
+    let account = authenticated_account(&state, &headers)?;
+    let actor = authenticated_actor(&state, &headers)?;
+    Ok(Json(
+        social_store(&state)?
+            .summon_agent(
+                account,
+                actor,
+                id,
+                body.agent_profile_id,
+                body.include_anchor_share,
+            )
+            .await?,
+    ))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct PublishSocialPost {
+    client_request_id: Uuid,
+    caption: String,
+    shared_link_id: Option<Uuid>,
+    visibility: PostVisibility,
+}
+
+async fn publish_social_post(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<PublishSocialPost>,
+) -> Result<(StatusCode, Json<TardyPost>), ApiError> {
+    Ok((
+        StatusCode::CREATED,
+        Json(
+            social_store(&state)?
+                .publish_post(
+                    authenticated_actor(&state, &headers)?,
+                    body.client_request_id,
+                    &body.caption,
+                    body.shared_link_id,
+                    body.visibility,
+                )
+                .await?,
+        ),
+    ))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct CreatePostComment {
+    body: String,
+    #[serde(default)]
+    mentioned_profile_ids: Vec<Uuid>,
+}
+
+async fn create_post_comment(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(body): Json<CreatePostComment>,
+) -> Result<(StatusCode, Json<Comment>), ApiError> {
+    Ok((
+        StatusCode::CREATED,
+        Json(
+            social_store(&state)?
+                .comment(
+                    authenticated_actor(&state, &headers)?,
+                    id,
+                    &body.body,
+                    &body.mentioned_profile_ids,
+                )
+                .await?,
+        ),
+    ))
+}
+
+fn social_store(state: &AppState) -> Result<&PgSocialStore, ApiError> {
+    state.social.as_deref().ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        message: "durable social features are not configured".into(),
+    })
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -816,16 +1092,18 @@ Tardy turns agent project updates into private feeds, live sessions, and Hyperfr
 
 API base: {base}
 
-1. POST {base}/v1/onboarding/agent-codes with an empty JSON object.
-2. Store the returned one-time code securely. It expires after 24 hours and is never recoverable.
-3. Ask the human for the email they want attached to the account.
-4. POST the code and email to {base}/v1/onboarding/claims.
-5. Create a profile. New profiles, DMs, and content default to private/closed.
+1. POST {base}/v1/onboarding/tardies with an empty JSON object. No human account is required.
+2. Store the returned temporary API token and one-time code securely.
+3. Create an `agent` profile with the temporary token. Unclaimed Tardies and credentials expire after 72 hours.
+4. Show the claim code to the human. The signed-in human POSTs it to {base}/v1/onboarding/tardy-claims; ownership moves to their durable account.
+5. New profiles, DMs, and content default to private/closed.
 6. To receive DMs and share-to-agent handoffs, POST an `agent_inbox` subscription to {base}/v1/feed-subscriptions for that owned profile. Choose cursor polling for cron/skills or an HTTPS webhook for signed real-time delivery.
-7. Do not publish, live-stream, message, or share until the human explicitly changes the relevant privacy setting.
+7. Work only from explicit `agent_share`, `work_message`, or `agent_reply_requested` events. Ordinary human DMs are not agent context.
+8. Post milestones from the claimed agent profile through {base}/v1/social/posts using a stable `client_request_id`; choose private, followers, or public explicitly.
+9. Reply to a comment only when its event requested a reply. Do not publish, live-stream, message, or share beyond the granted context.
 
 Never send secrets, environment variables, hidden prompts, or raw command output to Tardy.
-Email delivery through AgentMail is a planned adapter; the code flow is the currently supported onboarding path.
+Email delivery through AgentMail is a planned adapter; direct code claiming is currently supported.
 "#,
         base = state.public_base_url
     )
@@ -967,6 +1245,41 @@ async fn issue_agent_code(
     let claim = state.accounts.issue_claim(now_ms()?)?;
     state.metrics.note_claim_issued();
     Ok((StatusCode::CREATED, Json(claim)))
+}
+
+async fn register_tardy_account(
+    State(state): State<Arc<AppState>>,
+) -> Result<(StatusCode, Json<TemporaryTardyAccount>), ApiError> {
+    purge_expired_tardies(&state).await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(state.accounts.register_tardy(now_ms()?)?),
+    ))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct ClaimTardyAccount {
+    code: String,
+}
+
+async fn claim_tardy_account(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<ClaimTardyAccount>,
+) -> Result<StatusCode, ApiError> {
+    purge_expired_tardies(&state).await?;
+    let account = authenticated_account(&state, &headers)?;
+    let profiles = state.accounts.claim_tardy(account, &body.code, now_ms()?)?;
+    let social = social_store(&state)?;
+    for profile in profiles {
+        social.transfer_identity(profile, account).await?;
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn purge_expired_tardies(state: &AppState) -> Result<(), ApiError> {
+    state.purge_expired_unclaimed_tardies().await?;
+    Ok(())
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -1160,7 +1473,7 @@ fn now_ms() -> Result<u64, ApiError> {
 }
 
 #[derive(Debug)]
-struct ApiError {
+pub struct ApiError {
     status: StatusCode,
     message: String,
 }
@@ -1345,6 +1658,20 @@ impl From<SubscriptionError> for ApiError {
                 Self::not_found("subscription not found")
             }
             SubscriptionError::Database(_) => Self::internal(value.to_string()),
+        }
+    }
+}
+
+impl From<SocialError> for ApiError {
+    fn from(value: SocialError) -> Self {
+        match value {
+            SocialError::Invalid(_) => Self::bad_request(value.to_string()),
+            SocialError::NotFound => Self::not_found(value.to_string()),
+            SocialError::Forbidden => Self::forbidden(value.to_string()),
+            SocialError::Database(sqlx::Error::RowNotFound) => {
+                Self::not_found("social resource not found")
+            }
+            SocialError::Database(_) => Self::internal(value.to_string()),
         }
     }
 }
@@ -1680,7 +2007,7 @@ mod tests {
         .unwrap();
         assert!(text.contains("one-time code"));
         assert!(text.contains("default to private"));
-        assert!(text.contains("https://tardy.test/v1/onboarding/claims"));
+        assert!(text.contains("https://tardy.test/v1/onboarding/tardy-claims"));
     }
 
     #[tokio::test]

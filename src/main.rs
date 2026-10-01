@@ -2,6 +2,7 @@ use std::sync::Arc;
 use tardy::ads::{HttpX402Facilitator, PaymentRequirements, PgAdsStore};
 use tardy::api::AdsRuntime;
 use tardy::push::PgPushStore;
+use tardy::social::PgSocialStore;
 use tardy::subscriptions::PgSubscriptionStore;
 use tardy::{AppState, router};
 
@@ -23,6 +24,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .connect(&database_url)
             .await?;
         state = state.with_push_store(PgPushStore::new(pool.clone()));
+        state = state.with_social_store(PgSocialStore::new(pool.clone()));
         let subscription_base_url = state.public_base_url.clone();
         state = state.with_subscriptions(PgSubscriptionStore::new(
             pool.clone(),
@@ -53,7 +55,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             });
         }
     }
-    axum::serve(listener, router(Arc::new(state)))
+    let state = Arc::new(state);
+    if state.social.is_some() {
+        let cleanup_state = state.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(15 * 60));
+            loop {
+                interval.tick().await;
+                match cleanup_state.purge_expired_unclaimed_tardies().await {
+                    Ok(count) if count > 0 => {
+                        tracing::info!(count, "purged expired unclaimed Tardies")
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        tracing::error!(?error, "failed to purge expired unclaimed Tardies")
+                    }
+                }
+            }
+        });
+    }
+    axum::serve(listener, router(state))
         .with_graceful_shutdown(shutdown())
         .await?;
     Ok(())
