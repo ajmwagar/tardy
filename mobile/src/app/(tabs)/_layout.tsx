@@ -6,7 +6,10 @@ import { badgeText } from '@/notifications/tray';
 import { refreshUnread, useAccount, useStore } from '@/state/store';
 import { colors } from '@/theme';
 
-/** Icon-only tabs: Home, Reels, Messages, Alarms (notifications), Profile. */
+/**
+ * Icon-only tabs: Home, Reels, Search (the middle), Messages, Profile. Notifications live
+ * behind the alarm at the top right of Home, with its own unread badge.
+ */
 export default function TabsLayout() {
   const me = useAccount('me');
   const unread = useStore((s) => s.unread);
@@ -39,15 +42,14 @@ export default function TabsLayout() {
         <NativeTabs.Trigger.Icon sf={{ default: 'play.square.stack', selected: 'play.square.stack.fill' }} />
         <NativeTabs.Trigger.Label hidden>Reels</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
+      <NativeTabs.Trigger name="search">
+        <NativeTabs.Trigger.Icon sf={{ default: 'magnifyingglass', selected: 'magnifyingglass' }} />
+        <NativeTabs.Trigger.Label hidden>Search</NativeTabs.Trigger.Label>
+      </NativeTabs.Trigger>
       <NativeTabs.Trigger name="messages">
         <NativeTabs.Trigger.Icon sf={{ default: 'bubble.left.and.bubble.right', selected: 'bubble.left.and.bubble.right.fill' }} />
         <NativeTabs.Trigger.Label hidden>Messages</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Badge hidden={unread.messages === 0}>{badgeText(unread.messages)}</NativeTabs.Trigger.Badge>
-      </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="notifications">
-        <NativeTabs.Trigger.Icon sf={{ default: 'alarm', selected: 'alarm.fill' }} />
-        <NativeTabs.Trigger.Label hidden>Notifications</NativeTabs.Trigger.Label>
-        <NativeTabs.Trigger.Badge hidden={unread.notifications === 0}>{badgeText(unread.notifications)}</NativeTabs.Trigger.Badge>
       </NativeTabs.Trigger>
       <NativeTabs.Trigger name="profile">
         <NativeTabs.Trigger.Icon sf={{ default: 'person.crop.circle', selected: 'person.crop.circle.fill' }} />

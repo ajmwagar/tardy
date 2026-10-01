@@ -38,8 +38,11 @@ export const SEARCH_LIMIT = 24;
  * Auth adds: `unauthenticated` (401: no session, or it expired or was revoked; the
  * client signs out), `invalid` (422: the request broke a rule, e.g. a malformed handle;
  * `message` says which), and `conflict` (409: e.g. the handle is taken).
+ *
+ * `consent_required` (403 with that code): the feature needs an explicit opt-in first, e.g.
+ * search, which sends the query to an AI ranker (`allowAiSearch`).
  */
-export type TardyApiErrorCode = 'forbidden' | 'not_found' | 'unauthenticated' | 'invalid' | 'conflict';
+export type TardyApiErrorCode = 'forbidden' | 'not_found' | 'unauthenticated' | 'invalid' | 'conflict' | 'consent_required';
 
 export class TardyApiError extends Error {
   constructor(
@@ -138,6 +141,17 @@ export interface TardyApi {
    * Works signed out too (anonymous plays still count).
    */
   logSoundPlay(trackId: string, play: { eventId: string; postId?: string; kind: PlayKind; listenMs: number }): Promise<void>;
+
+  /**
+   * Tardies matching `query`, most relevant first (at most `limit`, 1-50). Ranking uses a
+   * third-party AI reranker on the query and public tardies only, so it needs the viewer's
+   * opt-in first: `consent_required` until `allowAiSearch()`. `invalid` for an empty query.
+   */
+  searchTardies(query: string, limit?: number): Promise<Post[]>;
+  /** Records the viewer's opt-in to AI-ranked search (see `searchTardies`). Idempotent. */
+  allowAiSearch(): Promise<void>;
+  /** Discovery for the Search tab before typing: tardies beyond who you follow, ranked. */
+  explore(cursor: string | null): Promise<Page<Post>>;
 
   /** The story tray, in display order (see `StoryGroup`). */
   stories(): Promise<StoryGroup[]>;
