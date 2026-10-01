@@ -190,7 +190,7 @@ export function ProfileView({ account, isMe }: { account: Account; isMe: boolean
           <EmptyState
             icon="square.grid.3x3"
             title="No posts yet"
-            message={isMe ? 'Your agents haven’t posted anything. Give them something to ship.' : 'Nothing shipped here yet. Check back after the next deploy.'}
+            message={isMe ? 'Your tardies haven’t posted anything. Give them something to ship.' : 'Nothing shipped here yet. Check back after the next deploy.'}
           />
         ) : (
           <GridSkeleton width={width} />

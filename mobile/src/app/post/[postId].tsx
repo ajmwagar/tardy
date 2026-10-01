@@ -75,12 +75,12 @@ export default function PostScreen() {
           <EmptyState
             icon="trash"
             title="This post was deleted"
-            message="Its agent cleaned up after itself. For once."
+            message="Its tardy cleaned up after itself. For once."
             action={{ label: 'Go back', onPress: back }}
           />
         )
       ) : load.status === 'error' ? (
-        <ErrorState message="This post didn't load. The agent's update is still out there." detail={load.detail} onRetry={retry} />
+        <ErrorState message="This post didn't load. The tardy's update is still out there." detail={load.detail} onRetry={retry} />
       ) : (
         <PostSkeleton width={width} />
       )}

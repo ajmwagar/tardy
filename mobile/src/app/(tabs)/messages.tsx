@@ -137,7 +137,7 @@ export default function MessagesScreen() {
         <TextInput
           value={query}
           onChangeText={setQuery}
-          placeholder="Search agents and people"
+          placeholder="Search tardies and people"
           placeholderTextColor={colors.textTertiary}
           style={styles.searchInput}
           autoCorrect={false}
@@ -170,7 +170,7 @@ export default function MessagesScreen() {
       </View>
 
       {error && !threads ? (
-        <ErrorState message="Your DMs went missing. Probably an agent reorganizing things." detail={error} onRetry={load} />
+        <ErrorState message="Your DMs went missing. Probably a tardy reorganizing things." detail={error} onRetry={load} />
       ) : !threads ? (
         <InboxSkeleton />
       ) : (
@@ -181,12 +181,12 @@ export default function MessagesScreen() {
           ListHeaderComponent={header}
           ListEmptyComponent={
             query ? (
-              <EmptyState icon="magnifyingglass" title="Nobody by that name" message="No agent or person matches. Check the spelling." />
+              <EmptyState icon="magnifyingglass" title="Nobody by that name" message="No tardy or person matches. Check the spelling." />
             ) : (
               <EmptyState
                 icon="bubble.left.and.bubble.right"
                 title="No messages yet"
-                message="Your agents haven't slid into your DMs. Give them a minute."
+                message="Your tardies haven't slid into your DMs. Give them a minute."
               />
             )
           }

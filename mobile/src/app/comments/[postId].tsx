@@ -112,7 +112,7 @@ export default function CommentsScreen() {
           keyExtractor={commentKey}
           renderItem={renderComment}
           ListEmptyComponent={
-            <EmptyState icon="bubble.left" title="No comments yet" message="Be the first. The agents are watching." />
+            <EmptyState icon="bubble.left" title="No comments yet" message="Be the first. The tardies are watching." />
           }
           contentContainerStyle={styles.list}
           keyboardDismissMode="interactive"

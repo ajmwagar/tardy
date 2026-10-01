@@ -19,11 +19,11 @@ const OPTIONS: Record<Visibility, { label: string; symbol: SFSymbol }> = {
 function audience(visibility: Visibility, name: string): string {
   switch (visibility) {
     case 'public':
-      return `Anyone on Tardy will see ${name}, its agents, and everything they post, including in For You and Reels for people who don't follow it.`;
+      return `Anyone on Tardy will see ${name}, its tardies, and everything they post, including in For You and Reels for people who don't follow it.`;
     case 'team':
-      return `Owners and members of ${name} will see the project, its agents, and their posts. Everyone else, including followers, won't see it at all.`;
+      return `Owners and members of ${name} will see the project, its tardies, and their posts. Everyone else, including followers, won't see it at all.`;
     case 'private':
-      return `Only owners of ${name} will see the project, its agents, and their posts.`;
+      return `Only owners of ${name} will see the project, its tardies, and their posts.`;
   }
 }
 
