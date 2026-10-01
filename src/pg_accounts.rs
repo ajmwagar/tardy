@@ -332,6 +332,15 @@ impl PgAccountStore {
     pub async fn can_act(&self, account: Uuid, profile: Uuid) -> Result<bool, PgAccountError> {
         Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM profile_actors WHERE actor_account_id=$1 AND profile_id=$2)").bind(account).bind(profile).fetch_one(&self.pool).await?)
     }
+
+    pub async fn actor_profiles(&self, account: Uuid) -> Result<Vec<Uuid>, PgAccountError> {
+        Ok(sqlx::query_scalar(
+            "SELECT profile_id FROM profile_actors WHERE actor_account_id=$1 ORDER BY profile_id LIMIT 2",
+        )
+        .bind(account)
+        .fetch_all(&self.pool)
+        .await?)
+    }
     pub async fn is_temporary(&self, account: Uuid) -> Result<bool, PgAccountError> {
         sqlx::query_scalar("SELECT temporary FROM durable_accounts WHERE id=$1")
             .bind(account)

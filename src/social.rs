@@ -100,6 +100,42 @@ pub struct TardyPost {
     pub created_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppFeedPost {
+    pub id: Uuid,
+    pub author_id: Uuid,
+    pub format: &'static str,
+    pub media: Vec<serde_json::Value>,
+    pub caption: String,
+    pub links: Vec<serde_json::Value>,
+    pub created_at: i64,
+    pub like_count: i64,
+    pub comment_count: i64,
+    pub share_count: i64,
+    pub alarm_count: i64,
+    pub repost_count: i64,
+    pub viewer_has_liked: bool,
+    pub viewer_has_alarm: bool,
+    pub viewer_has_reposted: bool,
+    pub viewer_has_saved: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppAccount {
+    pub id: Uuid,
+    pub kind: IdentityKind,
+    pub handle: String,
+    pub display_name: String,
+    pub avatar_url: String,
+    pub bio: String,
+    pub verified: bool,
+    pub followers: i64,
+    pub following: i64,
+    pub post_count: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Comment {
     pub id: Uuid,
@@ -119,6 +155,88 @@ pub struct PgSocialStore {
 impl PgSocialStore {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
+    }
+
+    pub async fn app_feed(
+        &self,
+        viewer: Option<Uuid>,
+        limit: i64,
+    ) -> Result<Vec<AppFeedPost>, SocialError> {
+        let rows = sqlx::query(
+            "SELECT p.id,p.author_profile_id,p.caption,p.created_at,l.canonical_url,
+                    (SELECT count(*) FROM post_comments c WHERE c.post_id=p.id)::bigint AS comment_count
+             FROM tardy_posts p
+             LEFT JOIN shared_links l ON l.id=p.shared_link_id
+             WHERE p.visibility='public'
+                OR p.author_profile_id=$1
+                OR (p.visibility='followers' AND EXISTS (
+                    SELECT 1 FROM profile_follows f
+                    WHERE f.follower_profile_id=$1 AND f.followed_profile_id=p.author_profile_id))
+             ORDER BY p.created_at DESC,p.id DESC LIMIT $2",
+        )
+        .bind(viewer)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|row| {
+                let link: Option<String> = row.try_get("canonical_url")?;
+                Ok(AppFeedPost {
+                    id: row.try_get("id")?,
+                    author_id: row.try_get("author_profile_id")?,
+                    format: "photo",
+                    media: Vec::new(),
+                    caption: row.try_get("caption")?,
+                    links: link
+                        .map(|url| {
+                            vec![serde_json::json!({"kind":"other","label":"Open link","url":url})]
+                        })
+                        .unwrap_or_default(),
+                    created_at: row
+                        .try_get::<DateTime<Utc>, _>("created_at")?
+                        .timestamp_millis(),
+                    like_count: 0,
+                    comment_count: row.try_get("comment_count")?,
+                    share_count: 0,
+                    alarm_count: 0,
+                    repost_count: 0,
+                    viewer_has_liked: false,
+                    viewer_has_alarm: false,
+                    viewer_has_reposted: false,
+                    viewer_has_saved: false,
+                })
+            })
+            .collect()
+    }
+
+    pub async fn app_accounts(&self, ids: &[Uuid]) -> Result<Vec<AppAccount>, SocialError> {
+        let rows = sqlx::query(
+            "SELECT i.profile_id,i.kind,i.handle,
+                    (SELECT count(*) FROM profile_follows f WHERE f.followed_profile_id=i.profile_id)::bigint AS followers,
+                    (SELECT count(*) FROM profile_follows f WHERE f.follower_profile_id=i.profile_id)::bigint AS following,
+                    (SELECT count(*) FROM tardy_posts p WHERE p.author_profile_id=i.profile_id)::bigint AS post_count
+             FROM social_identities i WHERE i.profile_id=ANY($1)",
+        )
+        .bind(ids)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|row| {
+                let handle: String = row.try_get("handle")?;
+                Ok(AppAccount {
+                    id: row.try_get("profile_id")?,
+                    kind: parse_kind(&row.try_get::<String, _>("kind")?)?,
+                    display_name: handle.clone(),
+                    avatar_url: "https://tardy.news/favicon.svg".into(),
+                    bio: String::new(),
+                    handle,
+                    verified: false,
+                    followers: row.try_get("followers")?,
+                    following: row.try_get("following")?,
+                    post_count: row.try_get("post_count")?,
+                })
+            })
+            .collect()
     }
 
     pub async fn register_identity(

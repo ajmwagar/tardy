@@ -19,8 +19,8 @@ use crate::push::{NotificationPreference, PgPushStore, PushDevice, PushError, Re
 use crate::ranking::FeedRanker;
 use crate::search::{SearchError, SearchService};
 use crate::social::{
-    Comment, Conversation, ConversationMessage, IdentityKind, PgSocialStore, PostVisibility,
-    SharedLink, SocialError, TardyPost,
+    AppAccount, Comment, Conversation, ConversationMessage, IdentityKind, PgSocialStore,
+    PostVisibility, SharedLink, SocialError, TardyPost,
 };
 use crate::store::{MemoryStore, NewLive, NewProfile, NewReel, Store, StoreError};
 use crate::subscriptions::{
@@ -179,11 +179,12 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/metrics", get(metrics_endpoint))
         .route("/openapi.json", get(openapi_endpoint))
         .route("/llms.txt", get(llms_txt))
+        .route("/mcp", post(crate::mcp::endpoint))
         .route("/v1/sessions", post(create_session))
         .route("/v1/session", get(current_session).delete(delete_session))
         .route("/v1/profile", get(current_profile))
         .route("/v1/profile/following", get(current_following))
-        .route("/v1/profiles", post(create_profile))
+        .route("/v1/profiles", post(create_profile).get(list_profiles))
         .route("/v1/profiles/{handle}", get(get_profile))
         .route(
             "/v1/profiles/{profile_id}/follow",
@@ -415,6 +416,31 @@ async fn current_following(
             .following_profile_ids(account)
             .await?,
     ))
+}
+
+#[derive(Deserialize)]
+struct ProfilesQuery {
+    ids: String,
+}
+
+async fn list_profiles(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<ProfilesQuery>,
+) -> Result<Json<Vec<AppAccount>>, ApiError> {
+    let _ = authenticated_account(&state, &headers).await?;
+    let ids = query
+        .ids
+        .split(',')
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            Uuid::parse_str(value).map_err(|_| ApiError::bad_request("invalid profile id"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if ids.len() > 100 {
+        return Err(ApiError::bad_request("at most 100 profile ids are allowed"));
+    }
+    Ok(Json(social_store(&state)?.app_accounts(&ids).await?))
 }
 
 fn signed_in_view(value: HumanSession) -> SignedInView {
@@ -931,7 +957,7 @@ async fn create_post_comment(
     ))
 }
 
-fn social_store(state: &AppState) -> Result<&PgSocialStore, ApiError> {
+pub(crate) fn social_store(state: &AppState) -> Result<&PgSocialStore, ApiError> {
     state.social.as_deref().ok_or_else(|| ApiError {
         status: StatusCode::SERVICE_UNAVAILABLE,
         message: "durable social features are not configured".into(),
@@ -1308,11 +1334,15 @@ async fn feed(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Query(query): Query<FeedQuery>,
-) -> Result<impl IntoResponse, ApiError> {
+) -> Result<Response, ApiError> {
     if !(1..=100).contains(&query.limit) {
         return Err(ApiError::bad_request("limit must be between 1 and 100"));
     }
     let viewer = optional_authenticated_actor(&state, &headers).await?;
+    if let Some(social) = &state.social {
+        let items = social.app_feed(viewer, query.limit as i64).await?;
+        return Ok(Json(serde_json::json!({"items":items,"nextCursor":null})).into_response());
+    }
     let candidates = state.store.feed_candidates(viewer)?;
     let now = now_ms()?;
     let mut items = match &state.ranker {
@@ -1330,7 +1360,7 @@ async fn feed(
         }
     };
     items.truncate(query.limit);
-    Ok(Json(items))
+    Ok(Json(items).into_response())
 }
 
 async fn hyper_tardy_feed(
@@ -1655,7 +1685,7 @@ async fn complete_upload(
     ))
 }
 
-fn selected_profile(headers: &HeaderMap) -> Result<Option<Uuid>, ApiError> {
+pub(crate) fn selected_profile(headers: &HeaderMap) -> Result<Option<Uuid>, ApiError> {
     headers
         .get("x-tardy-profile-id")
         .map(|value| {
@@ -1687,7 +1717,10 @@ fn bearer_token(headers: &HeaderMap) -> Result<Option<&str>, ApiError> {
         .transpose()
 }
 
-async fn authenticated_account(state: &AppState, headers: &HeaderMap) -> Result<Uuid, ApiError> {
+pub(crate) async fn authenticated_account(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<Uuid, ApiError> {
     let token =
         bearer_token(headers)?.ok_or_else(|| ApiError::unauthorized("bearer token is required"))?;
     if let Some(accounts) = &state.pg_accounts {
@@ -1702,7 +1735,10 @@ async fn authenticated_account(state: &AppState, headers: &HeaderMap) -> Result<
         .map_err(|_| ApiError::unauthorized("invalid bearer token"))
 }
 
-async fn authenticated_actor(state: &AppState, headers: &HeaderMap) -> Result<Uuid, ApiError> {
+pub(crate) async fn authenticated_actor(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<Uuid, ApiError> {
     let account = authenticated_account(state, headers).await?;
     let profile = selected_profile(headers)?
         .ok_or_else(|| ApiError::unauthorized("x-tardy-profile-id is required"))?;
@@ -1943,6 +1979,12 @@ pub struct ApiError {
     message: String,
 }
 
+impl std::fmt::Display for ApiError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
 impl ApiError {
     fn bad_request(message: impl Into<String>) -> Self {
         Self {
@@ -1956,19 +1998,19 @@ impl ApiError {
             message: message.into(),
         }
     }
-    fn unauthorized(message: impl Into<String>) -> Self {
+    pub(crate) fn unauthorized(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::UNAUTHORIZED,
             message: message.into(),
         }
     }
-    fn forbidden(message: impl Into<String>) -> Self {
+    pub(crate) fn forbidden(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::FORBIDDEN,
             message: message.into(),
         }
     }
-    fn internal(message: impl Into<String>) -> Self {
+    pub(crate) fn internal(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             message: message.into(),
