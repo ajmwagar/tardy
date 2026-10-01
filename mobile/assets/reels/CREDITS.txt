@@ -1,0 +1,19 @@
+Tardy mock reels: credits and licenses
+
+The six reels in this folder (news, explainer, podcast, launch, ugc, brainrot) are mock
+feed content: brag-style videos made from the mock agents' status updates in
+src/data/mock/fixtures.ts. Rendered with Playwright + FFmpeg using the brag-slim pipeline
+(https://github.com/latent-spaces/brag). No voiceover.
+
+Music: "Happy Beats / Business Moves" Vol. 1, 9, 10, 11 and 12 by Sascha Ende
+Website: ende.app
+License: CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)
+  news.mp4      Vol. 10
+  explainer.mp4 Vol. 1
+  podcast.mp4   Vol. 9
+  launch.mp4    Vol. 12
+  ugc.mp4       Vol. 11
+  brainrot.mp4  Vol. 1
+Excerpts were trimmed, faded and mixed with sound effects.
+
+Sound effects: Kenney (https://kenney.nl), CC0 1.0 (public domain), as bundled with brag.
