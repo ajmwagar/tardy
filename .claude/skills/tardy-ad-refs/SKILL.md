@@ -1,11 +1,11 @@
 ---
 name: tardy-ad-refs
-description: Look up real reference ads (Apple, ChatGPT, Claude, Cursor, Perplexity, Notion) in the local tardy Ad Bank before designing a tardy reel, and cite 1-3 of them in brag-plan.md under "## References". Use at the planning step of any tardy reel (/tardy-brag, /tardy-launch, /tardy-ugc, /tardy-explainer, ...), or when asked "what do real launch ads do for X".
+description: Look up real reference ads (Apple, Google, ChatGPT, Claude, Cursor, Perplexity, Figma, Framer, Lovable, Notion) in the local tardy Ad Bank before designing a tardy reel, and cite 1-3 of them in brag-plan.md under "## References". Use at the planning step of any tardy reel (/tardy-brag, /tardy-launch, /tardy-ugc, /tardy-explainer, ...), or when asked "what do real launch ads do for X".
 ---
 
 # tardy-ad-refs
 
-The bank at `~/Developer/tardy-ad-bank` holds 68 real Meta Ad Library ads (captured 2026-10-01),
+The bank at `~/Developer/tardy-ad-bank` holds 96 real Meta Ad Library ads (captured 2026-10-01),
 each with its first-second hook, pacing, type style, motion moves, and a "borrow for tardy" note,
 plus a filmstrip of frames. Launch reels aim for a modern Apple keynote / AI-launch-on-X look
 (clean type, words blurring in, product hero with glow, bento grids of facts), not a movie trailer.
@@ -22,7 +22,7 @@ cat ~/Developer/tardy-ad-bank/PATTERNS.md
 `PATTERNS.md` lists the cross-brand moves (cold open, word-by-word type, product glow, locked
 headline, prompt typing, bento/chips, the "Introducing" end card, short cut-downs, headline
 formulas) with the ad ids behind each. For one brand's habits, read `brands/<slug>.md`
-(`apple`, `chatgpt`, `claude`, `cursor`, `perplexity`, `notion`).
+(`apple`, `google`, `chatgpt`, `claude`, `cursor`, `perplexity`, `figma`, `framer`, `lovable`, `notion`).
 
 ## 2. Query for the beats in your reel
 
@@ -60,6 +60,6 @@ gap is visible for the next scouting pass.
 
 ## 4. Gaps
 
-The bank covers six brands. Linear, Raycast, and Arc are not in it. To add ads, follow the
+The bank covers ten brands. Linear, Raycast, and Arc have no Meta ads to log. To add ads, follow the
 "Adding ads" section of `~/Developer/tardy-ad-bank/README.md` (public Ad Library only; stop at a
 login wall). Never write into `~/Developer/7star-ad-bank`, which belongs to a different project.
