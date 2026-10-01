@@ -124,9 +124,9 @@ export default function HomeScreen() {
         <Pressable onLongPress={openFaultMenu} accessibilityRole="header" accessibilityLabel="Tardy">
           <Wordmark />
         </Pressable>
-        {/* "New post" returns when there's a create-post flow; no dead buttons in the meantime. */}
+        {/* Breaking sits beside the wordmark, not under it: one header row, more feed. */}
+        <BreakingTicker posts={trending} inline />
       </View>
-      <BreakingTicker posts={trending} />
 
       <FlashList
         data={posts}
@@ -183,5 +183,5 @@ export default function HomeScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
-  header: { height: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14 },
+  header: { height: 48, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14 },
 });
