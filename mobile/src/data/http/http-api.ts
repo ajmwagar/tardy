@@ -1,3 +1,4 @@
+import type { AgentActivity, AgentControls } from '@/agents/controls';
 import { TardyApiError, type TardyApi, type TardyApiErrorCode } from '../api';
 import type { ProfilePatch } from '../profile';
 import type {
@@ -6,6 +7,8 @@ import type {
   Comment,
   EngagementAction,
   Membership,
+  PostSuggestion,
+  PrivacySettings,
   Message,
   MessageAttachment,
   Notification,
@@ -24,7 +27,7 @@ import type {
   ThreadRef,
   Visibility,
 } from '../types';
-import { array, isoToMs, snakeKeys, TardyWireError, type Decoder } from './codec';
+import { array, arraySkipping, isoToMs, snakeKeys, TardyWireError, type Decoder } from './codec';
 import * as W from './wire';
 import type { PlayKind } from '@/audio/plays';
 import type { PlanId } from '@/membership/plans';
@@ -323,9 +326,9 @@ export class HttpTardyApi implements TardyApi {
     return ref;
   }
 
-  async messages(threadId: string): Promise<Message[]> {
+  async messages(threadId: string, afterSequence = 0): Promise<Message[]> {
     const all: Message[] = [];
-    for (let after = 0; ; ) {
+    for (let after = afterSequence; ; ) {
       const page = await this.request('GET', `/v1/social/conversations/${segment(threadId)}/messages`, {
         query: { after: String(after), limit: String(MESSAGE_PAGE) },
         decode: array(W.conversationMessage),
@@ -498,6 +501,56 @@ export class HttpTardyApi implements TardyApi {
 
   explore(cursor: string | null): Promise<Page<Post>> {
     return this.request('GET', '/v1/explore', { query: { cursor: cursor ?? undefined }, decode: W.page(W.post) });
+  }
+
+  postSuggestions(): Promise<PostSuggestion[]> {
+    return this.request('GET', '/v1/social/post-suggestions', { decode: array(W.postSuggestion) });
+  }
+
+  async decideSuggestion(id: string, decision: 'approve' | 'reject'): Promise<Post | null> {
+    const path = `/v1/social/post-suggestions/${segment(id)}/${decision}`;
+    if (decision === 'reject') {
+      await this.request('POST', path);
+      return null;
+    }
+    return this.request('POST', path, { decode: W.post });
+  }
+
+  agentControls(agentId: string): Promise<AgentControls> {
+    return this.request('GET', `/v1/agents/${segment(agentId)}/controls`, { decode: W.agentControls });
+  }
+
+  updateAgentControls(agentId: string, patch: Partial<AgentControls>): Promise<AgentControls> {
+    return this.request('PATCH', `/v1/agents/${segment(agentId)}/controls`, { body: snakeKeys(patch), decode: W.agentControls });
+  }
+
+  agentActivity(agentId: string): Promise<AgentActivity[]> {
+    return this.request('GET', `/v1/agents/${segment(agentId)}/activity`, { decode: arraySkipping(W.agentActivity) });
+  }
+
+  privacySettings(): Promise<PrivacySettings> {
+    return this.request('GET', '/v1/profile/privacy-settings', { decode: W.privacySettings });
+  }
+
+  updatePrivacy(patch: Partial<PrivacySettings>): Promise<PrivacySettings> {
+    return this.request('PATCH', '/v1/profile/privacy-settings', { body: snakeKeys(patch), decode: W.privacySettings });
+  }
+
+  closeFriends(): Promise<Account[]> {
+    return this.request('GET', '/v1/profile/close-friends', { decode: array(W.account) });
+  }
+
+  async setCloseFriend(accountId: string, on: boolean): Promise<void> {
+    await this.request(on ? 'PUT' : 'DELETE', `/v1/profile/close-friends/${segment(accountId)}`);
+  }
+
+  blockedAccounts(): Promise<Account[]> {
+    return this.request('GET', '/v1/blocks', { decode: array(W.account) });
+  }
+
+  async setBlocked(accountId: string, blocked: boolean): Promise<void> {
+    // Blocking exists today (POST); listing and unblocking (DELETE) are proposed.
+    await this.request(blocked ? 'POST' : 'DELETE', `/v1/blocks/${segment(accountId)}`);
   }
 
   membership(): Promise<Membership> {

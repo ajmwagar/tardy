@@ -5,7 +5,7 @@ import { ActionSheetIOS, FlatList, StyleSheet, Text, View } from 'react-native';
 import { openWebCheckout } from '@/config';
 import type { Story, StoryGroup } from '@/data/types';
 import { useAccount, useStore } from '@/state/store';
-import { BOOSTED_LABEL, isGroupBoosted, isGroupSeen, orderStoryTray, storyBubbleLabel } from '@/stories/boost';
+import { BOOSTED_LABEL, isGroupBoosted, isGroupSeen, orderStoryTray, storyBubbleLabel, isGroupCloseFriends } from '@/stories/boost';
 import { colors } from '@/theme';
 
 import { Avatar, Hairline, Icon, PressableScale, type RingState } from './ui';
@@ -29,20 +29,12 @@ function useRing(group: StoryGroup | undefined): RingState {
   if (!group) return 'none';
   const seen = isGroupSeen(group, isSeen);
   if (isGroupBoosted(group, now)) return seen ? 'boostedSeen' : 'boosted';
+  if (isGroupCloseFriends(group)) return seen ? 'closeFriendsSeen' : 'closeFriends';
   return seen ? 'seen' : 'unseen';
 }
 
 const isBoosted = (ring: RingState) => ring === 'boosted' || ring === 'boostedSeen';
-const isSeenRing = (ring: RingState) => ring === 'seen' || ring === 'boostedSeen';
-
-/** The paid-placement disclosure under a boosted bubble: the red ring alone is not one. */
-function BoostedLabel() {
-  return (
-    <Text style={styles.boosted} numberOfLines={1} maxFontSizeMultiplier={1.4}>
-      {BOOSTED_LABEL}
-    </Text>
-  );
-}
+const isSeenRing = (ring: RingState) => ring === 'seen' || ring === 'boostedSeen' || ring === 'closeFriendsSeen';
 
 const StoryBubble = memo(function StoryBubble({ group }: { group: StoryGroup }) {
   const account = useAccount(group.authorId);
@@ -60,7 +52,6 @@ const StoryBubble = memo(function StoryBubble({ group }: { group: StoryGroup }) 
       <Text style={[styles.label, seen && styles.labelSeen]} numberOfLines={1} maxFontSizeMultiplier={1.4}>
         {account?.handle}
       </Text>
-      {boosted && <BoostedLabel />}
     </PressableScale>
   );
 });
@@ -94,7 +85,6 @@ function YourStory({ group }: { group: StoryGroup | undefined }) {
       <Text style={[styles.label, styles.labelSeen]} numberOfLines={1} maxFontSizeMultiplier={1.4}>
         Your story
       </Text>
-      {isBoosted(ring) && <BoostedLabel />}
     </PressableScale>
   );
 }
@@ -146,5 +136,4 @@ const styles = StyleSheet.create({
   },
   label: { color: colors.text, fontSize: 11.5, maxWidth: 76 },
   labelSeen: { color: colors.textSecondary },
-  boosted: { position: 'absolute', bottom: -13, color: colors.textSecondary, fontSize: 10, fontWeight: '600' },
 });

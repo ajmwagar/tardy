@@ -30,6 +30,9 @@ export const colors = {
   seenRing: '#34343E',
   /** A paid boost you've already watched: still red, but dimmed like other seen rings. */
   boostedSeenRing: '#7A1A22',
+  /** Close-friends stories: Instagram's green, dimmed once watched. */
+  closeFriendsRing: '#2BD45F',
+  closeFriendsSeenRing: '#1E5A33',
 } as const;
 
 export const status: Record<WorkStatus, { label: string; color: string; symbol: string }> = {

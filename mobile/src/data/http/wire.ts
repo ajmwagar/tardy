@@ -1,3 +1,4 @@
+import type { AgentActivity, AgentControls } from '@/agents/controls';
 import { NOTIFICATION_KINDS } from '@/notifications/preferences';
 import type { PlanId } from '@/membership/plans';
 import { REACTION_KINDS } from '@/reactions/reactions';
@@ -22,6 +23,8 @@ import type {
   Session,
   SharedLink,
   AutopayMandate,
+  PostSuggestion,
+  PrivacySettings,
   PostSound,
   ReactionKind,
   ReactionSummary,
@@ -40,6 +43,7 @@ import {
   arraySkipping,
   boolean,
   integer,
+  isRecord,
   isoTime,
   knownOf,
   knownRecord,
@@ -193,6 +197,7 @@ const story: Decoder<Story> = object<Story>({
   media,
   createdAt: timeMs,
   seen: boolean,
+  audience: optional(oneOf(['close_friends'] as const)),
   boostedUntil: optional(timeMs),
 });
 
@@ -227,7 +232,7 @@ export const conversationMessage: Decoder<{ message: Message; sequence: number }
     if (message.sharedLinkId === undefined) delete message.sharedLinkId;
     if (message.sharedPost === undefined) delete message.sharedPost;
     if (message.reactions === undefined) delete message.reactions;
-    return { message, sequence };
+    return { message: { ...message, sequence }, sequence };
   },
 );
 
@@ -275,6 +280,78 @@ export const trendingSound: Decoder<TrendingSound> = map(
   }),
   ({ track, uses24h, qualifiedPlays24h, score }) => ({ trackId: track.id, title: track.title, artistName: track.artistName, uses24h, plays24h: qualifiedPlays24h, score }),
 );
+
+/**
+ * `GET /v1/social/post-suggestions` rows (proposed): the would-be tardy (content only, no
+ * counts yet) plus who wants to post it and why.
+ */
+export const postSuggestion: Decoder<PostSuggestion> = object<PostSuggestion>({
+  id: string,
+  agentId: wire('agent_profile_id', string),
+  kind: optional(oneOf(['post', 'story', 'comment', 'message', 'follow'] as const)),
+  target: optional(object<NonNullable<PostSuggestion['target']>>({ accountId: wire('account_profile_id', string), postId: optional(string) })),
+  post: object<PostSuggestion['post']>({
+    caption: string,
+    media: array(media),
+    format: oneOf(POST_FORMATS),
+    status: optional(oneOf(WORK_STATUSES)),
+    style: optional(knownOf(POST_STYLES)),
+    links: array(object<PostLink>({ kind: oneOf(LINK_KINDS), label: string, url: string })),
+    projectId: optional(string),
+  }),
+  reason: optional(string),
+  visibility: oneOf(['private', 'followers', 'public'] as const),
+  createdAt: wire('created_at', isoTime),
+});
+
+const ACTION_MODES = ['auto', 'ask', 'off'] as const;
+const AUDIENCES = ['private', 'followers', 'public'] as const;
+
+/** `GET /v1/agents/{id}/controls`: what one of the viewer's agents may do without them. */
+export const agentControls: Decoder<AgentControls> = object<AgentControls>({
+  paused: boolean,
+  posts: oneOf(ACTION_MODES),
+  stories: oneOf(ACTION_MODES),
+  comments: oneOf(ACTION_MODES),
+  messages: oneOf(ACTION_MODES),
+  follows: oneOf(ACTION_MODES),
+  reactions: oneOf(['auto', 'off'] as const),
+  autoAudience: oneOf(AUDIENCES),
+  dailyLimit: nullable(integer),
+  quietHours: boolean,
+  monthlySpendCents: integer,
+  useYourActivity: boolean,
+  notifyOnAuto: boolean,
+});
+
+const AGENT_ACTION_KINDS = ['post', 'story', 'comment', 'message', 'follow', 'reaction'] as const;
+
+/** One entry of `GET /v1/agents/{id}/activity`. Unknown action kinds (newer servers) are skipped. */
+export const agentActivity: Decoder<AgentActivity | undefined> = (v, path) => {
+  if (isRecord(v) && !(AGENT_ACTION_KINDS as readonly unknown[]).includes(v.kind)) return undefined;
+  return object<AgentActivity>({
+    id: string,
+    agentId: wire('agent_profile_id', string),
+    kind: oneOf(AGENT_ACTION_KINDS),
+    summary: string,
+    how: oneOf(['auto', 'approved', 'rejected', 'blocked'] as const),
+    at: wire('at', isoTime),
+    postId: optional(string),
+  })(v, path);
+};
+
+/** `GET /v1/profile/privacy-settings` (proposed). */
+export const privacySettings: Decoder<PrivacySettings> = object<PrivacySettings>({
+  privateAccount: boolean,
+  agentMessages: oneOf(['everyone', 'followed', 'mine', 'none'] as const),
+  agentMentions: oneOf(['everyone', 'followed', 'mine', 'none'] as const),
+  agentReading: oneOf(['everyone', 'mine'] as const),
+  aiTraining: wire('ai_training', boolean),
+  messagesFrom: oneOf(['everyone', 'following', 'none'] as const),
+  mentionsFrom: oneOf(['everyone', 'following', 'none'] as const),
+  storyReplies: oneOf(['everyone', 'following', 'close_friends', 'none'] as const),
+  activityStatus: boolean,
+});
 
 const PLAN_IDS = allOf<PlanId>()(['free', 'builder', 'studio']);
 

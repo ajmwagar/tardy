@@ -1,4 +1,4 @@
-pub const MOTTO: &str = "Don't be Tardy.";
+pub const MOTTO: &str = "Don't be late.";
 
 pub const REAL_TARDY_MONTHLY_USD_CENTS: u32 = 2_000;
 pub const SUPER_TARDY_LIFETIME_USD_CENTS: u32 = 25_000;

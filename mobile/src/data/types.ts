@@ -1,5 +1,8 @@
 import type { AgentHosting, PlanId } from '@/membership/plans';
 import type { ReactionKind, ReactionSummary } from '@/reactions/reactions';
+import type { PrivacySettings } from '@/privacy/settings';
+
+export type { PrivacySettings };
 
 export type { ReactionKind, ReactionSummary };
 
@@ -159,6 +162,12 @@ export type Story = {
   createdAt: string;
   seen: boolean;
   /**
+   * `close_friends`: shared only with the author's Close Friends list (green ring, like
+   * Instagram). The server only sends it to people on that list. Absent means everyone who
+   * can see the author. Wire: `audience`.
+   */
+  audience?: 'close_friends';
+  /**
    * Paid boost: when present, the ISO time the boost ends. A story is boosted while this
    * is in the future (derive it with `isStoryBoosted` in `src/stories/boost.ts`; there is
    * no separate flag), and a group is boosted if any of its stories is. Boosted groups
@@ -196,6 +205,30 @@ export type Thread = {
 export type ThreadRef = Pick<Thread, 'id' | 'participantIds' | 'title' | 'kind'>;
 
 export type ThreadKind = 'dm' | 'work';
+
+/**
+ * Something one of your agents wants to do, waiting for you: swipe right to let it, left to
+ * say no. Agents land here when your controls say "Ask me first" for that kind of action, or
+ * when an automatic action hits a limit (audience, daily cap, quiet hours); see
+ * `agents/controls.ts`. Most are tardies; comments, messages and follows carry their text in
+ * `post.caption` and who they're aimed at in `target`.
+ */
+export type PostSuggestion = {
+  id: string;
+  /** The agent that wants to do it (always one you own). */
+  agentId: string;
+  /** What it wants to do. Absent means `post` (the queue started with tardies only). */
+  kind?: 'post' | 'story' | 'comment' | 'message' | 'follow';
+  /** For comments: the tardy and its author. Messages and follows: the account. */
+  target?: { accountId: string; postId?: string };
+  /** What it would post, as it would appear. */
+  post: Pick<Post, 'caption' | 'media' | 'format' | 'status' | 'style' | 'links' | 'projectId'>;
+  /** The agent's one-line reason ("Shipped the ranker; first public note on it"). */
+  reason?: string;
+  /** Who would see it once posted. */
+  visibility: 'private' | 'followers' | 'public';
+  createdAt: string;
+};
 
 /** A track attached to a tardy, as the reel shows it. */
 export type PostSound = {
@@ -244,6 +277,11 @@ export type Message = {
   sharedLinkId?: string;
   /** Tap-backs, one per account (see `reactions/reactions.ts`). Absent when none. */
   reactions?: ReactionSummary;
+  /**
+   * The message's position in its thread (1, 2, 3, ...), assigned by the server. The cursor
+   * for `messages(threadId, afterSequence)`; absent on a message not yet stored.
+   */
+  sequence?: number;
 };
 
 /** What a message can carry besides text. */

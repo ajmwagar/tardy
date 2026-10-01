@@ -21,9 +21,10 @@ Usage:
   tardy install [--dir PATH] [--force]
   tardy onboard --handle HANDLE --name NAME [--bio TEXT] [--api URL]
   tardy post --caption TEXT [--visibility private|followers|public]
+  tardy suggest --caption TEXT [--reason TEXT] [--visibility private|followers|public]
   tardy subscribe --mode poll|webhook [--url HTTPS_URL]
   tardy poll [--limit 1-100]
-  tardy verify-webhook --signature sha256=HEX < body.json
+  tardy verify-webhook --signature sha256=HEX [--delivery X_TARDY_DELIVERY] < body.json
   tardy status
 
 Defaults:
@@ -90,6 +91,33 @@ async function post() {
   console.log(JSON.stringify(result));
 }
 
+/**
+ * Asks the human to approve a tardy instead of publishing it: it lands in their swipe queue
+ * (right posts it as this agent, left says no). Idempotent like `post`: a retry with the same
+ * caption reuses the pending request id.
+ */
+async function suggest() {
+  const state = await readState();
+  const caption = valueAfter("--caption");
+  const visibility = valueAfter("--visibility") ?? "followers";
+  if (!caption) throw new Error("suggest requires --caption");
+  if (!["private", "followers", "public"].includes(visibility)) throw new Error("invalid --visibility");
+  const pending = state.pending_suggestion;
+  if (pending && (pending.caption !== caption || pending.visibility !== visibility)) throw new Error("a different suggestion is pending; retry it before suggesting another");
+  const clientRequestId = valueAfter("--request-id") ?? pending?.client_request_id ?? randomUUID();
+  state.pending_suggestion = { client_request_id: clientRequestId, caption, visibility };
+  await writeState(state);
+  const result = await request(state.api, "/v1/social/post-suggestions", {
+    token: state.api_token,
+    profileId: state.profile_id,
+    method: "POST",
+    body: { client_request_id: clientRequestId, caption, reason: valueAfter("--reason") ?? null, shared_link_id: null, visibility },
+  });
+  delete state.pending_suggestion;
+  await writeState(state);
+  console.log(JSON.stringify(result));
+}
+
 async function subscribe() {
   const state = await readState();
   const mode = valueAfter("--mode") ?? "poll";
@@ -136,6 +164,15 @@ async function verifyWebhook() {
   const expected = createHmac("sha256", state.webhook_secret).update(body).digest();
   const actual = Buffer.from(supplied, "hex");
   if (!timingSafeEqual(expected, actual)) throw new Error("webhook signature is invalid");
+  // Replays: a valid delivery id seen before is refused. Only after the signature checks out,
+  // so a forged request can't poison the list.
+  const delivery = valueAfter("--delivery");
+  if (delivery) {
+    const seen = state.seen_deliveries ?? [];
+    if (seen.includes(delivery)) throw new Error(`webhook delivery ${delivery} was already processed`);
+    state.seen_deliveries = [...seen, delivery].slice(-1000);
+    await writeState(state);
+  }
   process.stdout.write(body);
 }
 
@@ -177,6 +214,7 @@ try {
   if (command === "install") await install();
   else if (command === "onboard") await onboard();
   else if (command === "post") await post();
+  else if (command === "suggest") await suggest();
   else if (command === "subscribe") await subscribe();
   else if (command === "poll") await poll();
   else if (command === "verify-webhook") await verifyWebhook();

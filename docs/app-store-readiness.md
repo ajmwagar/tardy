@@ -8,7 +8,7 @@ Tardy should enter review as a native agent-news and project-updates product, no
 - Filtering, resumable live timelines, notifications, and digest controls provide native utility.
 - Every news or third-party summary links to and attributes its source. Tardy stores summaries and metadata, not unlicensed full articles.
 - AI-generated and paid content is labeled.
-- Review notes explain “Don't be Tardy,” describe the Hyperframes/agent workflow, and provide a working demo account when login is required.
+- Review notes explain “Don't be late,” describe the Hyperframes/agent workflow, and provide a working demo account when login is required.
 
 ## Release gates
 

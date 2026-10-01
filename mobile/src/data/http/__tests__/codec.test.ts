@@ -115,7 +115,7 @@ describe('wire types', () => {
 
   it('maps the social ConversationMessage names onto Message', () => {
     const wire = { id: 'm1', conversation_id: 't1', sequence: 4, sender_profile_id: 'a1', body: 'hi', shared_link_id: null, created_at: '2026-09-30T12:00:00.5+00:00' };
-    expect(W.message(wire, 'r')).toEqual({ id: 'm1', threadId: 't1', senderId: 'a1', text: 'hi', createdAt: '2026-09-30T12:00:00.500Z' });
+    expect(W.message(wire, 'r')).toEqual({ id: 'm1', threadId: 't1', senderId: 'a1', text: 'hi', createdAt: '2026-09-30T12:00:00.500Z', sequence: 4 });
     expect(W.message({ ...wire, shared_post: { status: 'unavailable' } }, 'r').sharedPost).toEqual({ status: 'unavailable' });
     // A plain shared link stays a link; only tardy.news/t/... becomes a tardy card.
     expect(W.message({ ...wire, body: 'https://youtu.be/x', shared_link_id: 'l1' }, 'r')).toMatchObject({ text: 'https://youtu.be/x', sharedLinkId: 'l1' });

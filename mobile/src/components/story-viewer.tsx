@@ -239,6 +239,12 @@ function StoryHeader({
               <Text style={styles.boostedText}>{BOOSTED_LABEL}</Text>
             </View>
           )}
+          {story.audience === 'close_friends' && (
+            <View style={styles.closeFriendsTag} accessibilityLabel="Close friends story">
+              <Icon name="star.fill" size={9} color="#fff" />
+              <Text style={styles.closeFriendsText}>Close friends</Text>
+            </View>
+          )}
         </View>
         <PressableScale onPress={onClose} accessibilityRole="button" accessibilityLabel="Close stories">
           <Icon name="xmark" size={22} color="#fff" weight="semibold" />
@@ -275,6 +281,16 @@ const styles = StyleSheet.create({
   authorRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 2 },
   nameLine: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
   time: { color: 'rgba(255,255,255,0.75)', fontSize: 13, fontWeight: '500' },
+  closeFriendsTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 999,
+    backgroundColor: colors.closeFriendsRing,
+  },
+  closeFriendsText: { color: '#fff', fontSize: 11, fontWeight: '800' },
   boostedTag: { paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4, backgroundColor: colors.overlay },
   boostedText: { color: colors.text, fontSize: 11, fontWeight: '700' },
   shadowText: { textShadowColor: 'rgba(0,0,0,0.5)', textShadowRadius: 4, textShadowOffset: { width: 0, height: 1 } },

@@ -5,6 +5,7 @@ import { Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } fro
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { PillButton } from '@/components/pill-button';
+import { ActivityButton } from '@/components/activity-button';
 import { PostTile } from '@/components/post-tile';
 import { EmptyState, ErrorState, GridSkeleton, InlineRetry } from '@/components/states';
 import { Avatar, Icon, NameLine } from '@/components/ui';
@@ -176,6 +177,7 @@ export default function SearchScreen() {
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
+      <View style={styles.topRow}>
       <View style={styles.searchBar}>
         <Icon name="magnifyingglass" size={16} color={colors.textTertiary} />
         <TextInput
@@ -196,6 +198,8 @@ export default function SearchScreen() {
           returnKeyType="search"
           accessibilityLabel="Search"
         />
+      </View>
+        <ActivityButton />
       </View>
 
       {q ? (
@@ -234,7 +238,9 @@ export default function SearchScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
+  topRow: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingRight: 16 },
   searchBar: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,

@@ -27,6 +27,32 @@ export const WEB_CHECKOUTS = {
 
 export type WebCheckout = keyof typeof WEB_CHECKOUTS;
 
+/** Pages that live on the website: help, legal, account deletion. Same opener as checkouts. */
+export const WEB_PAGES = {
+  help: { path: '/help', enables: 'the help center' },
+  report: { path: '/help/report', enables: 'problem reports' },
+  terms: { path: '/terms.html', enables: 'the terms of service' },
+  privacy: { path: '/privacy.html', enables: 'the privacy policy' },
+  deleteAccount: { path: '/account/delete', enables: 'account deletion' },
+} as const;
+
+export type WebPage = keyof typeof WEB_PAGES;
+
+/** Opens a website page in the browser; alerts when the website isn't configured. */
+export async function openWebPage(kind: WebPage, webUrl: string | null = config.webUrl): Promise<void> {
+  const { path, enables } = WEB_PAGES[kind];
+  if (!webUrl) {
+    Alert.alert('Website not configured', `Set EXPO_PUBLIC_TARDY_WEB_URL to the Tardy website to open ${enables}.`);
+    return;
+  }
+  const url = `${webUrl}${path}`;
+  try {
+    await Linking.openURL(url);
+  } catch (error) {
+    Alert.alert("Couldn't open the website", `${url}\n\n${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 /**
  * Paid features are bought on the website (checkout owned by the web app), so the app
  * only hands off to the system browser. The site identifies the buyer from their Tardy

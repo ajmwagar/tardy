@@ -66,6 +66,9 @@ export function orderStoryTray<G extends StoryGroup>(
 /** The disclosure shown on paid boosts, wherever a boosted group appears (tray and viewer). */
 export const BOOSTED_LABEL = 'Boosted';
 
+/** A group with any close-friends story gets the green ring (unless boosted, which wins). */
+export const isGroupCloseFriends = (group: StoryGroup) => group.stories.some((s) => s.audience === 'close_friends');
+
 /**
  * VoiceOver label for a tray bubble. Says "Boosted" for paid placements (a ring color is
  * not a disclosure) and whether there is anything new to watch.

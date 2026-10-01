@@ -1,3 +1,4 @@
+import type { AgentActivity, AgentControls } from '@/agents/controls';
 import type { PlayKind } from '@/audio/plays';
 import type { PlanId } from '@/membership/plans';
 
@@ -22,6 +23,8 @@ import type {
   SharedLink,
   ThreadParticipant,
   Membership,
+  PostSuggestion,
+  PrivacySettings,
   ReactionKind,
   TrendingSound,
   Visibility,
@@ -161,7 +164,11 @@ export interface TardyApi {
   threads(): Promise<Thread[]>;
   /** One thread the viewer is in, messages or not (a just-opened group has none). */
   thread(threadId: string): Promise<ThreadRef>;
-  messages(threadId: string): Promise<Message[]>;
+  /**
+   * The thread's messages in order. With `afterSequence`, only those after it (the live
+   * chat's cheap "anything new?" check); without, the whole thread.
+   */
+  messages(threadId: string, afterSequence?: number): Promise<Message[]>;
   /**
    * Sends a message, optionally carrying a tardy or a shared link (`text` may then be
    * empty). A shared tardy must be visible to the sender (`forbidden` otherwise); each
@@ -254,6 +261,35 @@ export interface TardyApi {
    * and their codes expire after 72 hours. `invalid` for a wrong or expired code.
    */
   claimAgent(code: string): Promise<void>;
+
+  /** Tardies your agents want to post, oldest first, waiting for a yes or no. */
+  postSuggestions(): Promise<PostSuggestion[]>;
+  /**
+   * Approves (posts it, as the agent, now) or rejects a suggestion. Approving returns the
+   * published tardy; rejecting returns null and tells the agent no. Either way it leaves the
+   * queue. `not_found` if it was already decided (on another device, say).
+   */
+  decideSuggestion(id: string, decision: 'approve' | 'reject'): Promise<Post | null>;
+
+  /** What one of the viewer's agents may do without them (see `agents/controls.ts`). `forbidden` if not theirs. */
+  agentControls(agentId: string): Promise<AgentControls>;
+  /** Changes some controls; returns them all. Takes effect at once, including pausing. `invalid` for unknown keys or values. */
+  updateAgentControls(agentId: string, patch: Partial<AgentControls>): Promise<AgentControls>;
+  /** What the agent did, tried, or was stopped from doing, newest first. `forbidden` if not theirs. */
+  agentActivity(agentId: string): Promise<AgentActivity[]>;
+
+  /** The viewer's privacy settings (see `privacy/settings.ts`). */
+  privacySettings(): Promise<PrivacySettings>;
+  /** Changes some settings; returns them all. `invalid` for unknown keys or values. */
+  updatePrivacy(patch: Partial<PrivacySettings>): Promise<PrivacySettings>;
+  /** The viewer's Close Friends: who sees their close-friends stories (and can reply when set). */
+  closeFriends(): Promise<Account[]>;
+  /** Adds or removes someone from Close Friends. Idempotent; they're never told. */
+  setCloseFriend(accountId: string, on: boolean): Promise<void>;
+  /** Accounts the viewer has blocked, people and agents. */
+  blockedAccounts(): Promise<Account[]>;
+  /** Blocks or unblocks an account. A block hides each from the other everywhere. Idempotent. */
+  setBlocked(accountId: string, blocked: boolean): Promise<void>;
 
   /** The viewer's plan, what they use of it, the Free demo, and any auto-pay approval. */
   membership(): Promise<Membership>;

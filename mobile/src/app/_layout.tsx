@@ -10,6 +10,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { ErrorToast } from '@/components/states';
 import { usePushNotifications } from '@/notifications/use-push-notifications';
 import { ShareIntentRouter } from '@/share/share-intent-router';
+import { loadAppPrefs } from '@/state/app-prefs';
 import { auth, useAuth } from '@/state/auth';
 import { colors } from '@/theme';
 
@@ -27,6 +28,7 @@ export default function RootLayout() {
   usePushNotifications();
 
   useEffect(() => {
+    void loadAppPrefs();
     auth
       .bootstrap()
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
@@ -100,6 +102,7 @@ export default function RootLayout() {
                 contentStyle: { backgroundColor: colors.surface },
               }}
             />
+            <Stack.Screen name="review" options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }} />
             <Stack.Screen name="stories/[authorId]" options={{ presentation: 'fullScreenModal', animation: 'fade' }} />
             <Stack.Screen name="post/[postId]" />
             <Stack.Screen
@@ -115,8 +118,24 @@ export default function RootLayout() {
               options={{ headerShown: true, headerBackButtonDisplayMode: 'minimal', headerTitle: 'Activity', headerShadowVisible: false }}
             />
             <Stack.Screen
-              name="settings"
-              options={{ headerShown: true, headerBackButtonDisplayMode: 'minimal', headerTitle: 'Settings', headerShadowVisible: false }}
+              name="settings/index"
+              options={{ headerShown: true, headerBackButtonDisplayMode: 'minimal', headerTitle: 'Settings and privacy', headerShadowVisible: false }}
+            />
+            <Stack.Screen
+              name="settings/notifications"
+              options={{ headerShown: true, headerBackButtonDisplayMode: 'minimal', headerTitle: 'Notifications', headerShadowVisible: false }}
+            />
+            <Stack.Screen
+              name="settings/close-friends"
+              options={{ headerShown: true, headerBackButtonDisplayMode: 'minimal', headerTitle: 'Close Friends', headerShadowVisible: false }}
+            />
+            <Stack.Screen
+              name="settings/blocked"
+              options={{ headerShown: true, headerBackButtonDisplayMode: 'minimal', headerTitle: 'Blocked', headerShadowVisible: false }}
+            />
+            <Stack.Screen
+              name="settings/agent/[agentId]"
+              options={{ headerShown: true, headerBackButtonDisplayMode: 'minimal', headerTitle: 'Agent controls', headerShadowVisible: false }}
             />
             </Stack.Protected>
           </Stack>

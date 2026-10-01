@@ -4,7 +4,9 @@ import { memo, useCallback, useMemo, useState } from 'react';
 import { FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { useRefresh } from '@/components/use-refresh';
 import { EmptyState, ErrorState, Pulse, SkeletonBlock } from '@/components/states';
+import { ActivityButton } from '@/components/activity-button';
 import { ThreadAvatar } from '@/components/thread-avatar';
 import { Icon, NameLine, PressableScale } from '@/components/ui';
 import type { Thread } from '@/data/types';
@@ -108,7 +110,6 @@ export default function MessagesScreen() {
   const me = useStore((s) => s.accounts.get('me'));
   const [threads, setThreads] = useState<Thread[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
   const [query, setQuery] = useState('');
   const accounts = useStore((s) => s.accounts);
   // When the list was fetched: "active now" and ages are relative to that.
@@ -133,6 +134,7 @@ export default function MessagesScreen() {
       void load();
     }, [load]),
   );
+  const { refreshing, onRefresh } = useRefresh(load);
 
   const filtered = useMemo(() => {
     if (!threads) return [];
@@ -190,9 +192,12 @@ export default function MessagesScreen() {
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       <View style={styles.bar}>
         <Text style={type.title} numberOfLines={1} maxFontSizeMultiplier={1.3} accessibilityRole="header">{me?.handle ?? 'messages'}</Text>
-        <PressableScale onPress={() => router.push('/share')} accessibilityRole="button" accessibilityLabel="New message" hitSlop={10}>
-          <Icon name="square.and.pencil" size={24} />
-        </PressableScale>
+        <View style={styles.barActions}>
+          <PressableScale onPress={() => router.push('/share')} accessibilityRole="button" accessibilityLabel="New message" hitSlop={10}>
+            <Icon name="square.and.pencil" size={24} />
+          </PressableScale>
+          <ActivityButton />
+        </View>
       </View>
 
       {error && !threads ? (
@@ -217,15 +222,7 @@ export default function MessagesScreen() {
             )
           }
           refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              tintColor={colors.textSecondary}
-              onRefresh={async () => {
-                setRefreshing(true);
-                await load();
-                setRefreshing(false);
-              }}
-            />
+            <RefreshControl refreshing={refreshing} tintColor={colors.textSecondary} onRefresh={onRefresh} />
           }
           contentContainerStyle={styles.content}
           keyboardDismissMode="on-drag"
@@ -238,6 +235,7 @@ export default function MessagesScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
   content: { paddingBottom: 120 },
+  barActions: { flexDirection: 'row', alignItems: 'center', gap: 22 },
   bar: { height: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16 },
   search: {
     flexDirection: 'row',

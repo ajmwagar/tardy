@@ -5,6 +5,7 @@ import type { SFSymbol } from 'expo-symbols';
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { useRefresh } from '@/components/use-refresh';
 import { EmptyState, ErrorState, Pulse, SkeletonBlock } from '@/components/states';
 import { Avatar, haptic, Icon, IconButton, PressableScale } from '@/components/ui';
 import type { Notification, NotificationKind, Post } from '@/data/types';
@@ -118,7 +119,6 @@ export default function NotificationsScreen() {
   const [list, setList] = useState<Notification[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<TrayFilter>('all');
-  const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -142,6 +142,7 @@ export default function NotificationsScreen() {
       void load();
     }, [load]),
   );
+  const { refreshing, onRefresh } = useRefresh(load);
 
   const rows = useMemo<Row[]>(
     () =>
@@ -206,15 +207,7 @@ export default function NotificationsScreen() {
             )
           }
           refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              tintColor={colors.textSecondary}
-              onRefresh={async () => {
-                setRefreshing(true);
-                await load();
-                setRefreshing(false);
-              }}
-            />
+            <RefreshControl refreshing={refreshing} tintColor={colors.textSecondary} onRefresh={onRefresh} />
           }
           contentContainerStyle={styles.content}
         />

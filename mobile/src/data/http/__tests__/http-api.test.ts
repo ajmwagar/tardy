@@ -269,7 +269,7 @@ describe('HttpTardyApi: decoding', () => {
         kind: 'work',
         participantIds: ['acct-1', 'a2'],
         unreadCount: 0,
-        lastMessage: { id: 'm2', threadId: 't1', senderId: 'a2', text: 'yo', createdAt: '1970-01-01T00:00:01.000Z' },
+        lastMessage: { id: 'm2', threadId: 't1', senderId: 'a2', text: 'yo', createdAt: '1970-01-01T00:00:01.000Z', sequence: 2 },
       },
     ]);
     // t2 has no messages: omitted, as the contract says.
@@ -326,5 +326,63 @@ describe('HttpTardyApi: decoding', () => {
     const { api, calls } = await signedInClient();
     await expect(api.openThread([{ id: 'h2', kind: 'human' }, { id: 'h3', kind: 'human' }])).rejects.toMatchObject({ code: 'invalid' });
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe('HttpTardyApi: agent controls', () => {
+  const wireControls = {
+    paused: false,
+    posts: 'auto',
+    stories: 'ask',
+    comments: 'ask',
+    messages: 'off',
+    follows: 'ask',
+    reactions: 'auto',
+    auto_audience: 'followers',
+    daily_limit: null,
+    quiet_hours: true,
+    monthly_spend_cents: 500,
+    use_your_activity: false,
+    notify_on_auto: true,
+  };
+
+  it('reads and patches controls in snake_case', async () => {
+    const { api, calls } = await signedInClient({ status: 200, body: wireControls }, { status: 200, body: { ...wireControls, paused: true } });
+    const controls = await api.agentControls('agent/1');
+    expect(controls).toMatchObject({ posts: 'auto', dailyLimit: null, monthlySpendCents: 500, autoAudience: 'followers' });
+    const next = await api.updateAgentControls('agent/1', { paused: true, dailyLimit: null });
+    expect(next.paused).toBe(true);
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([`GET ${BASE}v1/agents/agent%2F1/controls`, `PATCH ${BASE}v1/agents/agent%2F1/controls`]);
+    expect(calls[1].body).toEqual({ paused: true, daily_limit: null });
+  });
+
+  it('decodes the activity log and skips kinds it does not know', async () => {
+    const { api } = await signedInClient({
+      status: 200,
+      body: [
+        { id: '1', agent_profile_id: 'a', kind: 'post', summary: 'Posted: hi', how: 'auto', at: '2026-10-01T00:00:00Z', post_id: 'p1' },
+        { id: '2', agent_profile_id: 'a', kind: 'livestream', summary: 'Went live', how: 'auto', at: '2026-10-01T00:00:00Z' },
+      ],
+    });
+    expect(await api.agentActivity('a')).toEqual([{ id: '1', agentId: 'a', kind: 'post', summary: 'Posted: hi', how: 'auto', at: '2026-10-01T00:00:00.000Z', postId: 'p1' }]);
+  });
+
+  it('decodes what kind of request a suggestion is, and its target', async () => {
+    const { api } = await signedInClient({
+      status: 200,
+      body: [
+        {
+          id: 's1',
+          agent_profile_id: 'a',
+          kind: 'comment',
+          target: { account_profile_id: 'b', post_id: 'p' },
+          post: { caption: 'Nice', media: [], format: 'photo', links: [] },
+          visibility: 'public',
+          created_at: '2026-10-01T00:00:00Z',
+        },
+      ],
+    });
+    const [s] = await api.postSuggestions();
+    expect(s).toMatchObject({ kind: 'comment', target: { accountId: 'b', postId: 'p' } });
   });
 });

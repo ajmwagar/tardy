@@ -120,7 +120,7 @@ export function arraySkipping<T>(decoder: Decoder<T | undefined>): Decoder<T[]> 
   return (v, path) => all(v, path).filter((item): item is T => item !== undefined);
 }
 
-const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+export const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
 /** Every key of `T` needs a decoder, including optional ones, so no field is forgotten. */
 export type Shape<T> = { [K in keyof T]-?: Decoder<T[K]> };

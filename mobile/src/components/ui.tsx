@@ -6,6 +6,7 @@ import { Pressable, StyleSheet, Text, View, type PressableProps, type StyleProp,
 import Animated, { useAnimatedStyle, useSharedValue, withSequence, withSpring } from 'react-native-reanimated';
 
 import type { Account, WorkStatus } from '@/data/types';
+import { appPrefs } from '@/state/app-prefs';
 import { colors, compact, countLabel, IMAGE_TRANSITION_MS, status as statusStyles, type as typeStyles } from '@/theme';
 
 export const Icon = memo(function Icon({
@@ -26,13 +27,15 @@ export const Icon = memo(function Icon({
  * Story ring around an avatar: `unseen` light grey, `seen` dark grey, `boosted` alarm red
  * (a paid boost, shown regardless of seen state).
  */
-export type RingState = 'none' | 'unseen' | 'seen' | 'boosted' | 'boostedSeen';
+export type RingState = 'none' | 'unseen' | 'seen' | 'boosted' | 'boostedSeen' | 'closeFriends' | 'closeFriendsSeen';
 
 const ringColor: Record<Exclude<RingState, 'none'>, string> = {
   unseen: colors.unseenRing,
   seen: colors.seenRing,
   boosted: colors.alarm,
   boostedSeen: colors.boostedSeenRing,
+  closeFriends: colors.closeFriendsRing,
+  closeFriendsSeen: colors.closeFriendsSeenRing,
 };
 
 /** Watched stories dim the picture as well as the ring, so new ones stand out. */
@@ -69,7 +72,7 @@ export const Avatar = memo(function Avatar({
         height: size,
         borderRadius: avatarRadius(account?.kind, size),
         backgroundColor: colors.elevated,
-        opacity: ring === 'seen' || ring === 'boostedSeen' ? SEEN_AVATAR_OPACITY : 1,
+        opacity: ring === 'seen' || ring === 'boostedSeen' || ring === 'closeFriendsSeen' ? SEEN_AVATAR_OPACITY : 1,
       }}
     />
   );
@@ -95,8 +98,12 @@ export function VerifiedBadge({ size = 13 }: { size?: number }) {
  * save, double tap). Nothing fires while scrolling, and navigation stays silent.
  */
 export const haptic = {
-  selection: () => void Haptics.selectionAsync(),
-  impact: () => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light),
+  selection: () => {
+    if (appPrefs().haptics) void Haptics.selectionAsync();
+  },
+  impact: () => {
+    if (appPrefs().haptics) void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  },
 };
 
 /**
