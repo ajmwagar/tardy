@@ -102,6 +102,7 @@ export const PostCard = memo(function PostCard({
       <View style={styles.media}>
         <MediaCarousel postId={post.id} media={post.media} width={mediaWidth} active={active} onIndexChange={setIndex} />
       </View>
+      <CarouselDots count={post.media.length} index={index} />
 
       <View style={styles.actions}>
         <View style={styles.actionGroup}>
@@ -126,7 +127,6 @@ export const PostCard = memo(function PostCard({
           />
           <Reaction icon="paperplane" label="Share" onPress={share} />
         </View>
-        <CarouselDots count={post.media.length} index={index} />
         <Reaction icon="bookmark" label="Save" activeIcon="bookmark.fill" active={saved} activeColor={colors.primary} onPress={() => toggleSaved(post.id)} />
       </View>
 
