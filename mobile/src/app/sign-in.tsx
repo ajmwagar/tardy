@@ -1,4 +1,3 @@
-import { isRunningInExpoGo } from 'expo';
 import { router } from 'expo-router';
 import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -16,7 +15,7 @@ export default function SignInScreen() {
   const state = useAuth();
   const signingIn = state.status === 'signed_out' && state.signingIn;
   const error = state.status === 'signed_out' ? state.error : null;
-  const expoPreview = isRunningInExpoGo();
+  const expoPreview = __DEV__;
   const order = usesMockBackend ? (['github', ...ONE_TAP_PROVIDERS.filter((p) => p !== 'github')] as const) : (['apple'] as const);
 
   return (
