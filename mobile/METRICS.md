@@ -65,3 +65,34 @@ c 'styles\.error'           # ad hoc error text
 
 Contrast ratios use the WCAG relative-luminance formula; after the pass the same formula is
 in `src/theme` (`contrastRatio`) and a test pins the text tokens at AA.
+
+## After the pass, 2026-09-30
+
+Same commands, same machine, re-run after the last UX commit.
+
+| Metric | Before | After | Note |
+| --- | --- | --- | --- |
+| iOS JS bundle (Hermes bytecode) | 4,226,078 B, 1,786 modules | 4,277,020 B (+50,942), 1,789 modules | The 3 new modules are the HTTP backend (`src/data/http/`) another agent landed on this branch during the pass; the UX commits add no modules. The byte delta covers both and was not split. |
+| Exported assets | 35 files, 11,200,930 B | 35 files, 11,200,930 B | unchanged |
+| Export directory | 15 MB | 15 MB | |
+| Tests | 250 / 18 suites | 323 / 23 suites, all passing | 18 of the new tests are from this pass (contrast, `countLabel`, `badgeText`, `needs_you` filter, `storyBubbleLabel`); the rest came with the HTTP backend work |
+| Typecheck | clean | clean | |
+| Lint | clean | clean | |
+| Screens | 15 | 15 | |
+| Component files | 16 | 16 | |
+| `memo()` components | 13 | 14 | |
+| Inline `renderItem` arrows | 9 | **0** | |
+| `<ActivityIndicator>` spinners | 10 | **4** | Left: two in-button busy states (PillButton, edit-profile Save), the visibility switch's inline saving state, and edit-profile's never-expected "no account" guard |
+| Inline `style={{...}}` objects | 50 | 45 | Remaining ones are mostly one-off sizes in skeletons and non-list screens |
+| Raw `<Pressable>` | 24 | 16 | Remaining are list rows with a pressed-background highlight, gesture surfaces, and the edit-profile header button |
+| `<PressableScale>` | 27 | 31 | |
+| `accessibilityLabel` props | 12 | 29 | Not counting the new required `label` on every `Reaction` (10 call sites) |
+| `<Image>` with a `transition` | 4 of 8 | 7 of 8 | All use `IMAGE_TRANSITION_MS` (150ms); the 8th is the blurred backdrop behind Expo Go reels |
+| Ad hoc red error text | 10 | 5 | Left: form-validation messages on sign-in, sign-in-email, edit-profile (inline under the field is the right place for those) |
+
+| Token | on `bg` | on `surface` | on `elevated` |
+| --- | --- | --- | --- |
+| `textTertiary` before (#6E6E7A) | 3.93 | 3.61 | 3.13 |
+| `textTertiary` after (#80808C) | **5.07** | **4.66** | 4.04 |
+
+On `elevated`, tertiary is used for input placeholders and the search glyph, which stay below 4.5:1 (4.04).
