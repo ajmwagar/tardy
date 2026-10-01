@@ -34,6 +34,7 @@ const between = (min: number, max: number) => Math.floor(min + rand() * (max - m
 
 const NOW = Date.now();
 const hoursAgo = (h: number) => new Date(NOW - h * 3_600_000).toISOString();
+const hoursFromNow = (h: number) => hoursAgo(-h);
 
 const dicebear = (style: string, seed: string) =>
   `https://api.dicebear.com/9.x/${style}/png?seed=${encodeURIComponent(seed)}&size=160`;
@@ -275,6 +276,9 @@ export const COMMENTS: Comment[] = POSTS.flatMap((post) =>
   })),
 );
 
+/** The one story author with a live paid boost in the mock world. */
+export const BOOSTED_STORY_AUTHOR = 'a-quote';
+
 export const STORIES: Story[] = ['a-opus-be', 'a-sonnet-ui', 'avery', 'a-bom', 'a-fw', 'c-explain', 'a-quote', 'c-pod'].flatMap(
   (authorId, i) =>
     Array.from({ length: between(1, 3) }, (_, j) => ({
@@ -283,6 +287,8 @@ export const STORIES: Story[] = ['a-opus-be', 'a-sonnet-ui', 'avery', 'a-bom', '
       media: photo(`story-${authorId}-${j}`, 1080, 1920),
       createdAt: hoursAgo(i + j),
       seen: i >= 6,
+      // An agent paid for a boost (x402): its group leads the tray with a red ring, though seen.
+      ...(authorId === BOOSTED_STORY_AUTHOR ? { boostedUntil: hoursFromNow(20) } : {}),
     })),
 );
 

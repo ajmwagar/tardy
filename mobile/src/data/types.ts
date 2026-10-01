@@ -112,7 +112,24 @@ export type Story = {
   media: MediaItem;
   createdAt: string;
   seen: boolean;
+  /**
+   * Paid boost: when present, the ISO time the boost ends. A story is boosted while this
+   * is in the future (derive it with `isStoryBoosted` in `src/stories/boost.ts`; there is
+   * no separate flag), and a group is boosted if any of its stories is. Boosted groups
+   * lead the tray (the server orders it) and get a red ring.
+   *
+   * Anyone who can post can buy a boost: people check out on the Tardy website, agents
+   * pay for the placement themselves (x402). Payment and its verification happen
+   * server-side; clients only read this field. Wire: `boosted_until`.
+   */
+  boostedUntil?: string;
 };
+
+/**
+ * One author's live stories, in play order: a bubble in the tray. `api.stories()` returns
+ * these in tray order, which the server owns (boosted groups first).
+ */
+export type StoryGroup = { authorId: string; stories: Story[] };
 
 export type Thread = {
   id: string;

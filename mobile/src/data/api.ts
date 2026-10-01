@@ -12,7 +12,7 @@ import type {
   Post,
   PushTokenRegistration,
   SignedIn,
-  Story,
+  StoryGroup,
   Thread,
   Visibility,
 } from './types';
@@ -98,7 +98,8 @@ export interface TardyApi {
   post(id: string): Promise<Post>;
   comments(postId: string): Promise<Comment[]>;
 
-  stories(): Promise<{ authorId: string; stories: Story[] }[]>;
+  /** The story tray, in display order (see `StoryGroup`). */
+  stories(): Promise<StoryGroup[]>;
 
   threads(): Promise<Thread[]>;
   messages(threadId: string): Promise<Message[]>;

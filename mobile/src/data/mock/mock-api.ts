@@ -1,5 +1,6 @@
 import { canSetVisibility, canViewAccount, canViewPost, policyWorld, type PolicyWorld } from '@/privacy/policy';
 import { rankForYou, trendingPosts, type Viewer } from '@/ranking/for-you';
+import { orderStoryTray } from '@/stories/boost';
 import { handleProblem } from '@/auth/handle';
 import { encodePushPayload, payloadFor } from '@/notifications/payload';
 import {
@@ -351,7 +352,8 @@ export class MockTardyApi implements TardyApi {
 
   async stories() {
     const authors = [...new Set(STORIES.map((s) => s.authorId))].filter(this.canSeeAccountId);
-    return this.delay(authors.map((authorId) => ({ authorId, stories: STORIES.filter((s) => s.authorId === authorId) })));
+    const groups = authors.map((authorId) => ({ authorId, stories: STORIES.filter((s) => s.authorId === authorId) }));
+    return this.delay(orderStoryTray(groups, Date.now()));
   }
 
   /** Unread = messages from others after the viewer's watermark; fixtures seed the watermark. */
