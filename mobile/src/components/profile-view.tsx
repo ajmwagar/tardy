@@ -1,19 +1,19 @@
 import { FlashList } from '@shopify/flash-list';
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { memo, useCallback, useEffect, useState } from 'react';
+import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import { openWebCheckout } from '@/config';
 import type { Account, Post } from '@/data/types';
 import { api, loadFeedPage, toggleFollowing, useIsFollowing } from '@/state/store';
-import { colors, compact, radius, type } from '@/theme';
+import { colors, compact, IMAGE_TRANSITION_MS, layout, radius, type } from '@/theme';
 
+import { EmptyState, ErrorState, GridSkeleton, InlineRetry } from './states';
 import { AgentBadge, Avatar, Icon, PressableScale, VerifiedBadge } from './ui';
 import { VisibilityControl } from './visibility-control';
 
-const COLUMNS = 3;
-const GAP = 2;
+const { gridColumns: COLUMNS, gridGap: GAP } = layout;
 
 function Stat({ value, label }: { value: number; label: string }) {
   return (
@@ -80,22 +80,34 @@ function Header({ account, isMe }: { account: Account; isMe: boolean }) {
   );
 }
 
-function Tile({ post, size }: { post: Post; size: number }) {
+const Tile = memo(function Tile({ post, size }: { post: Post; size: number }) {
   const media = post.media[0];
   const uri = media?.type === 'video' ? media.posterUrl : media?.url;
   return (
-    <Pressable
-      style={{ width: size, height: size * 1.25, marginBottom: GAP }}
-      onPress={() => router.push({ pathname: '/post/[postId]', params: { postId: post.id } })}>
-      <Image source={uri} recyclingKey={uri} style={StyleSheet.absoluteFill} contentFit="cover" cachePolicy="memory-disk" transition={120} />
+    <PressableScale
+      scaleTo={0.97}
+      style={{ width: size, height: size / layout.gridTileAspect }}
+      onPress={() => router.push({ pathname: '/post/[postId]', params: { postId: post.id } })}
+      accessibilityRole="button"
+      accessibilityLabel={post.caption}>
+      <Image
+        source={uri}
+        recyclingKey={uri}
+        style={StyleSheet.absoluteFill}
+        contentFit="cover"
+        cachePolicy="memory-disk"
+        transition={IMAGE_TRANSITION_MS}
+      />
       {post.format !== 'photo' && (
         <View style={styles.tileBadge}>
           <Icon name={post.format === 'carousel' ? 'square.on.square' : 'play.fill'} size={13} color="#fff" />
         </View>
       )}
-    </Pressable>
+    </PressableScale>
   );
-}
+});
+
+const keyOf = (p: Post) => p.id;
 
 /** A profile: header, verification upsell (own profile only), and a 3-column post grid. */
 export function ProfileView({ account, isMe }: { account: Account; isMe: boolean }) {
@@ -104,17 +116,19 @@ export function ProfileView({ account, isMe }: { account: Account; isMe: boolean
   const [posts, setPosts] = useState<Post[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [done, setDone] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  /** A failed first page (nothing to show) or next page (inline retry under the grid). */
+  const [error, setError] = useState<{ page: 'first' | 'next'; message: string } | null>(null);
 
   const load = useCallback(
     async (from: string | null) => {
+      setError(null);
       try {
         const page = await loadFeedPage(api.accountPosts(account.id, from));
         setPosts((prev) => (from ? [...prev, ...page.items] : page.items));
         setCursor(page.nextCursor);
         setDone(page.nextCursor === null);
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
+        setError({ page: from ? 'next' : 'first', message: e instanceof Error ? e.message : String(e) });
       }
     },
     [account.id],
@@ -126,30 +140,45 @@ export function ProfileView({ account, isMe }: { account: Account; isMe: boolean
     void load(null);
   }, [load]);
 
+  const renderItem = useCallback(
+    ({ item, index }: { item: Post; index: number }) => (
+      <View style={index % COLUMNS === COLUMNS - 1 ? styles.lastColumn : styles.column}>
+        <Tile post={item} size={size} />
+      </View>
+    ),
+    [size],
+  );
+
   return (
     <FlashList
       data={posts}
       numColumns={COLUMNS}
-      keyExtractor={(p) => p.id}
-      renderItem={({ item, index }) => (
-        <View style={{ marginRight: index % COLUMNS === COLUMNS - 1 ? 0 : GAP }}>
-          <Tile post={item} size={size} />
-        </View>
-      )}
+      keyExtractor={keyOf}
+      renderItem={renderItem}
       ListHeaderComponent={<Header account={account} isMe={isMe} />}
       ListEmptyComponent={
-        error ? (
-          <Text style={styles.error}>{error}</Text>
+        error?.page === 'first' ? (
+          <ErrorState message="The grid didn't load. The posts are fine; the fetch wasn't." detail={error.message} onRetry={() => void load(null)} />
         ) : done ? (
-          <Text style={styles.empty}>No posts yet.</Text>
+          <EmptyState
+            icon="square.grid.3x3"
+            title="No posts yet"
+            message={isMe ? 'Your agents haven’t posted anything. Give them something to ship.' : 'Nothing shipped here yet. Check back after the next deploy.'}
+          />
         ) : (
-          <ActivityIndicator color={colors.textSecondary} style={{ marginTop: 32 }} />
+          <GridSkeleton width={width} />
         )
       }
+      ListFooterComponent={
+        error?.page === 'next' ? (
+          <InlineRetry message="Couldn't load more posts." detail={error.message} onRetry={() => void load(cursor)} />
+        ) : null
+      }
       onEndReached={() => {
-        if (!done && cursor) void load(cursor);
+        // Paused while an error shows, so a dead network doesn't retry on every scroll.
+        if (!done && cursor && !error) void load(cursor);
       }}
-      contentContainerStyle={{ paddingBottom: 120 }}
+      contentContainerStyle={styles.content}
     />
   );
 }
@@ -183,6 +212,7 @@ const styles = StyleSheet.create({
   verifyTitle: { color: colors.onPrimary, fontSize: 15, fontWeight: '900' },
   verifySub: { color: colors.onPrimary, fontSize: 12, opacity: 0.75 },
   tileBadge: { position: 'absolute', top: 6, right: 6 },
-  empty: { color: colors.textSecondary, textAlign: 'center', marginTop: 32 },
-  error: { color: colors.alarm, textAlign: 'center', marginTop: 32 },
+  column: { marginRight: GAP, marginBottom: GAP },
+  lastColumn: { marginBottom: GAP },
+  content: { paddingBottom: 120 },
 });

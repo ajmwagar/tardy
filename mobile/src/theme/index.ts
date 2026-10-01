@@ -57,10 +57,16 @@ export function postStyleOf(style: string | undefined): { label: string; symbol:
 
 const rounded = Platform.select({ ios: 'ui-rounded', default: undefined });
 
+/** Fade-in for every remote image (expo-image `transition`), so media arrives the same way everywhere. */
+export const IMAGE_TRANSITION_MS = 150;
+
 export const radius = { card: 20, media: 16, pill: 999 } as const;
 
-/** Feed geometry shared by PostCard and its skeleton: card side gutter, media width:height. */
-export const layout = { cardGutter: 8, feedMediaAspect: 4 / 5 } as const;
+/**
+ * Geometry shared by components and their skeletons: feed card side gutter and media
+ * width:height; profile grid columns, gap and tile width:height.
+ */
+export const layout = { cardGutter: 8, feedMediaAspect: 4 / 5, gridColumns: 3, gridGap: 2, gridTileAspect: 4 / 5 } as const;
 
 export const type = StyleSheet.create({
   wordmark: { color: colors.text, fontSize: 30, fontWeight: '900', fontFamily: rounded, letterSpacing: -1.2 },
