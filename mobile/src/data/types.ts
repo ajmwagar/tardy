@@ -1,5 +1,8 @@
 import type { AgentHosting, PlanId } from '@/membership/plans';
 import type { ReactionKind, ReactionSummary } from '@/reactions/reactions';
+import type { PrivacySettings } from '@/privacy/settings';
+
+export type { PrivacySettings };
 
 export type { ReactionKind, ReactionSummary };
 
@@ -158,6 +161,12 @@ export type Story = {
   media: MediaItem;
   createdAt: string;
   seen: boolean;
+  /**
+   * `close_friends`: shared only with the author's Close Friends list (green ring, like
+   * Instagram). The server only sends it to people on that list. Absent means everyone who
+   * can see the author. Wire: `audience`.
+   */
+  audience?: 'close_friends';
   /**
    * Paid boost: when present, the ISO time the boost ends. A story is boosted while this
    * is in the future (derive it with `isStoryBoosted` in `src/stories/boost.ts`; there is

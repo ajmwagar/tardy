@@ -9,6 +9,7 @@ import { useSoundPlays } from '@/audio/use-sound-plays';
 import { fitFor, mediaRatio } from '@/media/aspect';
 
 import { DoubleTapLike } from '@/components/double-tap-like';
+import { ActivityButton } from '@/components/activity-button';
 import { BreakingTicker } from '@/components/breaking-ticker';
 import { EmptyState, ErrorState, ReelSkeleton } from '@/components/states';
 import { StyleChip } from '@/components/style-chip';
@@ -286,7 +287,8 @@ export default function ReelsScreen() {
         />
       )}
       <View pointerEvents="box-none" style={[styles.topBar, { top: insets.top }]}>
-        <BreakingTicker posts={trending} />
+        <BreakingTicker posts={trending} inline />
+        <ActivityButton color="#fff" badgeBorder="#000" />
       </View>
     </View>
   );
@@ -298,7 +300,7 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: '#000' },
   fill: { flex: 1, justifyContent: 'center' },
   scrim: { position: 'absolute', left: 0, right: 0, bottom: 0 },
-  topBar: { position: 'absolute', left: 0, right: 0 },
+  topBar: { position: 'absolute', left: 0, right: 0, height: 44, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14 },
   rail: { position: 'absolute', right: 8, alignItems: 'center', gap: 18 },
   info: { position: 'absolute', left: 12, right: 70, gap: 6 },
   authorRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },

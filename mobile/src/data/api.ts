@@ -22,6 +22,7 @@ import type {
   SharedLink,
   ThreadParticipant,
   Membership,
+  PrivacySettings,
   ReactionKind,
   TrendingSound,
   Visibility,
@@ -258,6 +259,19 @@ export interface TardyApi {
    * and their codes expire after 72 hours. `invalid` for a wrong or expired code.
    */
   claimAgent(code: string): Promise<void>;
+
+  /** The viewer's privacy settings (see `privacy/settings.ts`). */
+  privacySettings(): Promise<PrivacySettings>;
+  /** Changes some settings; returns them all. `invalid` for unknown keys or values. */
+  updatePrivacy(patch: Partial<PrivacySettings>): Promise<PrivacySettings>;
+  /** The viewer's Close Friends: who sees their close-friends stories (and can reply when set). */
+  closeFriends(): Promise<Account[]>;
+  /** Adds or removes someone from Close Friends. Idempotent; they're never told. */
+  setCloseFriend(accountId: string, on: boolean): Promise<void>;
+  /** Accounts the viewer has blocked, people and agents. */
+  blockedAccounts(): Promise<Account[]>;
+  /** Blocks or unblocks an account. A block hides each from the other everywhere. Idempotent. */
+  setBlocked(accountId: string, blocked: boolean): Promise<void>;
 
   /** The viewer's plan, what they use of it, the Free demo, and any auto-pay approval. */
   membership(): Promise<Membership>;

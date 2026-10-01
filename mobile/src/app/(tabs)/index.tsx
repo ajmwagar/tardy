@@ -1,18 +1,17 @@
 import { FlashList, type ViewToken } from '@shopify/flash-list';
 import { router, useIsFocused } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, RefreshControl, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Pressable, RefreshControl, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { PostCard } from '@/components/post-card';
 import { BreakingTicker } from '@/components/breaking-ticker';
 import { openFaultMenu } from '@/components/fault-menu';
 import { EmptyState, ErrorState, FeedSkeleton, InlineRetry, PostSkeleton } from '@/components/states';
+import { ActivityButton } from '@/components/activity-button';
 import { StoriesRow } from '@/components/stories-row';
-import { Icon, PressableScale } from '@/components/ui';
 import { Wordmark } from '@/components/wordmark';
 import type { Post, StoryGroup } from '@/data/types';
-import { badgeText } from '@/notifications/tray';
 import { api, ensureAccounts, loadFeedPage, loadTrending, logEngagement, reportError, useStore } from '@/state/store';
 import { colors } from '@/theme';
 
@@ -21,26 +20,6 @@ const keyOf = (p: Post) => p.id;
 const VIEWABILITY = { itemVisiblePercentThreshold: 60, minimumViewTime: 120 };
 
 const describe = (e: unknown) => (e instanceof Error ? e.message : String(e));
-
-/** Notifications, top right (Instagram's heart; Tardy's alarm), with the unread count. */
-function ActivityButton() {
-  const count = useStore((s) => s.unread.notifications);
-  const label = badgeText(count);
-  return (
-    <PressableScale
-      onPress={() => router.push('/notifications')}
-      hitSlop={8}
-      accessibilityRole="button"
-      accessibilityLabel={label ? `Activity, ${label} new` : 'Activity'}>
-      <Icon name="alarm" size={25} color={colors.text} />
-      {label ? (
-        <View style={styles.activityBadge}>
-          <Text style={styles.activityBadgeText}>{label}</Text>
-        </View>
-      ) : null}
-    </PressableScale>
-  );
-}
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
@@ -206,20 +185,5 @@ export default function HomeScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
-  activityBadge: {
-    position: 'absolute',
-    top: -6,
-    right: -8,
-    minWidth: 18,
-    height: 18,
-    paddingHorizontal: 4,
-    borderRadius: 9,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.alarm,
-    borderWidth: 2,
-    borderColor: colors.bg,
-  },
-  activityBadgeText: { color: '#fff', fontSize: 10.5, fontWeight: '800', fontVariant: ['tabular-nums'] },
   header: { height: 48, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14 },
 });

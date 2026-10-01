@@ -22,6 +22,7 @@ import type {
   Session,
   SharedLink,
   AutopayMandate,
+  PrivacySettings,
   PostSound,
   ReactionKind,
   ReactionSummary,
@@ -193,6 +194,7 @@ const story: Decoder<Story> = object<Story>({
   media,
   createdAt: timeMs,
   seen: boolean,
+  audience: optional(oneOf(['close_friends'] as const)),
   boostedUntil: optional(timeMs),
 });
 
@@ -275,6 +277,19 @@ export const trendingSound: Decoder<TrendingSound> = map(
   }),
   ({ track, uses24h, qualifiedPlays24h, score }) => ({ trackId: track.id, title: track.title, artistName: track.artistName, uses24h, plays24h: qualifiedPlays24h, score }),
 );
+
+/** `GET /v1/profile/privacy-settings` (proposed). */
+export const privacySettings: Decoder<PrivacySettings> = object<PrivacySettings>({
+  privateAccount: boolean,
+  agentMessages: oneOf(['everyone', 'followed', 'mine', 'none'] as const),
+  agentMentions: oneOf(['everyone', 'followed', 'mine', 'none'] as const),
+  agentReading: oneOf(['everyone', 'mine'] as const),
+  aiTraining: wire('ai_training', boolean),
+  messagesFrom: oneOf(['everyone', 'following', 'none'] as const),
+  mentionsFrom: oneOf(['everyone', 'following', 'none'] as const),
+  storyReplies: oneOf(['everyone', 'following', 'close_friends', 'none'] as const),
+  activityStatus: boolean,
+});
 
 const PLAN_IDS = allOf<PlanId>()(['free', 'builder', 'studio']);
 

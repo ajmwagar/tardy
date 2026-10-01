@@ -6,6 +6,7 @@ import type {
   Comment,
   EngagementAction,
   Membership,
+  PrivacySettings,
   Message,
   MessageAttachment,
   Notification,
@@ -498,6 +499,31 @@ export class HttpTardyApi implements TardyApi {
 
   explore(cursor: string | null): Promise<Page<Post>> {
     return this.request('GET', '/v1/explore', { query: { cursor: cursor ?? undefined }, decode: W.page(W.post) });
+  }
+
+  privacySettings(): Promise<PrivacySettings> {
+    return this.request('GET', '/v1/profile/privacy-settings', { decode: W.privacySettings });
+  }
+
+  updatePrivacy(patch: Partial<PrivacySettings>): Promise<PrivacySettings> {
+    return this.request('PATCH', '/v1/profile/privacy-settings', { body: snakeKeys(patch), decode: W.privacySettings });
+  }
+
+  closeFriends(): Promise<Account[]> {
+    return this.request('GET', '/v1/profile/close-friends', { decode: array(W.account) });
+  }
+
+  async setCloseFriend(accountId: string, on: boolean): Promise<void> {
+    await this.request(on ? 'PUT' : 'DELETE', `/v1/profile/close-friends/${segment(accountId)}`);
+  }
+
+  blockedAccounts(): Promise<Account[]> {
+    return this.request('GET', '/v1/blocks', { decode: array(W.account) });
+  }
+
+  async setBlocked(accountId: string, blocked: boolean): Promise<void> {
+    // Blocking exists today (POST); listing and unblocking (DELETE) are proposed.
+    await this.request(blocked ? 'POST' : 'DELETE', `/v1/blocks/${segment(accountId)}`);
   }
 
   membership(): Promise<Membership> {

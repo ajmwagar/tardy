@@ -2,16 +2,18 @@ import { useEvent } from 'expo';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import { useEffect, useRef } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { Pressable, StyleSheet, View } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { TardyVideoView } from '../../modules/tardy-video';
 import type { MediaItem } from '@/data/types';
+import { useAppPrefs } from '@/state/app-prefs';
 import { logEngagement, useStore } from '@/state/store';
 import { IMAGE_TRANSITION_MS } from '@/theme';
 
 import { MediaError } from './states';
+import { Icon } from './ui';
 
 type VideoMedia = Extract<MediaItem, { type: 'video' }>;
 
@@ -46,6 +48,11 @@ export function VideoSurface({
   onReady?: () => void;
 }) {
   const muted = useStore((s) => s.muted);
+  // Settings > App > Autoplay: off means posts wait for a tap (stories always play; their timer needs it).
+  const { autoplay } = useAppPrefs();
+  const [tapped, setTapped] = useState(false);
+  const waitingForTap = !!postId && !autoplay && !tapped;
+  const playing = active && !waitingForTap;
   const source = { uri: media.url, useCaching: !media.url.endsWith('.m3u8') };
   const player = useVideoPlayer(source, (p) => {
     p.loop = true;
@@ -66,9 +73,9 @@ export function VideoSurface({
   }, [status, onReady]);
 
   useEffect(() => {
-    if (active) player.play();
+    if (playing) player.play();
     else player.pause();
-  }, [player, active]);
+  }, [player, playing]);
 
   // VQV: accumulate played time while active; log once per mount.
   const watched = useRef(0);
@@ -104,12 +111,19 @@ export function VideoSurface({
         // Same fit as the video, so nothing jumps when the first frame replaces the poster.
         <Image source={media.posterUrl} style={StyleSheet.absoluteFill} contentFit={contentFit} cachePolicy="memory-disk" transition={IMAGE_TRANSITION_MS} />
       )}
+      {waitingForTap && active && (
+        <Pressable style={styles.tapToPlay} onPress={() => setTapped(true)} accessibilityRole="button" accessibilityLabel="Play video">
+          <View style={styles.playGlyph}>
+            <Icon name="play.fill" size={30} color="#fff" />
+          </View>
+        </Pressable>
+      )}
       {status === 'error' && (
         <MediaError
           detail={error?.message ?? media.url}
           onRetry={() => {
             void player.replaceAsync(source).then(() => {
-              if (active) player.play();
+              if (playing) player.play();
             });
           }}
         />
@@ -154,3 +168,8 @@ function BleedFill({ posterUrl, children }: { posterUrl: string; children: React
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  tapToPlay: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center' },
+  playGlyph: { width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.45)' },
+});

@@ -12,6 +12,7 @@ import {
   type PushDecision,
 } from '@/notifications/preferences';
 import { soundScore, type PlayKind } from '@/audio/plays';
+import { DEFAULT_PRIVACY, privacyProblem, type PrivacySettings } from '@/privacy/settings';
 import { applyReaction, type ReactionKind } from '@/reactions/reactions';
 import { autopayCovers, limitMessage, PLANS, type PlanId } from '@/membership/plans';
 import { canonicalUrl, linkProvider, youtubeId } from '@/share/links';
@@ -33,6 +34,7 @@ import type {
   ProjectMembership,
   PushTokenRegistration,
   SignedIn,
+  Story,
   AutopayMandate,
   Membership,
   MessageAttachment,
@@ -44,6 +46,7 @@ import type {
 } from '../types';
 import {
   ACCOUNTS,
+  CLOSE_FRIENDS_OF,
   COMMENTS,
   SOUNDS,
   generatedAvatarUrl,
@@ -196,8 +199,12 @@ export class MockTardyApi implements TardyApi {
     };
   }
 
-  private canSeeAccount = (account: Account) => canViewAccount(this.viewerId, account, this.world);
-  private canSeePost = (post: Post) => canViewPost(this.viewerId, post, this.world);
+  /** Blocks hide each side from the other everywhere, on top of the privacy policy. */
+  private blockedBy = (viewer: string) => this.blocks.get(viewer) ?? new Set<string>();
+  private canSeeAccount = (account: Account) =>
+    !this.blockedBy(this.viewerId).has(account.id) && canViewAccount(this.viewerId, account, this.world);
+  private canSeePost = (post: Post) =>
+    !this.blockedBy(this.viewerId).has(post.authorId) && canViewPost(this.viewerId, post, this.world);
   private canSeeAccountId = (id: string) => {
     const account = this.accountsById.get(id);
     return account !== undefined && this.canSeeAccount(account);
@@ -473,9 +480,19 @@ export class MockTardyApi implements TardyApi {
     }
   }
 
+  /** A close-friends story reaches only people on the author's list (and the author). */
+  private canSeeStory = (story: Story) =>
+    story.audience !== 'close_friends' || story.authorId === this.viewerId || this.closeFriendsOf(story.authorId).has(this.viewerId);
+
+  private closeFriendsOf(authorId: string): Set<string> {
+    const own = this.closeFriendLists.get(authorId);
+    return own ?? new Set(CLOSE_FRIENDS_OF[authorId] ?? []);
+  }
+
   async stories() {
-    const authors = [...new Set(STORIES.map((s) => s.authorId))].filter(this.canSeeAccountId);
-    const groups = authors.map((authorId) => ({ authorId, stories: STORIES.filter((s) => s.authorId === authorId) }));
+    const visible = STORIES.filter(this.canSeeStory);
+    const authors = [...new Set(visible.map((s) => s.authorId))].filter(this.canSeeAccountId);
+    const groups = authors.map((authorId) => ({ authorId, stories: visible.filter((s) => s.authorId === authorId) }));
     return this.delay(orderStoryTray(groups, Date.now()));
   }
 
@@ -699,6 +716,60 @@ export class MockTardyApi implements TardyApi {
       const ranked = this.ranked(() => true);
       return [...ranked.filter((p) => !this.following.has(p.authorId)), ...ranked.filter((p) => this.following.has(p.authorId))];
     }, false);
+  }
+
+  // Privacy, Close Friends and blocks (per viewer).
+  private privacy = new Map<string, PrivacySettings>();
+  private closeFriendLists = new Map<string, Set<string>>();
+  private blocks = new Map<string, Set<string>>();
+
+  async privacySettings() {
+    this.signedIn();
+    return this.delay(this.privacy.get(this.viewerId) ?? DEFAULT_PRIVACY);
+  }
+
+  async updatePrivacy(patch: Partial<PrivacySettings>) {
+    this.signedIn();
+    const problem = privacyProblem(patch);
+    if (problem) throw new TardyApiError('invalid', problem);
+    const next = { ...(this.privacy.get(this.viewerId) ?? DEFAULT_PRIVACY), ...patch };
+    this.privacy.set(this.viewerId, next);
+    return this.delay(next);
+  }
+
+  async closeFriends() {
+    this.signedIn();
+    const ids = [...this.closeFriendsOf(this.viewerId)];
+    return this.delay(ids.filter(this.canSeeAccountId).map((id) => this.present(this.accountsById.get(id)!)));
+  }
+
+  async setCloseFriend(accountId: string, on: boolean) {
+    this.signedIn();
+    if (accountId === this.viewerId) throw new TardyApiError('invalid', "You're always on your own list.");
+    if (on) this.visibleAccount(accountId);
+    const list = new Set(this.closeFriendsOf(this.viewerId));
+    if (on) list.add(accountId);
+    else list.delete(accountId);
+    this.closeFriendLists.set(this.viewerId, list);
+    return this.delay(undefined);
+  }
+
+  async blockedAccounts() {
+    this.signedIn();
+    return this.delay([...this.blockedBy(this.viewerId)].flatMap((id) => this.accountsById.get(id) ?? []));
+  }
+
+  async setBlocked(accountId: string, blocked: boolean) {
+    this.signedIn();
+    if (accountId === this.viewerId) throw new TardyApiError('invalid', "You can't block yourself.");
+    if (!this.accountsById.has(accountId)) notFound(`account ${accountId}`);
+    const set = new Set(this.blockedBy(this.viewerId));
+    if (blocked) {
+      set.add(accountId);
+      this.following.delete(accountId);
+    } else set.delete(accountId);
+    this.blocks.set(this.viewerId, set);
+    return this.delay(undefined);
   }
 
   async membership() {

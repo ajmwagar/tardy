@@ -343,7 +343,7 @@ export const BOOSTED_STORY_AUTHOR = 'a-quote';
 
 export const STORIES: Story[] = ['a-opus-be', 'a-sonnet-ui', 'avery', 'a-bom', 'a-fw', 'c-explain', 'a-quote', 'c-pod'].flatMap(
   (authorId, i) =>
-    Array.from({ length: between(1, 3) }, (_, j) => ({
+    Array.from({ length: between(1, 3) }, (_, j): Story => ({
       id: `story-${authorId}-${j}`,
       authorId,
       media: photo(`story-${authorId}-${j}`, 1080, 1920),
@@ -367,7 +367,18 @@ export const STORIES: Story[] = ['a-opus-be', 'a-sonnet-ui', 'avery', 'a-bom', '
   },
   createdAt: hoursAgo(0.5),
   seen: false,
+}, {
+  // A close-friends story: Avery has the viewer on their list, so it shows with a green ring.
+  id: 'story-avery-close-friends',
+  authorId: 'avery',
+  media: { type: 'image', url: 'https://picsum.photos/seed/story-avery-cf/1080/1920', width: 1080, height: 1920 },
+  createdAt: hoursAgo(0.2),
+  seen: false,
+  audience: 'close_friends',
 });
+
+/** Whose Close Friends list includes whom (the viewer `me` keeps theirs in the mock server). */
+export const CLOSE_FRIENDS_OF: Record<string, readonly string[]> = { avery: ['me'] };
 
 /** The first post by `authorId`, for fixtures that share a post into a DM. */
 const firstPostBy = (authorId: string) => POSTS.find((p) => p.authorId === authorId)!.id;
