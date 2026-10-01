@@ -99,6 +99,10 @@ export class MockTardyApi implements TardyApi {
   private following: Set<string>;
   private history: EngagementAction[] = [];
   private messageLog: Message[] = [...MESSAGES];
+  /** Per (viewer, thread): index into the thread's messages of the last one read. */
+  private threadReadThrough = new Map<string, number>();
+  /** Per viewer: notifications at or before this time are read. */
+  private notificationsReadThrough = new Map<string, number>();
   private snapshots = new Map<string, Post[]>();
   private snapshotSeq = 0;
   /** By token: a device belongs to whoever registered it last (sign-in moves it). */
@@ -339,10 +343,17 @@ export class MockTardyApi implements TardyApi {
     return this.delay(authors.map((authorId) => ({ authorId, stories: STORIES.filter((s) => s.authorId === authorId) })));
   }
 
+  /** Unread = messages from others after the viewer's watermark; fixtures seed the watermark. */
+  private unreadIn(thread: (typeof THREADS)[number], messages: Message[]) {
+    const key = `${this.viewerId}:${thread.id}`;
+    const through = this.threadReadThrough.get(key) ?? messages.length - 1 - thread.unreadCount;
+    return messages.slice(through + 1).filter((m) => m.senderId !== this.viewerId).length;
+  }
+
   async threads() {
     const threads = this.visibleThreads().map((t) => {
       const messages = this.messageLog.filter((m) => m.threadId === t.id);
-      return { ...t, lastMessage: this.presentMessage(messages[messages.length - 1]) };
+      return { ...t, lastMessage: this.presentMessage(messages[messages.length - 1]), unreadCount: this.unreadIn(t, messages) };
     });
     return this.delay(threads.sort((a, b) => Date.parse(b.lastMessage.createdAt) - Date.parse(a.lastMessage.createdAt)));
   }
@@ -362,7 +373,44 @@ export class MockTardyApi implements TardyApi {
       createdAt: new Date().toISOString(),
     };
     this.messageLog.push(message);
+    this.scheduleAgentReply(threadId);
     return this.delay(message);
+  }
+
+  async markThreadRead(threadId: string, throughMessageId: string) {
+    this.visibleThread(threadId);
+    const messages = this.messageLog.filter((m) => m.threadId === threadId);
+    const index = messages.findIndex((m) => m.id === throughMessageId);
+    if (index < 0) notFound(`message ${throughMessageId} in ${threadId}`);
+    const key = `${this.viewerId}:${threadId}`;
+    this.threadReadThrough.set(key, Math.max(index, this.threadReadThrough.get(key) ?? -1));
+    return this.delay(undefined);
+  }
+
+  /**
+   * Mock only: agents answer DMs a moment later with a status-flavored reply, so the thread
+   * screen's polling has something to pick up. The real server relays the agent's own message.
+   */
+  private scheduleAgentReply(threadId: string) {
+    const thread = THREADS.find((t) => t.id === threadId);
+    const other = thread?.participantIds.find((id) => id !== this.viewerId);
+    if (!other || this.accountsById.get(other)?.kind !== 'agent') return;
+    const replies = [
+      'On it. I will post an update when it ships.',
+      'Copy. Running the tests now.',
+      'Good call. Opening a PR for that.',
+      'Blocked on review, can you take a look?',
+    ];
+    const count = this.messageLog.filter((m) => m.threadId === threadId).length;
+    setTimeout(() => {
+      this.messageLog.push({
+        id: `${threadId}-m${this.messageLog.length}`,
+        threadId,
+        senderId: other,
+        text: replies[count % replies.length],
+        createdAt: new Date().toISOString(),
+      });
+    }, 1500);
   }
 
   async notifications() {
@@ -372,7 +420,15 @@ export class MockTardyApi implements TardyApi {
       const post = this.posts.get(n.postId);
       return post !== undefined && this.canSeePost(post);
     });
-    return this.delay(visible);
+    const through = this.notificationsReadThrough.get(this.viewerId) ?? -Infinity;
+    return this.delay(visible.map((n) => (n.read || Date.parse(n.createdAt) > through ? n : { ...n, read: true })));
+  }
+
+  async markNotificationsRead(through: string) {
+    const at = Date.parse(through);
+    if (Number.isNaN(at)) throw new Error(`markNotificationsRead: invalid time ${through}`);
+    this.notificationsReadThrough.set(this.viewerId, Math.max(at, this.notificationsReadThrough.get(this.viewerId) ?? -Infinity));
+    return this.delay(undefined);
   }
 
   async registerPushToken(registration: PushTokenRegistration) {

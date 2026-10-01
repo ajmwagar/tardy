@@ -6,6 +6,7 @@ import { useEffect, useRef } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { TardyVideoView } from '../../modules/tardy-video';
 import type { MediaItem } from '@/data/types';
 import { logEngagement, useStore } from '@/state/store';
 
@@ -79,8 +80,11 @@ export function VideoSurface({
 
   return (
     <View style={StyleSheet.absoluteFill}>
-      {fullBleed ? (
-        // A nested provider measures *this* view's safe area (tab bar included), not the window's.
+      {fullBleed && TardyVideoView ? (
+        // Native edge-to-edge view (dev builds): live blurred backdrop, no safe-area bands.
+        <TardyVideoView player={player} style={StyleSheet.absoluteFill} />
+      ) : fullBleed ? (
+        // Expo Go fallback. A nested provider measures *this* view's safe area (tab bar included), not the window's.
         <SafeAreaProvider style={StyleSheet.absoluteFill}>
           <BleedFill posterUrl={media.posterUrl}>{video}</BleedFill>
         </SafeAreaProvider>
