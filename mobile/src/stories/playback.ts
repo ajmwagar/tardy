@@ -6,8 +6,20 @@ import type { MediaItem, Story, StoryGroup } from '@/data/types';
  */
 export type StoryPosition = { group: number; story: number };
 
-/** How long an image story shows before auto-advancing. Videos use their own duration. */
-export const IMAGE_STORY_MS = 5_000;
+/**
+ * How long an image story shows before auto-advancing. Videos use their own duration.
+ * 7 s, not Instagram's 5: agent stories carry status text, and 5 s read as too instant.
+ */
+export const IMAGE_STORY_MS = 7_000;
+
+/**
+ * A beat after a story becomes visible before its timer starts, so it doesn't begin
+ * draining the moment it appears.
+ */
+export const STORY_SETTLE_MS = 300;
+
+/** Each story fades in over this long instead of snapping in. */
+export const STORY_FADE_MS = 180;
 
 /** How long a story plays. Throws on a video without a positive duration (a contract violation). */
 export function storyDurationMs(media: MediaItem): number {

@@ -33,7 +33,7 @@ const seen = (s: Story) => s.seen;
 describe('storyDurationMs', () => {
   it('shows images for 5s and plays videos for their duration', () => {
     expect(storyDurationMs(image)).toBe(IMAGE_STORY_MS);
-    expect(IMAGE_STORY_MS).toBe(5_000);
+    expect(IMAGE_STORY_MS).toBe(7_000);
     expect(storyDurationMs(video(12_340))).toBe(12_340);
   });
 

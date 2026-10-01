@@ -2,7 +2,17 @@ import { Image } from 'expo-image';
 import { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, { cancelAnimation, Easing, useAnimatedStyle, useSharedValue, withSpring, withTiming, type SharedValue } from 'react-native-reanimated';
+import Animated, {
+  cancelAnimation,
+  Easing,
+  FadeIn,
+  useAnimatedStyle,
+  useSharedValue,
+  withDelay,
+  withSpring,
+  withTiming,
+  type SharedValue,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { scheduleOnRN } from 'react-native-worklets';
 
@@ -10,7 +20,7 @@ import { openWebCheckout } from '@/config';
 import type { Story, StoryGroup } from '@/data/types';
 import { markStoriesSeen, useAccount } from '@/state/store';
 import { BOOSTED_LABEL, isGroupBoosted } from '@/stories/boost';
-import { nextPosition, previousPosition, storyDurationMs, tapAction, type StoryPosition } from '@/stories/playback';
+import { nextPosition, previousPosition, STORY_FADE_MS, STORY_SETTLE_MS, storyDurationMs, tapAction, type StoryPosition } from '@/stories/playback';
 import { colors, IMAGE_TRANSITION_MS, radius, timeAgo } from '@/theme';
 
 import { MediaError } from './states';
@@ -112,12 +122,17 @@ function StoryPage({
   }, [story.id]);
 
   // The timer: runs while playing, resumes from where it stopped, advances when it fills.
+  // A fresh story waits a beat after it's visible before the timer starts draining.
   useEffect(() => {
     if (!playing) return;
+    const fresh = progress.get() === 0;
     progress.set(
-      withTiming(1, { duration: (1 - progress.get()) * duration, easing: Easing.linear }, (finished) => {
-        if (finished) scheduleOnRN(onNext);
-      }),
+      withDelay(
+        fresh ? STORY_SETTLE_MS : 0,
+        withTiming(1, { duration: (1 - progress.get()) * duration, easing: Easing.linear }, (finished) => {
+          if (finished) scheduleOnRN(onNext);
+        }),
+      ),
     );
     return () => cancelAnimation(progress);
   }, [playing, duration, progress, onNext]);
@@ -142,7 +157,7 @@ function StoryPage({
   const markReady = useCallback(() => setReady(true), []);
 
   return (
-    <View style={styles.fill}>
+    <Animated.View style={styles.fill} entering={FadeIn.duration(STORY_FADE_MS)}>
       <GestureDetector gesture={Gesture.Race(hold, tap)}>
         <View style={styles.fill} collapsable={false}>
           <StoryMedia story={story} active={!held && !paused} onReady={markReady} />
@@ -150,7 +165,7 @@ function StoryPage({
       </GestureDetector>
       {/* Chrome hides while holding, like Instagram, so you can look at the media. */}
       <StoryHeader group={group} index={index} progress={progress} hidden={held} onClose={onClose} />
-    </View>
+    </Animated.View>
   );
 }
 
