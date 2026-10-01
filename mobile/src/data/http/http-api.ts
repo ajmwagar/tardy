@@ -80,7 +80,10 @@ const STATUS_CODES: Record<number, TardyApiErrorCode> = {
   422: 'invalid',
 };
 
-const API_ERROR_CODES: readonly string[] = ['forbidden', 'not_found', 'unauthenticated', 'invalid', 'conflict'];
+const API_ERROR_CODES: readonly string[] = ['forbidden', 'not_found', 'unauthenticated', 'invalid', 'conflict', 'consent_required'];
+
+/** Today's server says "explicit search AI consent is required" with a plain 403; the contract asks for the code. */
+const isConsentMessage = (status: number, message: string | null) => status === 403 && !!message && /\bconsent\b/i.test(message);
 
 /**
  * The error for a non-2xx response. Bodies may be the app contract's
@@ -98,7 +101,7 @@ export function errorForResponse(route: string, status: number, bodyText: string
   }
   const serverMessage = typeof body?.message === 'string' ? body.message : typeof body?.error === 'string' ? body.error : null;
   const bodyCode = typeof body?.code === 'string' && API_ERROR_CODES.includes(body.code) ? (body.code as TardyApiErrorCode) : null;
-  const code = bodyCode ?? STATUS_CODES[status];
+  const code = bodyCode ?? (isConsentMessage(status, serverMessage) ? 'consent_required' : STATUS_CODES[status]);
   if (status === 404 && serverMessage === null && bodyCode === null) {
     return new TardyApiError('not_found', `${route} is not implemented by this server (404 with no error body); see contracts/app-api-addendum.md`);
   }
@@ -482,6 +485,19 @@ export class HttpTardyApi implements TardyApi {
     await this.request('POST', `/v1/audio/tracks/${segment(trackId)}/usage`, {
       body: { event_id: play.eventId, kind: play.kind, listen_ms: play.listenMs, ...(play.postId && { post_id: play.postId }) },
     });
+  }
+
+  async searchTardies(query: string, limit = 30): Promise<Post[]> {
+    const rows = await this.request('POST', '/v1/search', { body: { query, limit }, decode: array(W.searchResult) });
+    return rows.map((r) => r.post);
+  }
+
+  async allowAiSearch(): Promise<void> {
+    await this.request('POST', '/v1/ai-consents/search');
+  }
+
+  explore(cursor: string | null): Promise<Page<Post>> {
+    return this.request('GET', '/v1/explore', { query: { cursor: cursor ?? undefined }, decode: W.page(W.post) });
   }
 
   membership(): Promise<Membership> {

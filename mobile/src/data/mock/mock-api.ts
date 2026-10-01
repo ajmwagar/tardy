@@ -661,6 +661,43 @@ export class MockTardyApi implements TardyApi {
     return this.delay(undefined);
   }
 
+  /** Viewers who opted in to AI-ranked search. */
+  private aiSearchConsent = new Set<string>();
+
+  async allowAiSearch() {
+    this.aiSearchConsent.add(this.viewerId);
+    return this.delay(undefined);
+  }
+
+  /**
+   * Mock ranking: tardies whose caption, author handle or project match every word of the
+   * query, most liked first. The server reranks with an AI model instead.
+   */
+  async searchTardies(query: string, limit = 30) {
+    const q = query.trim().toLowerCase();
+    if (!q) throw new TardyApiError('invalid', 'search query must not be empty');
+    if (limit < 1 || limit > 50) throw new TardyApiError('invalid', 'limit must be between 1 and 50');
+    if (!this.aiSearchConsent.has(this.viewerId)) throw new TardyApiError('consent_required', 'explicit search AI consent is required');
+    const words = q.split(/\s+/);
+    const text = (p: Post) =>
+      [p.caption, this.accountsById.get(p.authorId)?.handle, p.projectId && this.accountsById.get(p.projectId)?.name].join(' ').toLowerCase();
+    const hits = [...this.posts.values()]
+      .filter(this.canSeePost)
+      .filter((p) => words.every((w) => text(p).includes(w)))
+      .sort((a, b) => b.likeCount - a.likeCount)
+      .slice(0, limit)
+      .map(this.presentPost);
+    return this.delay(hits);
+  }
+
+  async explore(cursor: string | null) {
+    // Out-of-network first (that's what Explore is for), then the rest, each by rank.
+    return this.page('explore', cursor, () => {
+      const ranked = this.ranked(() => true);
+      return [...ranked.filter((p) => !this.following.has(p.authorId)), ...ranked.filter((p) => this.following.has(p.authorId))];
+    }, false);
+  }
+
   async membership() {
     this.signedIn();
     return this.delay(this.membershipNow());

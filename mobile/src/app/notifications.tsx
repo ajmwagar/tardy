@@ -1,10 +1,9 @@
 import { FlashList } from '@shopify/flash-list';
 import { Image } from 'expo-image';
-import { router, useFocusEffect } from 'expo-router';
+import { router, Stack, useFocusEffect } from 'expo-router';
 import type { SFSymbol } from 'expo-symbols';
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { EmptyState, ErrorState, Pulse, SkeletonBlock } from '@/components/states';
 import { Avatar, haptic, Icon, IconButton, PressableScale } from '@/components/ui';
@@ -13,7 +12,7 @@ import { payloadFor } from '@/notifications/payload';
 import { routeForPayload } from '@/notifications/routing';
 import { groupNotifications, readThrough, type TrayFilter } from '@/notifications/tray';
 import { api, ensureAccounts, refreshUnread, toggleFollowing, useAccount, useIsFollowing } from '@/state/store';
-import { colors, IMAGE_TRANSITION_MS, radius, status as statusStyles, timeAgo, type } from '@/theme';
+import { colors, IMAGE_TRANSITION_MS, radius, status as statusStyles, timeAgo } from '@/theme';
 
 /** The small badge on the actor's avatar: what kind of thing happened, at a glance. */
 const KIND_BADGE: Record<NotificationKind, { symbol: SFSymbol; color: string }> = {
@@ -116,7 +115,6 @@ function TraySkeleton() {
 }
 
 export default function NotificationsScreen() {
-  const insets = useSafeAreaInsets();
   const [list, setList] = useState<Notification[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<TrayFilter>('all');
@@ -177,11 +175,15 @@ export default function NotificationsScreen() {
   );
 
   return (
-    <View style={[styles.screen, { paddingTop: insets.top }]}>
-      <View style={styles.bar}>
-        <Text style={type.title} numberOfLines={1} maxFontSizeMultiplier={1.3} accessibilityRole="header">Activity</Text>
-        <IconButton icon="slider.horizontal.3" size={22} label="Notification settings" onPress={() => router.push('/settings')} style={styles.edgeButton} />
-      </View>
+    <View style={styles.screen}>
+      {/* A pushed screen now (opened from the alarm at the top of Home): native header with back. */}
+      <Stack.Screen
+        options={{
+          headerRight: () => (
+            <IconButton icon="slider.horizontal.3" size={22} label="Notification settings" onPress={() => router.push('/settings')} />
+          ),
+        }}
+      />
 
       {error && !list ? (
         <ErrorState message="The alarms didn't go off. Ironic." detail={error} onRetry={load} />
@@ -224,8 +226,6 @@ export default function NotificationsScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
   content: { paddingBottom: 120 },
-  bar: { height: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16 },
-  edgeButton: { marginRight: -10 },
   chips: { paddingHorizontal: 16, paddingVertical: 8, gap: 8 },
   chip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: radius.pill, backgroundColor: colors.elevated },
   chipActive: { backgroundColor: colors.text },

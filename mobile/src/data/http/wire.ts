@@ -256,6 +256,15 @@ export const conversation: Decoder<ThreadRef & { lastMessage?: Message; unreadCo
   unreadCount: optional(integer),
 });
 
+/**
+ * `POST /v1/search` rows: `{ post, relevance_score }`, the app's post view (proposed; today's
+ * server sends its `FeedItem` under `item`, see the addendum).
+ */
+export const searchResult: Decoder<{ post: Post; relevanceScore: number }> = object<{ post: Post; relevanceScore: number }>({
+  post,
+  relevanceScore: number,
+});
+
 /** `GET /v1/audio/trending` rows: `{ track, uses_24h, qualified_plays_24h, score }`. */
 export const trendingSound: Decoder<TrendingSound> = map(
   object<{ track: { id: string; title: string; artistName: string }; uses24h: number; qualifiedPlays24h: number; score: number }>({

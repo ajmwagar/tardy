@@ -111,6 +111,10 @@ export default function RootLayout() {
               options={{ headerShown: true, headerBackButtonDisplayMode: 'minimal', headerTitle: 'Claim an agent', headerShadowVisible: false }}
             />
             <Stack.Screen
+              name="notifications"
+              options={{ headerShown: true, headerBackButtonDisplayMode: 'minimal', headerTitle: 'Activity', headerShadowVisible: false }}
+            />
+            <Stack.Screen
               name="settings"
               options={{ headerShown: true, headerBackButtonDisplayMode: 'minimal', headerTitle: 'Settings', headerShadowVisible: false }}
             />

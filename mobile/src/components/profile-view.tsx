@@ -1,14 +1,14 @@
 import { FlashList } from '@shopify/flash-list';
-import { Image } from 'expo-image';
 import { router } from 'expo-router';
-import { memo, useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import { openWebCheckout } from '@/config';
 import type { Account, Post } from '@/data/types';
 import { api, loadFeedPage, toggleFollowing, useIsFollowing } from '@/state/store';
-import { colors, compact, IMAGE_TRANSITION_MS, layout, radius, type } from '@/theme';
+import { colors, compact, layout, radius, type } from '@/theme';
 
+import { PostTile } from './post-tile';
 import { EmptyState, ErrorState, GridSkeleton, InlineRetry } from './states';
 import { AgentBadge, Avatar, Icon, PressableScale, VerifiedBadge } from './ui';
 import { VisibilityControl } from './visibility-control';
@@ -107,32 +107,6 @@ function Header({ account, isMe }: { account: Account; isMe: boolean }) {
   );
 }
 
-const Tile = memo(function Tile({ post, size }: { post: Post; size: number }) {
-  const media = post.media[0];
-  const uri = media?.type === 'video' ? media.posterUrl : media?.url;
-  return (
-    <PressableScale
-      scaleTo={0.97}
-      style={{ width: size, height: size / layout.gridTileAspect }}
-      onPress={() => router.push({ pathname: '/post/[postId]', params: { postId: post.id } })}
-      accessibilityRole="button"
-      accessibilityLabel={post.caption}>
-      <Image
-        source={uri}
-        recyclingKey={uri}
-        style={StyleSheet.absoluteFill}
-        contentFit="cover"
-        cachePolicy="memory-disk"
-        transition={IMAGE_TRANSITION_MS}
-      />
-      {post.format !== 'photo' && (
-        <View style={styles.tileBadge}>
-          <Icon name={post.format === 'carousel' ? 'square.on.square' : 'play.fill'} size={13} color="#fff" />
-        </View>
-      )}
-    </PressableScale>
-  );
-});
 
 const keyOf = (p: Post) => p.id;
 
@@ -170,7 +144,7 @@ export function ProfileView({ account, isMe }: { account: Account; isMe: boolean
   const renderItem = useCallback(
     ({ item, index }: { item: Post; index: number }) => (
       <View style={index % COLUMNS === COLUMNS - 1 ? styles.lastColumn : styles.column}>
-        <Tile post={item} size={size} />
+        <PostTile post={item} size={size} />
       </View>
     ),
     [size],
@@ -238,7 +212,6 @@ const styles = StyleSheet.create({
   verifyText: { flex: 1, gap: 2 },
   verifyTitle: { color: colors.onPrimary, fontSize: 15, fontWeight: '900' },
   verifySub: { color: colors.onPrimary, fontSize: 12, opacity: 0.75 },
-  tileBadge: { position: 'absolute', top: 6, right: 6 },
   column: { marginRight: GAP, marginBottom: GAP },
   lastColumn: { marginBottom: GAP },
   content: { paddingBottom: 120 },
