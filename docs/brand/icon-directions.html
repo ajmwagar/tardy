@@ -1,0 +1,112 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+@font-face{font-family:R;src:url(file:///System/Library/Fonts/SFNSRounded.ttf);font-weight:100 1000}
+:root{--bg:#0A0A0D;--y:#FFC21A;--r:#FF2D3D;--ink:#14110A;--t:#F7F7FA;--m:#A1A1AE}
+*{margin:0;box-sizing:border-box}
+body{width:2400px;background:var(--bg);color:var(--t);font-family:R,sans-serif;padding:90px 100px}
+h1{font-size:64px;font-weight:900;letter-spacing:-2px}
+h1 i{display:inline-block;width:18px;height:18px;border-radius:50%;background:var(--r);margin-left:6px}
+.sub{color:var(--m);font-size:30px;margin-top:10px}
+.row{display:flex;gap:90px;margin-top:70px}
+.card{flex:1}
+.lab{font-size:34px;font-weight:800;margin-top:34px}
+.lab b{color:var(--y)}
+.desc{color:var(--m);font-size:24px;margin-top:10px;line-height:1.4}
+.icon{width:600px;height:600px;border-radius:134px;overflow:hidden;position:relative;box-shadow:0 30px 80px rgba(0,0,0,.6)}
+.minis{display:flex;gap:28px;margin-top:30px;align-items:flex-end}
+.mini{border-radius:22.5%;overflow:hidden}
+.mini svg,.icon svg{width:100%;height:100%;display:block}
+.home{margin-top:80px;display:flex;gap:90px}
+.phone{width:680px;height:420px;border-radius:50px;background:linear-gradient(160deg,#2a2233,#0d0d14);padding:44px;display:grid;grid-template-columns:repeat(4,1fr);gap:34px 20px}
+.app{text-align:center;font-size:18px;color:#ddd}
+.app div{width:110px;height:110px;border-radius:25px;margin:0 auto 10px;background:#333}
+.splash{width:240px;height:420px;border-radius:40px;background:var(--bg);border:3px solid #26262F;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:56px;letter-spacing:-2px}
+.splash i{display:inline-block;width:14px;height:14px;border-radius:50%;background:var(--r);margin-left:4px;margin-top:22px}
+.sw{display:flex;gap:16px;margin-top:20px}
+.sw div{width:120px;height:120px;border-radius:24px;display:flex;align-items:flex-end;padding:12px;font-size:17px;font-weight:700}
+</style></head><body>
+<h1>tardy<i></i> — app icon directions</h1>
+<div class="sub">Built on the app's own theme: near-black #0A0A0D, Tardy yellow #FFC21A, alarm red #FF2D3D, SF Rounded Black.</div>
+
+<svg width="0" height="0" style="position:absolute">
+ <defs>
+  <!-- A: wordmark t -->
+  <symbol id="A" viewBox="0 0 1024 1024">
+   <rect width="1024" height="1024" fill="#FFC21A"/>
+   <text x="470" y="770" text-anchor="middle" font-family="R" font-weight="900" font-size="760" fill="#14110A" letter-spacing="-20">t</text>
+   <circle cx="735" cy="700" r="78" fill="#FF2D3D"/>
+  </symbol>
+  <!-- B: alarm clock with a play button face -->
+  <symbol id="B" viewBox="0 0 1024 1024">
+   <rect width="1024" height="1024" fill="#0A0A0D"/>
+   <g transform="rotate(-8 512 540)">
+    <path d="M250 330 A150 150 0 0 1 430 215" stroke="#FFC21A" stroke-width="70" fill="none" stroke-linecap="round"/>
+    <path d="M774 330 A150 150 0 0 0 594 215" stroke="#FFC21A" stroke-width="70" fill="none" stroke-linecap="round"/>
+    <line x1="350" y1="790" x2="300" y2="860" stroke="#FFC21A" stroke-width="56" stroke-linecap="round"/>
+    <line x1="674" y1="790" x2="724" y2="860" stroke="#FFC21A" stroke-width="56" stroke-linecap="round"/>
+    <circle cx="512" cy="560" r="290" fill="#FFC21A"/>
+    <path d="M455 445 L455 675 L645 560 Z" fill="#14110A" stroke="#14110A" stroke-width="40" stroke-linejoin="round"/>
+   </g>
+   <circle cx="790" cy="230" r="70" fill="#FF2D3D"/>
+  </symbol>
+  <!-- C: snail whose shell is a play button -->
+  <symbol id="C" viewBox="0 0 1024 1024">
+   <rect width="1024" height="1024" fill="#FFC21A"/>
+   <path d="M150 760 Q150 690 230 690 L820 690 Q880 690 880 750 Q880 790 840 790 L210 790 Q150 790 150 760 Z" fill="#14110A"/>
+   <path d="M760 700 Q770 560 820 470" stroke="#14110A" stroke-width="40" fill="none" stroke-linecap="round"/>
+   <path d="M820 700 Q850 580 900 520" stroke="#14110A" stroke-width="40" fill="none" stroke-linecap="round"/>
+   <circle cx="820" cy="462" r="34" fill="#14110A"/><circle cx="902" cy="512" r="34" fill="#14110A"/>
+   <circle cx="455" cy="480" r="270" fill="#14110A"/>
+   <path d="M400 375 L400 585 L575 480 Z" fill="#FFC21A" stroke="#FFC21A" stroke-width="36" stroke-linejoin="round"/>
+   <circle cx="660" cy="250" r="66" fill="#FF2D3D"/>
+  </symbol>
+ </defs>
+</svg>
+
+<div class="row">
+ <div class="card">
+  <div class="icon"><svg><use href="#A"/></svg></div>
+  <div class="minis"><div class="mini" style="width:180px;height:180px"><svg><use href="#A"/></svg></div><div class="mini" style="width:87px;height:87px"><svg><use href="#A"/></svg></div><div class="mini" style="width:40px;height:40px"><svg><use href="#A"/></svg></div></div>
+  <div class="lab"><b>A</b> · The wordmark t</div>
+  <div class="desc">Black rounded "t" on Tardy yellow, with the alarm-red dot from the in-app wordmark. Simplest; reads at any size; one brand mark everywhere.</div>
+ </div>
+ <div class="card">
+  <div class="icon"><svg><use href="#B"/></svg></div>
+  <div class="minis"><div class="mini" style="width:180px;height:180px"><svg><use href="#B"/></svg></div><div class="mini" style="width:87px;height:87px"><svg><use href="#B"/></svg></div><div class="mini" style="width:40px;height:40px"><svg><use href="#B"/></svg></div></div>
+  <div class="lab"><b>B</b> · The alarm reel</div>
+  <div class="desc">An alarm clock whose face is a play button: "tardy" + reels in one shape, and it echoes the app's alarm reaction. Red dot = the notification.</div>
+ </div>
+ <div class="card">
+  <div class="icon"><svg><use href="#C"/></svg></div>
+  <div class="minis"><div class="mini" style="width:180px;height:180px"><svg><use href="#C"/></svg></div><div class="mini" style="width:87px;height:87px"><svg><use href="#C"/></svg></div><div class="mini" style="width:40px;height:40px"><svg><use href="#C"/></svg></div></div>
+  <div class="lab"><b>C</b> · The late snail</div>
+  <div class="desc">A snail with a play-button shell. The funniest and most mascot-able (stickers, merch, a loading animation), but the busiest at small sizes.</div>
+ </div>
+</div>
+
+<div class="home">
+ <div class="phone">
+  <div class="app"><div style="background:#34c759"></div>Messages</div>
+  <div class="app"><div><svg viewBox="0 0 1024 1024" style="width:110px;height:110px;border-radius:25px"><use href="#A"/></svg></div>tardy</div>
+  <div class="app"><div><svg viewBox="0 0 1024 1024" style="width:110px;height:110px;border-radius:25px"><use href="#B"/></svg></div>tardy</div>
+  <div class="app"><div><svg viewBox="0 0 1024 1024" style="width:110px;height:110px;border-radius:25px"><use href="#C"/></svg></div>tardy</div>
+  <div class="app"><div style="background:linear-gradient(#feda75,#d62976,#4f5bd5)"></div>Instagram</div>
+  <div class="app"><div style="background:#111;border:2px solid #333"></div>TikTok</div>
+  <div class="app"><div style="background:#0a84ff"></div>Mail</div>
+  <div class="app"><div style="background:#ff9500"></div>Notes</div>
+ </div>
+ <div>
+  <div class="splash">tardy<i></i></div>
+  <div class="desc" style="width:240px">Splash: wordmark on #0A0A0D, same for every direction.</div>
+ </div>
+ <div>
+  <div class="lab" style="margin-top:0">Palette (from mobile/src/theme)</div>
+  <div class="sw">
+   <div style="background:#0A0A0D;border:2px solid #26262F">bg</div>
+   <div style="background:#FFC21A;color:#14110A">primary</div>
+   <div style="background:#FF2D3D">alarm</div>
+   <div style="background:#2BE07B;color:#0A0A0D">shipped</div>
+   <div style="background:#5AB4FF;color:#0A0A0D">review</div>
+  </div>
+ </div>
+</div>
+</body></html>

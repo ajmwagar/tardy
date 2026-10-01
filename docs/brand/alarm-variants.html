@@ -1,0 +1,81 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+@font-face{font-family:R;src:url(file:///System/Library/Fonts/SFNSRounded.ttf);font-weight:100 1000}
+*{margin:0;box-sizing:border-box}
+body{width:2480px;background:#0A0A0D;color:#F7F7FA;font-family:R,sans-serif;padding:70px 80px}
+h1{font-size:56px;font-weight:900;letter-spacing:-2px}
+h1 i{display:inline-block;width:16px;height:16px;border-radius:50%;background:#FF2D3D;margin-left:5px}
+.sub{color:#A1A1AE;font-size:26px;margin:8px 0 50px}
+#grid{display:grid;grid-template-columns:repeat(10,1fr);gap:46px 26px}
+.c{text-align:left}
+.ic{width:200px;height:200px;border-radius:45px;overflow:hidden;box-shadow:0 0 0 2px #2E2E38}
+.ic svg,.m svg{width:100%;height:100%;display:block}
+.minis{display:flex;gap:12px;align-items:flex-end;margin-top:12px}
+.m{border-radius:22.5%;overflow:hidden;box-shadow:0 0 0 1px #2E2E38}
+.n{font-size:22px;font-weight:800;margin-top:10px}
+.n b{color:#FFC21A;margin-right:6px}
+</style></head><body>
+<h1>the alarm reel<i></i> — 50 variations</h1>
+<div class="sub">One parametric drawing. Each tile shows the icon at 200px, then at home-screen (60px) and notification (29px) size.</div>
+<div id="grid"></div>
+<script src="alarm-icon.js"></script>
+<script>
+const inv={bg:'Y',body:K,ink:Y};
+const V=[
+ ['Classic',{}],
+ ['Upright',{tilt:0}],
+ ['Inverted',inv],
+ ['Red field',{bg:'R',dot:'none'}],
+ ['Paper',{bg:'W',body:K,ink:Y}],
+ ['Sunset',{bg:'G',body:K,ink:Y}],
+ ['Story ring',{bg:'S',body:K,ink:Y,dotColor:W}],
+ ['Outline',{outline:true,stroke:Y}],
+ ['Outline on yellow',{bg:'Y',outline:true,stroke:K,fill:Y}],
+ ['Dome bells',{bells:'dome'}],
+ ['Dome, inverted',{...inv,bells:'dome'}],
+ ['Single bell',{bells:'single',tilt:0}],
+ ['Ears',{bells:'ears',legs:'feet',tilt:0}],
+ ['Nubs',{bells:'nubs',tilt:0}],
+ ['Feet',{legs:'feet'}],
+ ['Floating',{legs:'none'}],
+ ['Ringing',{ring:true,tilt:0}],
+ ['Ringing, inverted',{...inv,ring:true,tilt:0}],
+ ['Ringing wild',{ring:true,tilt:14}],
+ ['Big play',{face:'bigplay'}],
+ ['Clock hands',{face:'hands',hands:[0,110]}],
+ ['Running late',{face:'hands',hands:[60,260]}],
+ ['Watch progress',{face:'progress'}],
+ ['Dial + play',{face:'ticks'}],
+ ['Snoozing',{face:'sleepy',tilt:0}],
+ ['Good morning',{face:'happy',tilt:0}],
+ ['Swipe up',{face:'swipe'}],
+ ['Liked',{face:'heart',dot:'none'}],
+ ['Podcast',{face:'bars'}],
+ ['Recording',{face:'record',dot:'none'}],
+ ['Alarm!',{face:'bang',dot:'none'}],
+ ['1 update',{dot:'badge'}],
+ ['Red bell',{bellColor:R,dot:'none'}],
+ ['Squircle',{shape:'squircle'}],
+ ['Squircle, inverted',{...inv,shape:'squircle'}],
+ ['Phone clock',{shape:'phone',tilt:0}],
+ ['Phone, inverted',{...inv,shape:'phone',tilt:0}],
+ ['Phone outline',{shape:'phone',outline:true,stroke:Y,tilt:0}],
+ ['Zoomed',{scale:1.28,dot:'none'}],
+ ['Tiny',{scale:.72}],
+ ['Shadow',{shadow:true,tilt:0}],
+ ['Golden body',{bodyGrad:true}],
+ ['Golden ringing',{bodyGrad:true,ring:true,tilt:0,bg:'N'}],
+ ['Real clock',{...inv,face:'clock',hands:[300,120],tilt:0}],
+ ['Progress, inverted',{...inv,face:'progress'}],
+ ['Snooze, inverted',{...inv,face:'sleepy',tilt:0}],
+ ['Podcast on red',{bg:'R',face:'bars',dot:'none'}],
+ ['Swipe at sunset',{bg:'G',body:K,ink:Y,face:'swipe'}],
+ ['Mono (themed)',{bg:'K',body:W,ink:K,dot:'none'}],
+ ['Minimal',{bells:'nubs',legs:'none',tilt:0,face:'bigplay'}],
+];
+const grid=document.getElementById('grid');
+V.forEach(([name,cfg],i)=>{
+  const svg=icon(cfg);
+  grid.insertAdjacentHTML('beforeend',`<div class="c"><div class="ic">${svg}</div><div class="minis"><div class="m" style="width:60px;height:60px">${icon(cfg)}</div><div class="m" style="width:29px;height:29px">${icon(cfg)}</div></div><div class="n"><b>${i+1}</b>${name}</div></div>`);
+});
+window.VARIANTS=V.length;
+</script></body></html>
