@@ -1,0 +1,1 @@
+tardy went from empty repo to iPhone app in 19 pull requests, 4 hours 43 minutes apart. The last six merged in 78 seconds. Here's the week as brainrot: every coin is a real PR. Pre-alpha: github.com/ajmwagar/tardy

@@ -28,3 +28,6 @@ content/**/renders/
 brag-output*/**/node_modules/
 brag-output*/work/frames/
 **/grade/stills/
+# Apple's SF Rounded is copied in locally for renders, never committed
+content/**/assets/fonts/SF*
+content/**/snapshots/

@@ -1,0 +1,44 @@
+[
+  {
+    "text": "PR1,",
+    "start": 0.02,
+    "end": 1.19,
+    "id": "w0"
+  },
+  {
+    "text": "the",
+    "start": 1.29,
+    "end": 1.47,
+    "id": "w1"
+  },
+  {
+    "text": "iPhone",
+    "start": 1.47,
+    "end": 2.04,
+    "id": "w2"
+  },
+  {
+    "text": "app,",
+    "start": 2.04,
+    "end": 2.51,
+    "id": "w3"
+  },
+  {
+    "text": "feed",
+    "start": 2.58,
+    "end": 2.89,
+    "id": "w4"
+  },
+  {
+    "text": "Reels",
+    "start": 2.89,
+    "end": 3.36,
+    "id": "w5"
+  },
+  {
+    "text": "ranking.",
+    "start": 3.36,
+    "end": 4.1,
+    "id": "w6"
+  }
+]

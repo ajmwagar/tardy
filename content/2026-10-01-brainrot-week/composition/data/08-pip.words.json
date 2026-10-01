@@ -1,0 +1,38 @@
+[
+  {
+    "text": "then",
+    "start": 0.03,
+    "end": 0.37,
+    "id": "w0"
+  },
+  {
+    "text": "six",
+    "start": 0.37,
+    "end": 0.65,
+    "id": "w1"
+  },
+  {
+    "text": "PRs",
+    "start": 0.65,
+    "end": 0.92,
+    "id": "w2"
+  },
+  {
+    "text": "in",
+    "start": 0.92,
+    "end": 1.1,
+    "id": "w3"
+  },
+  {
+    "text": "78",
+    "start": 1.1,
+    "end": 1.66,
+    "id": "w4"
+  },
+  {
+    "text": "seconds.",
+    "start": 1.66,
+    "end": 2.4,
+    "id": "w5"
+  }
+]
