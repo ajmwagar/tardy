@@ -631,6 +631,14 @@ export class MockTardyApi implements TardyApi {
     return this.delay(undefined);
   }
 
+  async setReposted(postId: string, reposted: boolean) {
+    const post = this.visiblePost(postId);
+    if (post.viewerHasReposted !== reposted) {
+      this.posts.set(postId, { ...post, viewerHasReposted: reposted, repostCount: post.repostCount + (reposted ? 1 : -1) });
+    }
+    return this.delay(undefined);
+  }
+
   async setFollowing(accountId: string, following: boolean) {
     // Following needs visibility; unfollowing something that has since narrowed does not.
     if (following) {

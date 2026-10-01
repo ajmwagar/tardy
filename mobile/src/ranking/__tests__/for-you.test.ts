@@ -18,6 +18,8 @@ const post = (id: string, authorId: string, overrides: Partial<Post> = {}): Post
   alarmCount: 0,
   viewerHasLiked: false,
   viewerHasAlarm: false,
+  viewerHasReposted: false,
+  repostCount: 0,
   viewerHasSaved: false,
   ...overrides,
 });

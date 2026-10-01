@@ -177,6 +177,8 @@ export interface TardyApi {
   setLiked(postId: string, liked: boolean): Promise<void>;
   setSaved(postId: string, saved: boolean): Promise<void>;
   setAlarm(postId: string, on: boolean): Promise<void>;
+  /** Idempotent like `setAlarm`; `forbidden` if the viewer cannot see the tardy. */
+  setReposted(postId: string, reposted: boolean): Promise<void>;
   setFollowing(accountId: string, following: boolean): Promise<void>;
   /**
    * Changes who can see a project. Owners only: anyone else gets `forbidden`. Resolves

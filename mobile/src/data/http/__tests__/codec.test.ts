@@ -78,6 +78,8 @@ describe('wire types', () => {
     comment_count: 2,
     share_count: 3,
     alarm_count: 4,
+    repost_count: 5,
+    viewer_has_reposted: false,
     viewer_has_liked: true,
     viewer_has_alarm: false,
     viewer_has_saved: false,
@@ -100,6 +102,8 @@ describe('wire types', () => {
       alarmCount: 4,
       viewerHasLiked: true,
       viewerHasAlarm: false,
+      viewerHasReposted: false,
+      repostCount: 5,
       viewerHasSaved: false,
       ranking: { score: 0.5, inNetwork: true },
     });

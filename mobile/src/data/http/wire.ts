@@ -118,8 +118,10 @@ export const post: Decoder<Post> = object<Post>({
   commentCount: integer,
   shareCount: integer,
   alarmCount: integer,
+  repostCount: integer,
   viewerHasLiked: boolean,
   viewerHasAlarm: boolean,
+  viewerHasReposted: boolean,
   viewerHasSaved: boolean,
   ranking: optional(object<NonNullable<Post['ranking']>>({ score: number, inNetwork: boolean })),
 });

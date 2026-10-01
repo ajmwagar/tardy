@@ -39,6 +39,8 @@ const post = (id: string, authorId: string, projectId?: string): Post => ({
   shareCount: 0,
   viewerHasLiked: false,
   viewerHasAlarm: false,
+  viewerHasReposted: false,
+  repostCount: 0,
   viewerHasSaved: false,
 });
 

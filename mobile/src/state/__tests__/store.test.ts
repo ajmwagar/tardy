@@ -1,7 +1,7 @@
 import { faults } from '@/data/mock/faults';
 import { POSTS } from '@/data/mock/fixtures';
 
-import { clearError, flushEngagement, getState, ingestPosts, seedFollowing, setLiked, toggleAlarm, toggleFollowing, toggleSaved } from '../store';
+import { clearError, flushEngagement, getState, ingestPosts, seedFollowing, setLiked, toggleAlarm, toggleFollowing, toggleRepost, toggleSaved } from '../store';
 
 /**
  * Rollback paths, driven by the dev fault switch. Injected interaction faults throw before
@@ -42,6 +42,15 @@ describe('optimistic interactions', () => {
     await toggleSaved(post.id);
     expect(getState().posts.get(post.id)).toEqual(before);
     expect(getState().lastError).toMatch(/save that/);
+  });
+
+  it('a failed repost rolls back', async () => {
+    const before = getState().posts.get(post.id)!;
+    const pending = toggleRepost(post.id);
+    expect(getState().posts.get(post.id)).toMatchObject({ reposted: true, repostCount: before.repostCount + 1 });
+    await pending;
+    expect(getState().posts.get(post.id)).toEqual(before);
+    expect(getState().lastError).toMatch(/repost that/);
   });
 
   it('a failed follow rolls back', async () => {

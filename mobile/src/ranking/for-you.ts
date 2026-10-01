@@ -67,6 +67,8 @@ export function authorAffinity(history: readonly EngagementAction[], posts: Read
       case 'not_interested': a.negative += 1; break;
       case 'alarm': a.positive += 2; break;
       case 'unalarm': a.positive -= 2; break;
+      case 'repost': a.positive += 3; break;
+      case 'unrepost': a.positive -= 3; break;
     }
   }
   return byAuthor;

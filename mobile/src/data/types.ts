@@ -112,7 +112,10 @@ export type Post = {
   shareCount: number;
   /** Viewers who set an alarm: they get pinged when this work changes status. */
   alarmCount: number;
+  /** Reposts put a tardy in the reposter's followers' feeds. Wire: `repost_count`. */
+  repostCount: number;
   viewerHasLiked: boolean;
+  viewerHasReposted: boolean;
   viewerHasAlarm: boolean;
   viewerHasSaved: boolean;
   /** Present on ranked feeds: why the ranker placed it, for debugging. */
@@ -258,6 +261,8 @@ export type EngagementAction =
   | { type: 'not_interested'; postId: string }
   /** Tardy-specific: subscribe to (or drop) status changes on a post. */
   | { type: 'alarm' | 'unalarm'; postId: string }
+  /** Repost (X's retweet): share a tardy to your own followers. */
+  | { type: 'repost' | 'unrepost'; postId: string }
   | { type: 'follow_author' | 'unfollow_author'; authorId: string };
 
 // MARK: auth

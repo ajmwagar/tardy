@@ -35,7 +35,15 @@ const describe = (error: unknown) => (error instanceof Error ? error.message : S
 /** The `lastError` text for a write that failed and was undone locally. */
 const rolledBack = (what: string, error: unknown) => `Couldn't ${what}, so we put it back. (${describe(error)})`;
 
-type PostState = { liked: boolean; saved: boolean; likeCount: number; alarm: boolean; alarmCount: number };
+type PostState = {
+  liked: boolean;
+  saved: boolean;
+  likeCount: number;
+  alarm: boolean;
+  alarmCount: number;
+  reposted: boolean;
+  repostCount: number;
+};
 
 type State = {
   accounts: ReadonlyMap<string, Account>;
@@ -129,6 +137,8 @@ export function ingestPosts(posts: Post[]) {
           likeCount: p.likeCount,
           alarm: p.viewerHasAlarm,
           alarmCount: p.alarmCount,
+          reposted: p.viewerHasReposted,
+          repostCount: p.repostCount,
         });
       }
     }
@@ -185,6 +195,17 @@ export const toggleLiked = (id: string) => setLiked(id, !state.posts.get(id)?.li
 export function toggleSaved(id: string) {
   const saved = !state.posts.get(id)?.saved;
   return optimistic(id, saved ? 'save that' : 'unsave that', (p) => ({ ...p, saved }), () => api.setSaved(id, saved));
+}
+
+export function toggleRepost(id: string) {
+  const on = !state.posts.get(id)?.reposted;
+  logEngagement({ type: on ? 'repost' : 'unrepost', postId: id });
+  return optimistic(
+    id,
+    on ? 'repost that' : 'undo that repost',
+    (p) => ({ ...p, reposted: on, repostCount: p.repostCount + (on ? 1 : -1) }),
+    () => api.setReposted(id, on),
+  );
 }
 
 export function toggleAlarm(id: string) {

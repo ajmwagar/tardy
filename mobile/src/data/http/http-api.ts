@@ -362,6 +362,10 @@ export class HttpTardyApi implements TardyApi {
     await this.request(on ? 'PUT' : 'DELETE', `/v1/posts/${segment(postId)}/alarm`);
   }
 
+  async setReposted(postId: string, reposted: boolean): Promise<void> {
+    await this.request(reposted ? 'PUT' : 'DELETE', `/v1/posts/${segment(postId)}/repost`);
+  }
+
   async setFollowing(accountId: string, following: boolean): Promise<void> {
     await this.request(following ? 'PUT' : 'DELETE', `/v1/profile/following/${segment(accountId)}`);
   }

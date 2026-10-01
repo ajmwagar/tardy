@@ -40,3 +40,15 @@ describe('collabLabel', () => {
     expect(creditedIds({ authorId: 'x' })).toEqual(['x']);
   });
 });
+
+describe('MockTardyApi.setReposted', () => {
+  it('counts each viewer once and undoes cleanly', async () => {
+    const client = new MockTardyApi({ latencyMs: 0 });
+    const before = await client.post('post-collab-feed');
+    await client.setReposted('post-collab-feed', true);
+    await client.setReposted('post-collab-feed', true);
+    expect(await client.post('post-collab-feed')).toMatchObject({ viewerHasReposted: true, repostCount: before.repostCount + 1 });
+    await client.setReposted('post-collab-feed', false);
+    expect((await client.post('post-collab-feed')).repostCount).toBe(before.repostCount);
+  });
+});

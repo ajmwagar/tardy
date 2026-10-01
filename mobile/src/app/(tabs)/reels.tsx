@@ -12,7 +12,7 @@ import { StyleChip } from '@/components/style-chip';
 import { Avatar, Icon, NameLine, PressableScale, Reaction, StatusPill } from '@/components/ui';
 import { VideoSurface } from '@/components/video-surface';
 import type { Post } from '@/data/types';
-import { api, loadFeedPage, logEngagement, toggleAlarm, toggleFollowing, toggleLiked, toggleMuted, toggleSaved, useAccount, useIsFollowing, usePostState, useStore } from '@/state/store';
+import { api, loadFeedPage, logEngagement, toggleAlarm, toggleFollowing, toggleLiked, toggleMuted, toggleRepost, toggleSaved, useAccount, useIsFollowing, usePostState, useStore } from '@/state/store';
 import { colors } from '@/theme';
 
 type Item = { key: string; post: Post };
@@ -72,6 +72,18 @@ const Reel = memo(function Reel({ post, active, height }: { post: Post; active: 
           label="Comments"
           count={post.commentCount}
           onPress={() => router.push({ pathname: '/comments/[postId]', params: { postId: post.id } })}
+        />
+        <Reaction
+          vertical
+          size={28}
+          color="#fff"
+          icon="arrow.2.squarepath"
+          label="Repost"
+          activeIcon="arrow.2.squarepath"
+          active={state?.reposted}
+          activeColor={colors.repost}
+          count={state?.repostCount ?? post.repostCount}
+          onPress={() => toggleRepost(post.id)}
         />
         <Reaction
           vertical

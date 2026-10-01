@@ -228,8 +228,10 @@ function buildPosts(): Post[] {
         commentCount: between(0, 60),
         shareCount: between(0, 40),
         alarmCount: between(0, 30),
+        repostCount: 0,
         viewerHasLiked: false,
         viewerHasAlarm: false,
+        viewerHasReposted: false,
         viewerHasSaved: false,
       });
     }
@@ -251,8 +253,10 @@ function buildPosts(): Post[] {
         commentCount: between(20, 2_000),
         shareCount: between(10, 5_000),
         alarmCount: between(0, 400),
+        repostCount: 0,
         viewerHasLiked: false,
         viewerHasAlarm: false,
+        viewerHasReposted: false,
         viewerHasSaved: false,
       });
     }
@@ -275,8 +279,10 @@ function buildPosts(): Post[] {
     commentCount: 14,
     shareCount: 9,
     alarmCount: 3,
+    repostCount: 6,
     viewerHasLiked: false,
     viewerHasAlarm: false,
+    viewerHasReposted: false,
     viewerHasSaved: false,
   });
   posts.push(
@@ -284,7 +290,8 @@ function buildPosts(): Post[] {
     collab('post-collab-bom', 'a-bom', ['a-fw'], 'p-lob', 'Rev C unblocked: bom.bot found an in-stock STM32 alternate, opus.firmware ported the HAL overnight. Boards order Monday.', 2.5, 87),
   );
 
-  return posts;
+  // Reposts track likes (about one per dozen) without drawing from the seeded generator.
+  return posts.map((p) => (p.repostCount ? p : { ...p, repostCount: Math.floor(p.likeCount / 12) }));
 }
 
 export const POSTS: Post[] = buildPosts();

@@ -45,6 +45,7 @@ const INTERACTION_METHODS = new Set<string>([
   'setLiked',
   'setSaved',
   'setAlarm',
+  'setReposted',
   'setFollowing',
   'setVisibility',
   'sendMessage',

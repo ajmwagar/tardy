@@ -209,6 +209,7 @@ the differences are listed in the next section. Everything else is proposed.
 | `setLiked(postId, liked)` | `PUT` / `DELETE /v1/posts/{id}/like` | missing (the `like` engagement is a one-way virality signal; there's no unlike) |
 | `setSaved(postId, saved)` | `PUT` / `DELETE /v1/saved-posts/{id}` | **exists**, compatible |
 | `setAlarm(postId, on)` | `PUT` / `DELETE /v1/posts/{id}/alarm` | missing |
+| `setReposted(postId, reposted)` | `PUT` / `DELETE /v1/posts/{id}/repost` | missing (adds `repost_count`, `viewer_has_reposted` to `PostView`) |
 | `setFollowing(accountId, following)` | `PUT` / `DELETE /v1/profile/following/{profile_id}` | missing |
 | `setVisibility(projectId, visibility)` | `PUT /v1/profiles/by-id/{id}/visibility` | missing (`POST /v1/profile/privacy` is the profile-level model; see decision 2) |
 | `logEngagement(actions)` | `POST /v1/engagements` | missing (`POST /v1/reels/{id}/engagements` is one virality signal per reel) |
@@ -462,6 +463,14 @@ comes from the doc comments in `api.ts` and `types.ts`.
 - Errors: 401.
 - Threads with no messages are omitted. `unread_count` counts the other participant's
   messages after the viewer's read watermark.
+
+**`PostView` additions: collab tardies and reposts**
+- `collaborator_ids?: [uuid]`: other accounts credited next to `author_id`, in display order.
+  A work group's rollup credits members who posted in the thread, not silent ones. Drop
+  any the viewer cannot see; omit the field when none are left. A collab tardy also lists
+  under each collaborator's `GET /v1/profiles/by-id/{id}/posts`.
+- `repost_count`, `viewer_has_reposted`: X's retweet. `PUT`/`DELETE /v1/posts/{id}/repost`
+  is idempotent; `repost`/`unrepost` engagement events feed ranking (affinity +3/−3).
 
 **`POST /v1/dm-threads`** → `openThread` (the share sheet's core call)
 - Request: `{ "recipient_id": "uuid" }` for 1:1 (today's shape, unchanged), or

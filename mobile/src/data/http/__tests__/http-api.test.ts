@@ -221,6 +221,8 @@ describe('HttpTardyApi: decoding', () => {
     comment_count: 0,
     share_count: 0,
     alarm_count: 0,
+    repost_count: 0,
+    viewer_has_reposted: false,
     viewer_has_liked: false,
     viewer_has_alarm: false,
     viewer_has_saved: false,
