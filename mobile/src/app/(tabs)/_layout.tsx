@@ -1,6 +1,7 @@
 import { NativeTabs } from 'expo-router/unstable-native-tabs';
-import { useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 
+import { haptic } from '@/components/ui';
 import { refreshUnread, useAccount, useStore } from '@/state/store';
 import { colors } from '@/theme';
 
@@ -13,8 +14,22 @@ export default function TabsLayout() {
     void refreshUnread();
   }, []);
 
+  // A selection tick when the tab actually changes; re-tapping the current tab stays silent.
+  const current = useRef<string | null>(null);
+  const listeners = useCallback(
+    ({ route }: { route: { name: string } }) => ({
+      focus: () => {
+        current.current = route.name;
+      },
+      tabPress: (e: { data: { isPrevented: boolean } }) => {
+        if (!e.data.isPrevented && current.current !== route.name) haptic.selection();
+      },
+    }),
+    [],
+  );
+
   return (
-    <NativeTabs backgroundColor={colors.bg} tintColor={colors.primary}>
+    <NativeTabs backgroundColor={colors.bg} tintColor={colors.primary} screenListeners={listeners}>
       <NativeTabs.Trigger name="index">
         <NativeTabs.Trigger.Icon sf={{ default: 'house', selected: 'house.fill' }} />
         <NativeTabs.Trigger.Label hidden>Home</NativeTabs.Trigger.Label>

@@ -7,7 +7,7 @@ import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { EmptyState, ErrorState, Pulse, SkeletonBlock } from '@/components/states';
-import { Avatar, Icon, PressableScale } from '@/components/ui';
+import { Avatar, haptic, Icon, PressableScale } from '@/components/ui';
 import type { Notification, NotificationKind, Post } from '@/data/types';
 import { payloadFor } from '@/notifications/payload';
 import { routeForPayload } from '@/notifications/routing';
@@ -152,7 +152,13 @@ export default function NotificationsScreen() {
           key={f.key}
           scaleTo={0.95}
           style={[styles.chip, filter === f.key && styles.chipActive]}
-          onPress={() => setFilter(f.key)}>
+          accessibilityRole="button"
+          accessibilityState={{ selected: filter === f.key }}
+          onPress={() => {
+            if (filter === f.key) return;
+            haptic.selection();
+            setFilter(f.key);
+          }}>
           <Text style={[styles.chipText, filter === f.key && styles.chipTextActive]}>{f.label}</Text>
         </PressableScale>
       ))}

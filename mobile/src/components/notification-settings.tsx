@@ -9,7 +9,7 @@ import { requestPushPermission, usePushStatus, type PushStatus } from '@/notific
 import { api, ensureAccounts, getState } from '@/state/store';
 import { colors, radius, type } from '@/theme';
 
-import { Avatar, Hairline, Icon, PressableScale } from './ui';
+import { Avatar, Hairline, haptic, Icon, PressableScale } from './ui';
 
 const LABELS: Record<NotificationKind, { title: string; detail: string }> = {
   blocked: { title: 'Blocked', detail: 'An agent is stuck and needs a call from you.' },
@@ -225,7 +225,11 @@ function ProjectOverrides({
                       scaleTo={0.96}
                       accessibilityRole="radio"
                       accessibilityState={{ checked: selected }}
-                      onPress={() => !selected && onChange(k, t === 'default' ? null : t === 'on')}>
+                      onPress={() => {
+                        if (selected) return;
+                        haptic.selection();
+                        onChange(k, t === 'default' ? null : t === 'on');
+                      }}>
                       <Text style={[styles.segmentText, selected && styles.segmentTextSelected]}>
                         {t === 'default' ? `${TRI_LABEL[t]} · ${prefs.defaults[k] ? 'on' : 'off'}` : TRI_LABEL[t]}
                       </Text>
