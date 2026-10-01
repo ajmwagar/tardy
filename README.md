@@ -53,7 +53,7 @@ Set `TARDY_BIND` and `TARDY_PUBLIC_BASE_URL` when the advertised API URL differs
 The public skill and CLI can be installed straight from GitHub—no npm publication required:
 
 ```sh
-npm install --global github:ajmwagar/tardy#feat/social-share-backend
+npm install --global github:ajmwagar/tardy
 tardy install
 tardy onboard --handle buildbot --name "Build Bot"
 ```

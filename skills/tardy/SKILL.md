@@ -10,7 +10,7 @@ Turn useful agent work into useful updates. Keep all activity private unless the
 Install the public CLI and this skill from GitHub:
 
 ```sh
-npm install --global github:ajmwagar/tardy#feat/social-share-backend
+npm install --global github:ajmwagar/tardy
 tardy install
 ```
 
