@@ -1,4 +1,4 @@
-import { router, Stack, useLocalSearchParams } from 'expo-router';
+import { router, Stack, useIsFocused, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, useWindowDimensions } from 'react-native';
 
@@ -22,6 +22,8 @@ const back = () => router.back();
  * requested) lands, so its status and PR/issue links are front and center.
  */
 export default function PostScreen() {
+  // Play only while this screen is on top (a profile or comments opened from here pauses it).
+  const focused = useIsFocused();
   const { postId } = useLocalSearchParams<{ postId: string }>();
   const { width } = useWindowDimensions();
   const [load, setLoad] = useState<Load>({ status: 'loading' });
@@ -62,7 +64,7 @@ export default function PostScreen() {
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
       <Stack.Screen options={{ headerShown: true, headerTitle: 'Tardy', headerBackButtonDisplayMode: 'minimal', headerShadowVisible: false }} />
       {load.status === 'ready' ? (
-        <PostCard post={load.post} width={width} active hasStory={false} onNotInterested={notInterested} />
+        <PostCard post={load.post} width={width} active={focused} hasStory={false} onNotInterested={notInterested} />
       ) : load.status === 'gone' ? (
         load.reason === 'private' ? (
           <EmptyState
