@@ -7,7 +7,7 @@ import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { EmptyState, ErrorState, Pulse, SkeletonBlock } from '@/components/states';
-import { Avatar, haptic, Icon, PressableScale } from '@/components/ui';
+import { Avatar, haptic, Icon, IconButton, PressableScale } from '@/components/ui';
 import type { Notification, NotificationKind, Post } from '@/data/types';
 import { payloadFor } from '@/notifications/payload';
 import { routeForPayload } from '@/notifications/routing';
@@ -169,9 +169,7 @@ export default function NotificationsScreen() {
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       <View style={styles.bar}>
         <Text style={type.title}>Activity</Text>
-        <Pressable hitSlop={10} onPress={() => router.push('/settings')}>
-          <Icon name="slider.horizontal.3" size={22} />
-        </Pressable>
+        <IconButton icon="slider.horizontal.3" size={22} label="Notification settings" onPress={() => router.push('/settings')} style={styles.edgeButton} />
       </View>
 
       {error && !list ? (
@@ -217,6 +215,7 @@ export default function NotificationsScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
   bar: { height: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16 },
+  edgeButton: { marginRight: -10 },
   chips: { paddingHorizontal: 16, paddingVertical: 8, gap: 8 },
   chip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: radius.pill, backgroundColor: colors.elevated },
   chipActive: { backgroundColor: colors.text },

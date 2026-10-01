@@ -3,7 +3,7 @@ import { ActionSheetIOS, Alert, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ProfileView } from '@/components/profile-view';
-import { Icon, PressableScale } from '@/components/ui';
+import { IconButton } from '@/components/ui';
 import { auth } from '@/state/auth';
 import { reportError, useAccount } from '@/state/store';
 import { colors, type } from '@/theme';
@@ -37,9 +37,7 @@ export default function MyProfileScreen() {
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       <View style={styles.bar}>
         <Text style={type.title}>{me?.handle}</Text>
-        <PressableScale onPress={openMenu} accessibilityRole="button" accessibilityLabel="Menu">
-          <Icon name="line.3.horizontal" size={24} />
-        </PressableScale>
+        <IconButton icon="line.3.horizontal" label="Menu" onPress={openMenu} style={styles.edgeButton} />
       </View>
       {me && <ProfileView account={me} isMe />}
     </View>
@@ -49,4 +47,5 @@ export default function MyProfileScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
   bar: { height: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16 },
+  edgeButton: { marginRight: -10 },
 });

@@ -205,11 +205,40 @@ export function PressableScale({
   );
 }
 
+/**
+ * Icon-only button for headers and toolbars: a 44pt target (Apple's minimum) with the icon
+ * centred, press feedback, and a required VoiceOver label. In a header row, pull it to the
+ * edge with a negative margin so the glyph lines up with the row's padding.
+ */
+export function IconButton({
+  icon,
+  label,
+  onPress,
+  size = 24,
+  color = colors.text,
+  style,
+}: {
+  icon: SFSymbol;
+  label: string;
+  onPress?: () => void;
+  size?: number;
+  color?: string;
+  style?: StyleProp<ViewStyle>;
+}) {
+  return (
+    <PressableScale onPress={onPress} hitSlop={4} accessibilityRole="button" accessibilityLabel={label} style={[styles.iconButton, style]}>
+      <Icon name={icon} size={size} color={color} />
+    </PressableScale>
+  );
+}
+
 export function Hairline() {
-  return <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors.separator }} />;
+  return <View style={styles.hairline} />;
 }
 
 const styles = StyleSheet.create({
+  iconButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  hairline: { height: StyleSheet.hairlineWidth, backgroundColor: colors.separator },
   reaction: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 4 },
   reactionVertical: { alignItems: 'center', gap: 3 },
   count: { ...typeStyles.count },

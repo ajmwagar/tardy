@@ -1,7 +1,7 @@
 import { FlashList, type ViewToken } from '@shopify/flash-list';
 import { router } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, RefreshControl, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, Pressable, RefreshControl, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { PostCard } from '@/components/post-card';
@@ -9,10 +9,11 @@ import { BreakingTicker } from '@/components/breaking-ticker';
 import { openFaultMenu } from '@/components/fault-menu';
 import { EmptyState, ErrorState, FeedSkeleton, InlineRetry } from '@/components/states';
 import { StoriesRow } from '@/components/stories-row';
-import { Icon, PressableScale } from '@/components/ui';
+import { IconButton } from '@/components/ui';
+import { Wordmark } from '@/components/wordmark';
 import type { Post, StoryGroup } from '@/data/types';
 import { api, ensureAccounts, loadFeedPage, loadTrending, logEngagement, reportError, useStore } from '@/state/store';
-import { colors, type } from '@/theme';
+import { colors } from '@/theme';
 
 const describe = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -101,14 +102,11 @@ export default function HomeScreen() {
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       <View style={styles.header}>
         {/* Long-press: dev-only fault injection menu; does nothing in production. */}
-        <Pressable style={styles.wordmarkRow} onLongPress={openFaultMenu}>
-          <Text style={type.wordmark}>tardy</Text>
-          <View style={styles.wordmarkDot} />
+        <Pressable onLongPress={openFaultMenu} accessibilityRole="header" accessibilityLabel="Tardy">
+          <Wordmark />
         </Pressable>
         <View style={styles.headerIcons}>
-          <PressableScale>
-            <Icon name="plus.circle.fill" size={28} color={colors.primary} />
-          </PressableScale>
+          <IconButton icon="plus.circle.fill" size={28} color={colors.primary} label="New post" style={styles.edgeButton} />
         </View>
       </View>
       <BreakingTicker posts={trending} />
@@ -178,7 +176,6 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
   header: { height: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14 },
   headerIcons: { flexDirection: 'row', gap: 20 },
-  wordmarkRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 3 },
-  wordmarkDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.alarm, marginBottom: 8 },
+  edgeButton: { marginRight: -8 },
   footer: { paddingVertical: 24 },
 });

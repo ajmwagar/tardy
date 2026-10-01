@@ -9,7 +9,7 @@ import { colors, layout, radius, timeAgo } from '@/theme';
 
 import { CarouselDots, MediaCarousel } from './media-carousel';
 import { StyleChip } from './style-chip';
-import { Avatar, Icon, NameLine, PressableScale, Reaction, StatusPill } from './ui';
+import { Avatar, Icon, IconButton, NameLine, PressableScale, Reaction, StatusPill } from './ui';
 
 /** Cards float with a gutter so the feed reads as a stack of updates, not a photo wall. */
 export const CARD_GUTTER = layout.cardGutter;
@@ -78,10 +78,10 @@ export const PostCard = memo(function PostCard({
   return (
     <View style={styles.card}>
       <View style={styles.header}>
-        <Pressable onPress={openProfile}>
+        <Pressable onPress={openProfile} accessibilityRole="button" accessibilityLabel={`${author?.handle ?? 'Author'}, open profile`}>
           <Avatar account={author} size={32} ring={hasStory ? 'unseen' : 'none'} />
         </Pressable>
-        <Pressable onPress={openProfile} style={styles.headerText}>
+        <Pressable onPress={openProfile} style={styles.headerText} accessible={false}>
           <NameLine account={author} />
           {subtitle ? (
             <Text style={styles.subtitle} numberOfLines={1}>
@@ -90,13 +90,16 @@ export const PostCard = memo(function PostCard({
           ) : null}
         </Pressable>
         {!following && (
-          <PressableScale onPress={() => toggleFollowing(post.authorId)} style={styles.followButton} scaleTo={0.95}>
+          <PressableScale
+            onPress={() => toggleFollowing(post.authorId)}
+            style={styles.followButton}
+            scaleTo={0.95}
+            accessibilityRole="button"
+            accessibilityLabel={`Follow ${author?.handle ?? ''}`}>
             <Text style={styles.followText}>Follow</Text>
           </PressableScale>
         )}
-        <Pressable onPress={more} hitSlop={10}>
-          <Icon name="ellipsis" size={18} />
-        </Pressable>
+        <IconButton icon="ellipsis" size={18} label="More options" onPress={more} style={styles.moreButton} />
       </View>
 
       <View style={styles.media}>
@@ -177,6 +180,8 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10, gap: 10 },
   headerText: { flex: 1, justifyContent: 'center' },
   subtitle: { color: colors.textSecondary, fontSize: 12, marginTop: 1 },
+  // A 44pt target that keeps the header at the avatar's height and the glyph on the padding line.
+  moreButton: { marginVertical: -6, marginRight: -12 },
   followButton: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: radius.pill, backgroundColor: colors.primary },
   followText: { color: colors.onPrimary, fontSize: 13, fontWeight: '800' },
   actions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 12, paddingTop: 10 },

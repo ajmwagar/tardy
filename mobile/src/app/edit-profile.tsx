@@ -54,7 +54,13 @@ export default function EditProfileScreen() {
       <Stack.Screen
         options={{
           headerRight: () => (
-            <Pressable onPress={save} disabled={!dirty || !!problem || saving} hitSlop={10}>
+            <Pressable
+              onPress={save}
+              disabled={!dirty || !!problem || saving}
+              hitSlop={12}
+              accessibilityRole="button"
+              accessibilityLabel="Save"
+              accessibilityState={{ disabled: !dirty || !!problem || saving, busy: saving }}>
               {saving ? (
                 <ActivityIndicator color={colors.primary} />
               ) : (
