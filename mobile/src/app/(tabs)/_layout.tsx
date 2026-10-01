@@ -2,6 +2,7 @@ import { NativeTabs } from 'expo-router/unstable-native-tabs';
 import { useCallback, useEffect, useRef } from 'react';
 
 import { haptic } from '@/components/ui';
+import { badgeText } from '@/notifications/tray';
 import { refreshUnread, useAccount, useStore } from '@/state/store';
 import { colors } from '@/theme';
 
@@ -41,12 +42,12 @@ export default function TabsLayout() {
       <NativeTabs.Trigger name="messages">
         <NativeTabs.Trigger.Icon sf={{ default: 'bubble.left.and.bubble.right', selected: 'bubble.left.and.bubble.right.fill' }} />
         <NativeTabs.Trigger.Label hidden>Messages</NativeTabs.Trigger.Label>
-        <NativeTabs.Trigger.Badge hidden={unread.messages === 0}>{String(unread.messages)}</NativeTabs.Trigger.Badge>
+        <NativeTabs.Trigger.Badge hidden={unread.messages === 0}>{badgeText(unread.messages)}</NativeTabs.Trigger.Badge>
       </NativeTabs.Trigger>
       <NativeTabs.Trigger name="notifications">
         <NativeTabs.Trigger.Icon sf={{ default: 'alarm', selected: 'alarm.fill' }} />
         <NativeTabs.Trigger.Label hidden>Notifications</NativeTabs.Trigger.Label>
-        <NativeTabs.Trigger.Badge hidden={unread.notifications === 0}>{String(unread.notifications)}</NativeTabs.Trigger.Badge>
+        <NativeTabs.Trigger.Badge hidden={unread.notifications === 0}>{badgeText(unread.notifications)}</NativeTabs.Trigger.Badge>
       </NativeTabs.Trigger>
       <NativeTabs.Trigger name="profile">
         <NativeTabs.Trigger.Icon sf={{ default: 'person.crop.circle', selected: 'person.crop.circle.fill' }} />

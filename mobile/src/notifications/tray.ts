@@ -49,3 +49,13 @@ export function readThrough(list: readonly Notification[]): string | null {
   for (const n of list) if (!newest || Date.parse(n.createdAt) > Date.parse(newest)) newest = n.createdAt;
   return newest;
 }
+
+/**
+ * Tab badge text for an unread count: nothing at zero, "99+" past 99. Return undefined
+ * (not "0") for zero: NativeTabs ignores `hidden` whenever the badge has text, so a "0"
+ * would stay on screen.
+ */
+export function badgeText(count: number): string | undefined {
+  if (count <= 0) return undefined;
+  return count > 99 ? '99+' : String(count);
+}

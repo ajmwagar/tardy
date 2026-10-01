@@ -1,6 +1,6 @@
 import type { Notification } from '@/data/types';
 
-import { groupNotifications, readThrough } from '../tray';
+import { badgeText, groupNotifications, readThrough } from '../tray';
 
 const NOW = Date.parse('2026-09-30T12:00:00Z');
 const hoursAgo = (h: number) => new Date(NOW - h * 3_600_000).toISOString();
@@ -60,5 +60,18 @@ describe('readThrough', () => {
   it('is the newest notification time, or null when there are none', () => {
     expect(readThrough([n('a', 'like', 5), n('b', 'like', 1), n('c', 'like', 9)])).toBe(hoursAgo(1));
     expect(readThrough([])).toBeNull();
+  });
+});
+
+describe('badgeText', () => {
+  it('is empty at zero so the badge hides', () => {
+    expect(badgeText(0)).toBeUndefined();
+    expect(badgeText(-1)).toBeUndefined();
+  });
+
+  it('shows the count, capped at 99+', () => {
+    expect(badgeText(3)).toBe('3');
+    expect(badgeText(99)).toBe('99');
+    expect(badgeText(100)).toBe('99+');
   });
 });
