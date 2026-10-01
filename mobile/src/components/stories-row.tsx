@@ -1,54 +1,85 @@
 import { router } from 'expo-router';
-import { memo } from 'react';
-import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { memo, useState } from 'react';
+import { ActionSheetIOS, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import type { Story } from '@/data/types';
+import { openWebCheckout } from '@/config';
+import type { StoryGroup } from '@/data/types';
 import { useAccount, useStore } from '@/state/store';
+import { isGroupBoosted } from '@/stories/boost';
 import { colors } from '@/theme';
 
-import { Avatar, Hairline, Icon } from './ui';
+import { Avatar, Hairline, Icon, type RingState } from './ui';
 
-export type StoryGroup = { authorId: string; stories: Story[] };
+const openViewer = (authorId: string) => router.push({ pathname: '/stories/[authorId]', params: { authorId } });
+
+/**
+ * Boosted beats seen: a paid boost keeps its red ring until it expires. Expiry is checked
+ * against the time the bubble mounted; the tray reloads (and the server reorders it) on refresh.
+ */
+function useRing(group: StoryGroup): RingState {
+  const seen = useStore((s) => group.stories.every((st) => st.seen || s.seenStories.has(st.id)));
+  const [now] = useState(Date.now);
+  if (isGroupBoosted(group, now)) return 'boosted';
+  return seen ? 'seen' : 'unseen';
+}
 
 const StoryBubble = memo(function StoryBubble({ group }: { group: StoryGroup }) {
   const account = useAccount(group.authorId);
-  const seen = useStore((s) => group.stories.every((st) => st.seen || s.seenStories.has(st.id)));
+  const ring = useRing(group);
   return (
-    <Pressable
-      style={styles.bubble}
-      onPress={() => router.push({ pathname: '/stories/[authorId]', params: { authorId: group.authorId } })}>
-      <Avatar account={account} size={66} ring={seen ? 'seen' : 'unseen'} />
-      <Text style={[styles.label, seen && styles.labelSeen]} numberOfLines={1}>
+    <Pressable style={styles.bubble} onPress={() => openViewer(group.authorId)}>
+      <Avatar account={account} size={66} ring={ring} />
+      <Text style={[styles.label, ring === 'seen' && styles.labelSeen]} numberOfLines={1}>
         {account?.handle}
       </Text>
     </Pressable>
   );
 });
 
-function YourStory() {
+/** Long-press on your own bubble: the way in to buying a boost (checkout is on the website). */
+function openYourStoryMenu() {
+  ActionSheetIOS.showActionSheetWithOptions({ options: ['Boost my story', 'Cancel'], cancelButtonIndex: 1 }, (index) => {
+    if (index === 0) void openWebCheckout('boost');
+  });
+}
+
+function YourStoryAvatar({ group }: { group: StoryGroup }) {
+  const me = useAccount('me');
+  return <Avatar account={me} size={66} ring={useRing(group)} />;
+}
+
+/** Your bubble: opens your stories when you have some; long-press to boost them. */
+function YourStory({ group }: { group: StoryGroup | undefined }) {
   const me = useAccount('me');
   return (
-    <View style={styles.bubble}>
+    <Pressable
+      style={styles.bubble}
+      onPress={group ? () => openViewer('me') : undefined}
+      onLongPress={openYourStoryMenu}
+      accessibilityRole="button"
+      accessibilityLabel="Your story"
+      accessibilityHint="Long-press to boost your story">
       <View style={styles.yourStory}>
-        <Avatar account={me} size={70} />
+        {group ? <YourStoryAvatar group={group} /> : <Avatar account={me} size={70} />}
         <View style={styles.plus}>
           <Icon name="plus" size={12} color="#fff" weight="bold" />
         </View>
       </View>
       <Text style={[styles.label, styles.labelSeen]}>Your story</Text>
-    </View>
+    </Pressable>
   );
 }
 
 export const StoriesRow = memo(function StoriesRow({ groups }: { groups: StoryGroup[] }) {
+  const mine = groups.find((g) => g.authorId === 'me');
   return (
     <View>
       <FlatList
-        data={groups}
+        data={mine ? groups.filter((g) => g !== mine) : groups}
         horizontal
         showsHorizontalScrollIndicator={false}
         keyExtractor={(g) => g.authorId}
-        ListHeaderComponent={YourStory}
+        ListHeaderComponent={<YourStory group={mine} />}
         renderItem={({ item }) => <StoryBubble group={item} />}
         contentContainerStyle={styles.row}
       />
