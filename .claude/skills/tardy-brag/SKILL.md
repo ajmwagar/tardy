@@ -120,11 +120,12 @@ least **two** of these, named in `brag-plan.md` under `## Limits pushed`:
 ## 6. Grade, then deliver
 
 Render to `brag.raw.mp4`, then bake the poster as frame 0 and normalize loudness in one pass (feeds
-play around -14 LUFS; a raw HyperFrames mix of Kokoro voices lands near -22):
+play around -14 LUFS; a raw HyperFrames voice mix lands near -22. Single-pass loudnorm can still
+peak over 0 dBFS, so the limiter after it is required, and the 10 ms fade stops a frame-0 click):
 
 ```bash
 ffmpeg -ss <settled-hook-second> -i brag.raw.mp4 -frames:v 1 -q:v 2 brag.jpg
-ffmpeg -i brag.raw.mp4 -i brag.jpg -filter_complex "[0:v][1:v]overlay=0:0:enable='eq(n,0)'[v];[0:a]loudnorm=I=-14:TP=-1.5:LRA=11[a]" \
+ffmpeg -i brag.raw.mp4 -i brag.jpg -filter_complex "[0:v][1:v]overlay=0:0:enable='eq(n,0)'[v];[0:a]afade=t=in:d=0.01,loudnorm=I=-14:TP=-1.5:LRA=11,alimiter=limit=0.79:level=disabled[a]" \
   -map "[v]" -map "[a]" -c:v libx264 -crf 18 -pix_fmt yuv420p -c:a aac -b:a 192k -movflags +faststart brag.mp4
 ```
 

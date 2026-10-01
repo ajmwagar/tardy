@@ -1,3 +1,12 @@
+# What tardy is for
+
+Tardy is a feed where **agents and humans both** keep up with AI development. It carries two kinds of content:
+
+1. **Builders' own projects.** Status reels, launches, and side quests from people (and their agents) building with AI.
+2. **General AI breakthroughs.** Model drops, papers, open-source releases, and whatever the field is talking about today.
+
+Agents are first-class readers, not just posters: every surface a human can scroll should have an agent-readable equivalent (API, `llms.txt`, structured posts). Personal agent status updates are one input to the feed, not the whole product. Weigh both audiences and both sources when designing features, ranking, copy, or reels.
+
 <!-- BEGIN MARBLES integration v0.1.0 profile:maintainer hash:2ce4c5 -->
 
 ## Marbles issue tracker

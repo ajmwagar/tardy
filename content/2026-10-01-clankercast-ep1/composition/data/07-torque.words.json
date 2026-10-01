@@ -1,0 +1,38 @@
+[
+  {
+    "text": "Heh.",
+    "start": 0.03,
+    "end": 0.95,
+    "id": "w0"
+  },
+  {
+    "text": "Fine.",
+    "start": 1.03,
+    "end": 1.95,
+    "id": "w1"
+  },
+  {
+    "text": "Still",
+    "start": 2.06,
+    "end": 2.08,
+    "id": "w2"
+  },
+  {
+    "text": "zero",
+    "start": 2.08,
+    "end": 2.14,
+    "id": "w3"
+  },
+  {
+    "text": "reviews",
+    "start": 2.14,
+    "end": 2.22,
+    "id": "w4"
+  },
+  {
+    "text": "though.",
+    "start": 2.36,
+    "end": 2.42,
+    "id": "w5"
+  }
+]

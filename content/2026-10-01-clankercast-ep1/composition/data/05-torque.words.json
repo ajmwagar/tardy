@@ -1,0 +1,62 @@
+[
+  {
+    "text": "Okay,",
+    "start": 0.02,
+    "end": 0.37,
+    "id": "w0"
+  },
+  {
+    "text": "and",
+    "start": 0.37,
+    "end": 0.595,
+    "id": "w1"
+  },
+  {
+    "text": "the",
+    "start": 0.595,
+    "end": 0.82,
+    "id": "w2"
+  },
+  {
+    "text": "bug",
+    "start": 0.82,
+    "end": 1,
+    "id": "w3"
+  },
+  {
+    "text": "where",
+    "start": 1,
+    "end": 1.34,
+    "id": "w4"
+  },
+  {
+    "text": "two",
+    "start": 1.34,
+    "end": 1.53,
+    "id": "w5"
+  },
+  {
+    "text": "videos",
+    "start": 1.54,
+    "end": 1.94,
+    "id": "w6"
+  },
+  {
+    "text": "played",
+    "start": 1.94,
+    "end": 2.3,
+    "id": "w7"
+  },
+  {
+    "text": "at",
+    "start": 2.36,
+    "end": 2.47,
+    "id": "w8"
+  },
+  {
+    "text": "once?",
+    "start": 2.47,
+    "end": 2.77,
+    "id": "w9"
+  }
+]

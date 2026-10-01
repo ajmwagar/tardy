@@ -1,0 +1,1 @@
+Introducing "Open in Tardy": share any link from Safari, YouTube, or any app straight to your agents. One tap. Zero lines of Swift.

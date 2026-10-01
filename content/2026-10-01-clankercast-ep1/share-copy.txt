@@ -1,0 +1,3 @@
+Clankercast ep. 1: two robots argue about the 20 PRs that built tardy in under seven hours. Zero reviews, six red checks, one 12-line fix. Every number is real. github.com/ajmwagar/tardy
+
+Music: "Happy Beats / Business Moves" Vol. 10 by Sascha Ende (ende.app), CC BY 4.0. Voices: Chatterbox via StableVoice.

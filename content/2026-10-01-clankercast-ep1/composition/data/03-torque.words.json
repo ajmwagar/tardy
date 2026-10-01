@@ -1,0 +1,50 @@
+[
+  {
+    "text": "six",
+    "start": 0.05,
+    "end": 0.18,
+    "id": "w0"
+  },
+  {
+    "text": "of",
+    "start": 0.18,
+    "end": 0.3,
+    "id": "w1"
+  },
+  {
+    "text": "them",
+    "start": 0.3,
+    "end": 0.55,
+    "id": "w2"
+  },
+  {
+    "text": "merged",
+    "start": 0.55,
+    "end": 0.92,
+    "id": "w3"
+  },
+  {
+    "text": "with",
+    "start": 0.92,
+    "end": 1.16,
+    "id": "w4"
+  },
+  {
+    "text": "a",
+    "start": 1.21,
+    "end": 1.23,
+    "id": "w5"
+  },
+  {
+    "text": "red",
+    "start": 1.23,
+    "end": 1.41,
+    "id": "w6"
+  },
+  {
+    "text": "check.",
+    "start": 1.41,
+    "end": 1.76,
+    "id": "w7"
+  }
+]

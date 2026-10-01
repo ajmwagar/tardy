@@ -1,0 +1,38 @@
+{
+  "rubric": "v1",
+  "run": "content/2026-10-01-clankercast-ep1",
+  "type": "podcast",
+  "video_sha256": "e94b34c6cff38723c4f0b1ef8ab354e10bf4bf622fc9f3fe6913190a3f99ffc2",
+  "duration_s": 32.6,
+  "graded_at": "2026-10-01T19:19:27Z",
+  "grader": "claude subagent, fresh context, round 3",
+  "gates": {
+    "technical": { "pass": true, "evidence": "check.sh 30 45: format, fps, audio, duration 32.6s, black, silence, poster, hyperframes, brand, evidence all PASS" },
+    "truth": { "pass": true, "evidence": "All 9 voice lines and every card match facts.md, re-verified via gh as orangej20 at 19:1xZ: 20 merged (#1-#21 minus closed #5), nothing merged since 18:32Z (#22-#25 open); 03:50:01->10:49:23 = 6h59m22s; 0 reviews on all 20; container FAILURE on #10,#15,#16,#17, rust FAILURE on #18,#20; mobile SUCCESS on all 16 with checks; #1 'Tardy iOS app (Expo): feed, reels, ranking, auth, push, privacy' +23,055/-0, 82 files; #11 +12/-6, both diff lines present in gh pr diff 11; ramp gate order/colors match. Phone footage is a real simulator recording (Breaking ticker, 'Tap to unmute' chip, tab bar match mobile/src/app/(tabs)/reels.tsx). Caveat: facts.md says the phone plays podcast.mp4; it actually plays mobile/assets/reels/news.mp4 (TARDY NEWS reel), same commit 6f23de8, so the on-screen 'IN THE APP NOW' claim still holds; fix the facts.md label." },
+    "originals": { "pass": true, "evidence": "Hosts Servo/Torque are original generated robots (source/studio.png), no real names; stock Chatterbox voices 'Gavin'/'Andy', not sound-alikes; ramp is canvas-built; bed is brag's bundled Sascha Ende CC BY 4.0, credited in share-copy.txt as the brag skill directs. Watch item: silver-helmet + black-and-gold-helmet robot duo sits near a famous electronic duo's look; not a copy, but don't push it further." },
+    "privacy": { "pass": true, "evidence": "Repo ajmwagar/tardy is public; on-screen handles (@opus.backend, tardy-7) are app mock fixtures; no emails, secrets, internal URLs in stills or transcript." }
+  },
+  "scores": {
+    "hook": { "score": 3, "evidence": "hook-0.5s: receipt card '20 PRs in 6h 59m' plus podcast set reads specific and on-genre, but the caption is the generic 'Welcome back to Clankercast!' and the HUD says MERGE 20/20 then jumps to 1/20 at ~0.9s, a confusing first second." },
+    "message": { "score": 3, "evidence": "Cold viewer gets: agents merged 20 PRs in under 7h with zero reviews and six red checks, app checks stayed green, a bug fixed in 12 lines (p40-13.04s, p50-16.30s, 23.4s diff card). What tardy is ('Your agents' updates, as reels') only lands at 29s and doesn't answer the review objection." },
+    "proof": { "score": 3, "evidence": "Real simulator capture 7.57-10.4s and 27.42-31.9s, real #11 diff lines 22.9-24.6s, real PR order/CI on the ramp. But the phone is 384px wide with unreadable UI and both beats replay the same clip from 0." },
+    "type_fit": { "score": 2, "evidence": "Real trade-off present (speed vs zero reviews/red checks). Voices: two different Chatterbox voices (not verifiable by ear here). Caption sync fails the ~0.1s line: line 08 (27.4-30.9s) lags ~0.3-0.37s ('for!' 28.56 vs spoken ~28.20; 'as' 29.88 vs ~29.51; confirmed in frames 28.55/29.6) because align.js gets 2 bursts for 4 phrases and spreads over speech; '12' at 23.38s lights 0.16-0.36s early in silence. No crosstalk/overlap; ends on a tagline, not a joke about the change." },
+    "brand": { "score": 3, "evidence": "Theme tokens only (check.sh), red for 0 reviews and failing checks, green for status, SF Rounded 'tardy.' wordmark with red dot at 29-31.9s, 'Stay tardy' sign-off. Yellow is everywhere (neon sign, every karaoke pill, ramp rails, car), so it doesn't mark one hero action." },
+    "pacing": { "score": 3, "evidence": "Tight 32.6s, a cut per speaker, cards change with each claim. Chunking leaves orphans ('20 pull requests in / under', 'Six of them merged with / a' at p40) and 'app.' highlights for ~0.09s at 10.2s." },
+    "sound": { "score": 3, "evidence": "Measured only (cannot listen): -15.1 LUFS integrated, -1.8 dBTP, peak -1.9 dBFS, no clipping; bed ~-27 dB mean in gaps vs speech -16 to -18 (about 10 dB under); bed fades in from 0, frame-0 window -35.8 dB, no transient. Works muted via captions and cards. Landing thuds every 3.25s, not tied to lines; the sync issue is scored under type_fit." },
+    "craft": { "score": 2, "evidence": "Frame 0 is a stale state (caption 'Welcome back to Clankercast!' with 'Clankercast!' highlighted, HUD MERGE 1/20), then frames 1-11 show no caption and MERGE 20/20: a one-frame glitch on the feed's first frame. Phone lower half (y~1440-1860) sits in the bottom 480px chrome zone at 7.6-10.4s and 27.4-31.9s. Orphan caption wraps; double highlight at 'Still zero' (26.08s)." }
+  },
+  "limits_pushed": [
+    { "move": "Generated set, live faces (multi-camera podcast + LED mouths from voice loudness)", "result": "landed" },
+    { "move": "Real two-voice mix", "result": "weak" },
+    { "move": "The gameplay is the data (gates = PRs in merge order, CI colors)", "result": "landed" },
+    { "move": "Seamless loop", "result": "weak" }
+  ],
+  "total": 68.75,
+  "verdict": "revise",
+  "fixes": [
+    "27.42-30.97s (line 08) and 22.91-24.4s (line 06): karaoke lags ~0.3-0.37s ('for!', 'Your', 'updates,', 'as', 'reels.') and '12' lights ~0.2-0.36s early in silence. In align.js, when bursts < phrases, fall back to the whisper hint where it is sane (line 08 whisper: for 0.78, your 1.10, as 2.09, reels 2.26), or allow merging phrases at '!'; relax the 0.06s minimum that rejects line 06's hint because of 'in'. Re-measure every line to within 0.1s.",
+    "0.0-0.9s: frame 0 shows a stale caption + MERGE 1/20, frames 1-11 show MERGE 20/20, then the HUD jumps to 1/20 at ~0.9s. Make render(t) stateless (reset shownChunk on every seek) so frame 0 matches the loop state, and hide the HUD or show 'MERGE 1/20 · 03:50' until the first gate. Replace the generic opener caption with the number ('20 PRs. Zero reviews.') so 0.5s is specific in the caption too.",
+    "7.57-10.4s and 27.42-31.9s: scale the phone up (~520px wide) and keep its key content above y=1440 (out of the bottom chrome zone); start the second beat at a different media offset so it doesn't replay the same news reel; replace 'That's what we're for!' with a closing joke about the change itself (e.g. the 12-line fix vs the 23,055-line PR). Also correct facts.md: the phone shows news.mp4, not podcast.mp4."
+  ]
+}
