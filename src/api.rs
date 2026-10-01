@@ -21,7 +21,7 @@ use crate::push::{
 use crate::ranking::FeedRanker;
 use crate::search::{SearchError, SearchService};
 use crate::social::{
-    AppAccount, AppEngagementAction, Comment, Conversation, ConversationMessage,
+    AppAccount, AppEngagementAction, AppFeedPost, Comment, Conversation, ConversationMessage,
     ConversationSummary, IdentityKind, PgSocialStore, PostVisibility, SharedLink, SocialError,
     TardyPost,
 };
@@ -395,7 +395,7 @@ async fn create_session(
                 .await?
         }
     };
-    Ok((StatusCode::CREATED, Json(signed_in_view(session))))
+    Ok((StatusCode::CREATED, Json(signed_in_view(&state, session))))
 }
 
 async fn development_session(
@@ -410,7 +410,7 @@ async fn development_session(
         .ok_or_else(|| ApiError::internal("PostgreSQL accounts are not configured"))?
         .development_session("orangej20@gmail.com", now_ms()?)
         .await?;
-    Ok((StatusCode::CREATED, Json(signed_in_view(session))))
+    Ok((StatusCode::CREATED, Json(signed_in_view(&state, session))))
 }
 
 async fn current_session(
@@ -427,7 +427,7 @@ async fn current_session(
         .resume_human_session(token, now_ms()?)
         .await
         .map_err(|_| ApiError::unauthorized("invalid bearer token"))?;
-    Ok(Json(signed_in_view(session)))
+    Ok(Json(signed_in_view(&state, session)))
 }
 
 async fn delete_session(
@@ -457,7 +457,7 @@ async fn current_profile(
         .ok_or_else(|| ApiError::internal("PostgreSQL accounts are not configured"))?
         .human_profile_for_account(account)
         .await?;
-    Ok(Json(account_view(profile)))
+    Ok(Json(account_view(&state, profile)))
 }
 
 async fn current_following(
@@ -497,10 +497,12 @@ async fn list_profiles(
     if ids.len() > 100 {
         return Err(ApiError::bad_request("at most 100 profile ids are allowed"));
     }
-    Ok(Json(social_store(&state)?.app_accounts(&ids).await?))
+    let mut accounts = social_store(&state)?.app_accounts(&ids).await?;
+    localize_accounts(&state, &mut accounts);
+    Ok(Json(accounts))
 }
 
-fn signed_in_view(value: HumanSession) -> SignedInView {
+fn signed_in_view(state: &AppState, value: HumanSession) -> SignedInView {
     let onboarded_at_ms = value.profile.onboarded_at_ms;
     SignedInView {
         session: SessionView {
@@ -509,23 +511,93 @@ fn signed_in_view(value: HumanSession) -> SignedInView {
             provider: value.provider,
             expires_at_ms: value.expires_at_ms,
         },
-        account: account_view(value.profile),
+        account: account_view(state, value.profile),
         onboarded_at_ms,
     }
 }
 
-fn account_view(value: HumanProfile) -> AccountView {
+fn account_view(state: &AppState, value: HumanProfile) -> AccountView {
+    let avatar_url = if value.avatar_url.is_empty() {
+        local_avatar_url(state, value.profile_id).unwrap_or_default()
+    } else {
+        value.avatar_url
+    };
     AccountView {
         id: value.profile_id,
         kind: "human",
         handle: value.handle,
         display_name: value.display_name,
-        avatar_url: value.avatar_url,
+        avatar_url,
         bio: value.bio,
         verified: false,
         followers: 0,
         following: 0,
         post_count: 0,
+    }
+}
+
+const LOCAL_MEDIA: [(&str, &str, u64); 7] = [
+    ("news.jpg", "news.mp4", 12_000),
+    ("podcast.jpg", "podcast.mp4", 12_000),
+    ("launch.jpg", "launch.mp4", 13_000),
+    ("explainer.jpg", "explainer.mp4", 11_000),
+    ("ugc.jpg", "ugc.mp4", 11_000),
+    ("brainrot.jpg", "brainrot.mp4", 10_000),
+    ("clankercast-ep1.jpg", "clankercast-ep1.mp4", 32_600),
+];
+
+fn local_blob_url(state: &AppState, name: &str) -> Option<String> {
+    std::env::var_os("TARDY_LOCAL_BLOB_DIR")
+        .map(|_| format!("{}/v1/dev/blobs/{name}", state.public_base_url))
+}
+
+fn local_avatar_url(state: &AppState, id: Uuid) -> Option<String> {
+    let (poster, _, _) = LOCAL_MEDIA[usize::from(id.as_bytes()[0]) % LOCAL_MEDIA.len()];
+    local_blob_url(state, poster)
+}
+
+fn localize_accounts(state: &AppState, accounts: &mut [AppAccount]) {
+    if std::env::var_os("TARDY_LOCAL_BLOB_DIR").is_none() {
+        return;
+    }
+    for account in accounts {
+        if account.avatar_url.is_empty() || account.avatar_url == "https://tardy.news/favicon.svg" {
+            account.avatar_url = local_avatar_url(state, account.id).unwrap_or_default();
+        }
+    }
+}
+
+fn localize_posts(state: &AppState, posts: &mut [AppFeedPost]) {
+    if std::env::var_os("TARDY_LOCAL_BLOB_DIR").is_none() {
+        return;
+    }
+    for post in posts {
+        if !post.media.is_empty() {
+            continue;
+        }
+        let (poster, video, duration_ms) =
+            LOCAL_MEDIA[usize::from(post.id.as_bytes()[0]) % LOCAL_MEDIA.len()];
+        let poster_url = local_blob_url(state, poster).unwrap_or_default();
+        // Keep a useful mix in development: every third seeded post exercises the video
+        // player, while the others exercise image cards and avatar loading.
+        if post.id.as_bytes()[1] % 3 == 0 {
+            post.format = "reel";
+            post.media.push(serde_json::json!({
+                "type":"video",
+                "url":local_blob_url(state, video).unwrap_or_default(),
+                "poster_url":poster_url,
+                "width":1080,
+                "height":1920,
+                "duration_ms":duration_ms
+            }));
+        } else {
+            post.media.push(serde_json::json!({
+                "type":"image",
+                "url":poster_url,
+                "width":1080,
+                "height":1920
+            }));
+        }
     }
 }
 
@@ -1447,7 +1519,8 @@ async fn feed(
     }
     let viewer = optional_authenticated_actor(&state, &headers).await?;
     if let Some(social) = &state.social {
-        let items = social.app_feed(viewer, query.limit as i64).await?;
+        let mut items = social.app_feed(viewer, query.limit as i64).await?;
+        localize_posts(&state, &mut items);
         return Ok(Json(serde_json::json!({"items":items,"next_cursor":null})).into_response());
     }
     let candidates = state.store.feed_candidates(viewer)?;
@@ -1482,9 +1555,10 @@ async fn reels_feed(
         return Err(ApiError::bad_request("limit must be between 1 and 100"));
     }
     let viewer = Some(authenticated_actor(&state, &headers).await?);
-    let items = social_store(&state)?
+    let mut items = social_store(&state)?
         .app_posts(viewer, None, query.limit as i64)
         .await?;
+    localize_posts(&state, &mut items);
     Ok(Json(serde_json::json!({"items":items,"next_cursor":null})))
 }
 
@@ -1587,9 +1661,10 @@ async fn explore_feed(
         return Err(ApiError::bad_request("limit must be between 1 and 100"));
     }
     let viewer = Some(authenticated_actor(&state, &headers).await?);
-    let items = social_store(&state)?
+    let mut items = social_store(&state)?
         .app_posts(viewer, None, query.limit as i64)
         .await?;
+    localize_posts(&state, &mut items);
     Ok(Json(serde_json::json!({"items":items,"next_cursor":null})))
 }
 
@@ -1710,7 +1785,9 @@ async fn get_profile(
 ) -> Result<impl IntoResponse, ApiError> {
     if let Some(social) = &state.social {
         let _ = authenticated_account(&state, &headers).await?;
-        return Ok(Json(social.app_account_by_handle(&handle).await?).into_response());
+        let mut account = social.app_account_by_handle(&handle).await?;
+        localize_accounts(&state, std::slice::from_mut(&mut account));
+        return Ok(Json(account).into_response());
     }
     Ok(Json(state.store.public_profile(
         &handle,
@@ -1725,7 +1802,9 @@ async fn get_profile_by_id(
     headers: HeaderMap,
 ) -> Result<Json<AppAccount>, ApiError> {
     let _ = authenticated_account(&state, &headers).await?;
-    Ok(Json(social_store(&state)?.app_account_by_id(id).await?))
+    let mut account = social_store(&state)?.app_account_by_id(id).await?;
+    localize_accounts(&state, std::slice::from_mut(&mut account));
+    Ok(Json(account))
 }
 
 async fn get_profile_posts(
@@ -1739,9 +1818,10 @@ async fn get_profile_posts(
     }
     let viewer = Some(authenticated_actor(&state, &headers).await?);
     social_store(&state)?.app_account_by_id(id).await?;
-    let items = social_store(&state)?
+    let mut items = social_store(&state)?
         .app_posts(viewer, Some(id), query.limit as i64)
         .await?;
+    localize_posts(&state, &mut items);
     Ok(Json(serde_json::json!({"items":items,"next_cursor":null})))
 }
 
