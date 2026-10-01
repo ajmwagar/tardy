@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, KeyboardAvoidingView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { KeyboardAvoidingView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { handleProblem, normalizeHandle } from '@/auth/handle';
 import { PillButton } from '@/components/pill-button';
-import { ErrorState } from '@/components/states';
+import { ErrorState, Pulse, SkeletonBlock } from '@/components/states';
 import { Avatar, NameLine } from '@/components/ui';
 import type { Account, AccountKind } from '@/data/types';
 import { auth, useAuth } from '@/state/auth';
@@ -138,7 +138,7 @@ function FollowStep() {
       {loadError ? (
         <ErrorState message="Couldn't load suggestions." detail={loadError} onRetry={retry} />
       ) : !suggested ? (
-        <ActivityIndicator color={colors.textSecondary} style={styles.loading} />
+        <SuggestionsSkeleton />
       ) : (
         <ScrollView style={styles.list} contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false}>
           {SECTIONS.map(({ kind, title }) => {
@@ -159,6 +159,27 @@ function FollowStep() {
 
       {finishError && <Text style={[styles.hint, styles.hintError]}>{finishError}</Text>}
       <PillButton label="Done" busy={finishing} onPress={() => void finish()} />
+    </View>
+  );
+}
+
+/** Shaped like a section of SuggestionRows. */
+function SuggestionsSkeleton() {
+  return (
+    <View style={styles.loading} accessibilityLabel="Loading suggestions">
+      <Pulse style={styles.section}>
+        <SkeletonBlock style={styles.skeletonTitle} />
+        {[0, 1, 2, 3, 4].map((i) => (
+          <View key={i} style={styles.row}>
+            <SkeletonBlock style={styles.skeletonAvatar} />
+            <View style={styles.rowText}>
+              <SkeletonBlock style={styles.skeletonName} />
+              <SkeletonBlock style={styles.skeletonBio} />
+            </View>
+            <SkeletonBlock style={styles.skeletonButton} />
+          </View>
+        ))}
+      </Pulse>
     </View>
   );
 }
@@ -212,4 +233,9 @@ const styles = StyleSheet.create({
   sectionTitle: { color: colors.text, fontSize: 15, fontWeight: '700' },
   row: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   rowText: { flex: 1, gap: 2 },
+  skeletonTitle: { width: 90, height: 14 },
+  skeletonAvatar: { width: 44, height: 44, borderRadius: 22 },
+  skeletonName: { width: 120, height: 12 },
+  skeletonBio: { width: '80%', height: 10, marginTop: 4 },
+  skeletonButton: { width: 96, height: 32, borderRadius: 16 },
 });
