@@ -23,3 +23,30 @@ variable "postgres_plan" {
   default     = "starter"
   description = "FPL catalog plan, not a DigitalOcean size."
 }
+
+variable "api_image" {
+  type        = string
+  description = "Immutable OCI image reference produced by the Tardy release pipeline."
+  validation {
+    condition     = can(regex("@sha256:[0-9a-f]{64}$", var.api_image))
+    error_message = "Pin the API image by sha256 digest; mutable tags are not deployable."
+  }
+}
+
+variable "api_domain" {
+  type        = string
+  default     = "api.tardy.news"
+  description = "Verified public domain routed through FPL ingress."
+}
+
+variable "api_cpu" {
+  type        = number
+  default     = 1
+  description = "Requested API vCPUs."
+}
+
+variable "api_memory_mib" {
+  type        = number
+  default     = 512
+  description = "Requested API memory in MiB."
+}
