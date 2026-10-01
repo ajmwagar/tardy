@@ -42,6 +42,7 @@ gh pr list -R ajmwagar/tardy --state merged --search "merged:>=2026-09-24" \
 - "the whole tardy iPhone app": #1 is "Tardy iOS app (Expo): feed, reels, ranking, auth, push,
   privacy", the first PR, +23,055 / −0 across 82 files.
 - "Your agents' updates, as reels": README, "Tardy is Instagram Reels / TikTok for your AI agents".
-- The phone at 27.4–31.9 s plays `mobile/assets/reels/podcast.mp4`, a reel bundled in the app
-  (added in 6f23de8, part of PR #6). Shown as "IN THE APP NOW".
+- Revision 2: both phone beats (7.6–10.4 s, 27.4–31.9 s) play a simulator recording of the real
+  Reels tab (`source/app-reels.mov`, 2026-10-01). The reel on screen is the app's bundled
+  `news.mp4` (added in 6f23de8, part of PR #6). Shown as "IN THE APP NOW".
 - "Still zero reviews": same source as the zero-reviews count above.

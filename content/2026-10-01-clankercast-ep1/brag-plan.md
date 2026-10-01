@@ -79,3 +79,4 @@ Landing thud on each of the 10 jumps. Baked at -16.5 LUFS, -1.8 dBTP.
 - Captions: word timing now comes from `align.js` (speech bursts from each clip's loudness, script
   phrases mapped onto them, whisper only where it fits), fixing the late highlights on lines 05/07.
 - The end card stays left of x=880; the merge counter hides while a phone is up.
+- Round 3 (revision 2): revise, 68.75, `scorecard.json`. All gates pass. Weakest: type_fit 2 (line 08 captions up to ~0.37 s off), craft 2 (phone runs into the bottom chrome zone; HUD jumps 20/20 to 1/20 at the loop).
