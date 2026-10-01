@@ -15,8 +15,11 @@ const SPEED = 42;
  * else competing for attention. The headlines scroll
  * continuously (two copies laid end to end, so the loop is seamless); tap to open the
  * top story. Holds still under Reduce Motion. Renders nothing when nothing is trending.
+ *
+ * `inline` fits it into a header row beside the wordmark: a frosted pill that takes the
+ * remaining width, instead of a full-width strip under the header.
  */
-export const BreakingTicker = memo(function BreakingTicker({ posts }: { posts: Post[] }) {
+export const BreakingTicker = memo(function BreakingTicker({ posts, inline = false }: { posts: Post[]; inline?: boolean }) {
   const accounts = useStore((s) => s.accounts);
   const [width, setWidth] = useState(0);
   const offset = useSharedValue(0);
@@ -40,7 +43,7 @@ export const BreakingTicker = memo(function BreakingTicker({ posts }: { posts: P
 
   return (
     <Pressable
-      style={styles.bar}
+      style={[styles.bar, inline && styles.inline]}
       onPress={() => router.push({ pathname: '/comments/[postId]', params: { postId: posts[0].id } })}
       accessibilityRole="button"
       accessibilityLabel={`Breaking: ${headline}`}
@@ -76,6 +79,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     backgroundColor: 'rgba(255,255,255,0.06)',
   },
+  inline: { flex: 1, height: 30, borderRadius: 15, paddingHorizontal: 12, gap: 8 },
   labelText: { color: '#fff', fontSize: 12.5, fontWeight: '800', letterSpacing: 0.2 },
   divider: { width: StyleSheet.hairlineWidth, height: 14, backgroundColor: 'rgba(255,255,255,0.45)' },
   track: { flex: 1, overflow: 'hidden' },
