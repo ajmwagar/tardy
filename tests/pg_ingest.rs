@@ -31,6 +31,11 @@ async fn polling_is_deduplicated_and_enqueues_exactly_once() {
         .sync_sources(std::slice::from_ref(&source))
         .await
         .unwrap();
+    sqlx::query("UPDATE source_channels SET next_poll_at=now() WHERE id=$1")
+        .bind(&source.id)
+        .execute(&pool)
+        .await
+        .unwrap();
     let claimed = store
         .claim_due_source("poller-a", 60)
         .await
