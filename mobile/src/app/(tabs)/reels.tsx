@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DoubleTapLike } from '@/components/double-tap-like';
 import { BreakingTicker } from '@/components/breaking-ticker';
 import { EmptyState, ErrorState, ReelSkeleton } from '@/components/states';
+import { StyleChip } from '@/components/style-chip';
 import { Avatar, Icon, NameLine, PressableScale, Reaction, StatusPill } from '@/components/ui';
 import { VideoSurface } from '@/components/video-surface';
 import type { Post } from '@/data/types';
@@ -110,6 +111,7 @@ const Reel = memo(function Reel({ post, active, height }: { post: Post; active: 
         </Text>
         <View style={styles.metaRow}>
           {post.status && <StatusPill value={post.status} compact />}
+          <StyleChip style={post.style} variant="overlay" />
           {project && project.id !== post.authorId && (
             <View style={styles.chip}>
               <Icon name="folder.fill" size={10} color="#fff" />

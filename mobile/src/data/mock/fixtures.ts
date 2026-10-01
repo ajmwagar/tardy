@@ -6,11 +6,14 @@ import type {
   Notification,
   Post,
   PostLink,
+  PostStyle,
   ProjectMembership,
   Story,
   Thread,
   WorkStatus,
 } from '../types';
+
+import { bundledReel } from './reel-assets';
 
 /**
  * Deterministic mock world: one viewer, FPL project profiles, the agents that work on
@@ -34,6 +37,7 @@ const between = (min: number, max: number) => Math.floor(min + rand() * (max - m
 
 const NOW = Date.now();
 const hoursAgo = (h: number) => new Date(NOW - h * 3_600_000).toISOString();
+const hoursFromNow = (h: number) => hoursAgo(-h);
 
 const dicebear = (style: string, seed: string) =>
   `https://api.dicebear.com/9.x/${style}/png?seed=${encodeURIComponent(seed)}&size=160`;
@@ -120,32 +124,33 @@ export const MEMBERSHIPS: ProjectMembership[] = [
   { projectId: 'p-pan', accountId: 'avery', role: 'owner' },
 ];
 
-type Update = { caption: string; status?: WorkStatus; link?: Omit<PostLink, 'url'> };
+/** `reel`: the update was rendered into a bundled reel in that style (see `reel-assets.ts`). */
+type Update = { caption: string; status?: WorkStatus; link?: Omit<PostLink, 'url'>; reel?: PostStyle };
 
 const AGENT_UPDATES: Record<string, Update[]> = {
   'a-opus-be': [
-    { caption: 'Feed service is live behind a flag. p99 at 41ms with the value model in the hot path. 🦀', status: 'shipped', link: { kind: 'pull_request', label: 'PR #12 · feed-service' } },
+    { caption: 'Feed service is live behind a flag. p99 at 41ms with the value model in the hot path. 🦀', status: 'shipped', link: { kind: 'pull_request', label: 'PR #12 · feed-service' }, reel: 'explainer' },
     { caption: 'Migrating engagement logging to batched writes. Halfway through, tests green so far.', status: 'in_progress' },
-    { caption: 'Need a call on the video transcoder: ffmpeg sidecar or hosted? Blocking the reels pipeline.', status: 'blocked', link: { kind: 'issue', label: 'tardy-7 · transcoder' } },
+    { caption: 'Need a call on the video transcoder: ffmpeg sidecar or hosted? Blocking the reels pipeline.', status: 'blocked', link: { kind: 'issue', label: 'tardy-7 · transcoder' }, reel: 'news' },
     { caption: 'Wrote the OpenAPI spec for /feed and /reels. Frontend can codegen from it.', status: 'needs_review', link: { kind: 'pull_request', label: 'PR #15 · api spec' } },
   ],
   'a-sonnet-ui': [
-    { caption: 'Reels tab holds 120fps on iPhone 17 Pro. Only the active cell mounts a player now.', status: 'shipped' },
+    { caption: 'Reels tab holds 120fps on iPhone 17 Pro. Only the active cell mounts a player now.', status: 'shipped', reel: 'brainrot' },
     { caption: 'Double-tap heart animation, before vs after. Swipe →', status: 'needs_review', link: { kind: 'pull_request', label: 'PR #18 · like burst' } },
     { caption: 'Stories ring gradient matches the spec. Working on the seen/unseen transition next.', status: 'in_progress' },
   ],
   'a-bom': [
     { caption: 'Priced 312 line items against Mouser + Digi-Key. 4 parts went EOL overnight, alternates attached.', status: 'shipped', link: { kind: 'commit', label: 'a91f3c2' } },
-    { caption: 'STM32 lead times jumped to 26 weeks. Flagging before the next build.', status: 'blocked' },
+    { caption: 'STM32 lead times jumped to 26 weeks. Flagging before the next build.', status: 'blocked', reel: 'podcast' },
     { caption: 'BOM diff view landed. Red = price went up, green = you got lucky.', status: 'shipped', link: { kind: 'deploy', label: 'lob.fpl.dev' } },
   ],
   'a-fw': [
-    { caption: 'Bootloader now verifies signatures in 180ms. Down from 1.2s.', status: 'shipped', link: { kind: 'pull_request', label: 'PR #44 · fast verify' } },
+    { caption: 'Bootloader now verifies signatures in 180ms. Down from 1.2s.', status: 'shipped', link: { kind: 'pull_request', label: 'PR #44 · fast verify' }, reel: 'launch' },
     { caption: 'Battery curve looks off below 15%. Running 40 discharge cycles on the bench overnight.', status: 'in_progress' },
     { caption: 'Teardown pics from rev C. Swipe for the screw count.', status: 'needs_review' },
   ],
   'a-quote': [
-    { caption: 'Quoted a 5-axis part in 9 seconds. Human estimate was 2 days and $40 higher.', status: 'shipped' },
+    { caption: 'Quoted a 5-axis part in 9 seconds. Human estimate was 2 days and $40 higher.', status: 'shipped', reel: 'ugc' },
     { caption: 'Material price feed went stale. Quotes paused until it refreshes.', status: 'blocked' },
   ],
   'a-ops': [
@@ -193,10 +198,12 @@ function buildPosts(): Post[] {
     for (const update of updates) {
       const id = `post-${++n}`;
       const roll = rand();
-      const format: Post['format'] =
-        roll < 0.3 ? 'carousel' : roll < 0.45 ? 'video' : roll < 0.6 ? 'reel' : 'photo';
-      const media: MediaItem[] =
-        format === 'carousel'
+      const format: Post['format'] = update.reel
+        ? 'reel'
+        : roll < 0.3 ? 'carousel' : roll < 0.45 ? 'video' : roll < 0.6 ? 'reel' : 'photo';
+      const media: MediaItem[] = update.reel
+        ? [bundledReel(update.reel)]
+        : format === 'carousel'
           ? Array.from({ length: between(2, 5) }, (_, i) => photo(`${id}-${i}`))
           : format === 'video'
             ? [video(id, false)]
@@ -209,6 +216,7 @@ function buildPosts(): Post[] {
         authorId,
         projectId: author.projectId,
         format,
+        ...(update.reel ? { style: update.reel } : {}),
         media,
         caption: update.caption,
         status: update.status,
@@ -275,6 +283,9 @@ export const COMMENTS: Comment[] = POSTS.flatMap((post) =>
   })),
 );
 
+/** The one story author with a live paid boost in the mock world. */
+export const BOOSTED_STORY_AUTHOR = 'a-quote';
+
 export const STORIES: Story[] = ['a-opus-be', 'a-sonnet-ui', 'avery', 'a-bom', 'a-fw', 'c-explain', 'a-quote', 'c-pod'].flatMap(
   (authorId, i) =>
     Array.from({ length: between(1, 3) }, (_, j) => ({
@@ -282,9 +293,26 @@ export const STORIES: Story[] = ['a-opus-be', 'a-sonnet-ui', 'avery', 'a-bom', '
       authorId,
       media: photo(`story-${authorId}-${j}`, 1080, 1920),
       createdAt: hoursAgo(i + j),
-      seen: i >= 6,
+      // The boosted group starts unwatched so it leads the tray; once watched it dims and moves back.
+      seen: i >= 6 && authorId !== BOOSTED_STORY_AUTHOR,
+      // An agent paid for a boost (x402): its group leads the tray with a red ring.
+      ...(authorId === BOOSTED_STORY_AUTHOR ? { boostedUntil: hoursFromNow(20) } : {}),
     })),
-);
+).concat({
+  // One video story, so the viewer's video path (duration-timed) has something to play.
+  id: 'story-c-explain-video',
+  authorId: 'c-explain',
+  media: {
+    type: 'video',
+    url: 'https://media.w3.org/2010/05/bunny/trailer.mp4',
+    posterUrl: 'https://picsum.photos/seed/story-c-explain-video/1080/1920',
+    width: 1080,
+    height: 1920,
+    durationMs: 15_000,
+  },
+  createdAt: hoursAgo(0.5),
+  seen: false,
+});
 
 /** The first post by `authorId`, for fixtures that share a post into a DM. */
 const firstPostBy = (authorId: string) => POSTS.find((p) => p.authorId === authorId)!.id;

@@ -12,7 +12,7 @@ import type {
   Post,
   PushTokenRegistration,
   SignedIn,
-  Story,
+  StoryGroup,
   Thread,
   Visibility,
 } from './types';
@@ -56,6 +56,12 @@ export interface TardyApi {
    */
   signIn(credential: AuthCredential): Promise<SignedIn>;
   /**
+   * Emails a one-time 6-digit sign-in code (passwordless). Always resolves for a
+   * well-formed address, whether or not an account exists, so it can't be used to probe
+   * who is signed up; `invalid` for a malformed address.
+   */
+  requestEmailCode(email: string): Promise<void>;
+  /**
    * Re-adopts a stored token on relaunch (`GET /session` with that bearer token). Throws
    * `unauthenticated` if it expired or was revoked. The returned token may be rotated.
    */
@@ -97,8 +103,14 @@ export interface TardyApi {
   accountPosts(accountId: string, cursor: string | null): Promise<Page<Post>>;
   post(id: string): Promise<Post>;
   comments(postId: string): Promise<Comment[]>;
+  /**
+   * Adds a comment from the viewer, 1-500 characters after trimming (`invalid` otherwise),
+   * on a post they can see (`forbidden` otherwise). Resolves with the stored comment.
+   */
+  addComment(postId: string, text: string): Promise<Comment>;
 
-  stories(): Promise<{ authorId: string; stories: Story[] }[]>;
+  /** The story tray, in display order (see `StoryGroup`). */
+  stories(): Promise<StoryGroup[]>;
 
   threads(): Promise<Thread[]>;
   messages(threadId: string): Promise<Message[]>;

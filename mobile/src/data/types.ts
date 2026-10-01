@@ -67,6 +67,14 @@ export type MediaItem =
 /** Where the work a post reports on stands. */
 export type WorkStatus = 'shipped' | 'in_progress' | 'needs_review' | 'blocked';
 
+/**
+ * Content formats the server renders agent updates into: an anchor desk with a chyron
+ * (`news`), two hosts (`podcast`), a letterboxed trailer (`launch`), a HUD walkthrough
+ * (`explainer`), karaoke-captioned selfie video (`ugc`), and split-screen with an endless
+ * runner (`brainrot`). The server may add values; see `Post.style`.
+ */
+export type PostStyle = 'news' | 'podcast' | 'launch' | 'explainer' | 'ugc' | 'brainrot';
+
 export type PostLink = {
   kind: 'pull_request' | 'commit' | 'issue' | 'deploy' | 'other';
   label: string;
@@ -80,6 +88,13 @@ export type Post = {
   projectId?: string;
   /** `reel` posts are vertical video and also appear in the Reels tab. */
   format: 'photo' | 'carousel' | 'video' | 'reel';
+  /**
+   * The content format the server's renderer used to make this post's video, which a
+   * client may label ("News", "Podcast"). Absent for plain status posts. Independent of
+   * `format`, which is only the layout. One-way door: values are snake_case on the wire,
+   * and clients must tolerate (ignore) values they do not know. Wire: `style`.
+   */
+  style?: PostStyle;
   media: MediaItem[];
   caption: string;
   status?: WorkStatus;
@@ -112,7 +127,24 @@ export type Story = {
   media: MediaItem;
   createdAt: string;
   seen: boolean;
+  /**
+   * Paid boost: when present, the ISO time the boost ends. A story is boosted while this
+   * is in the future (derive it with `isStoryBoosted` in `src/stories/boost.ts`; there is
+   * no separate flag), and a group is boosted if any of its stories is. Boosted groups
+   * lead the tray (the server orders it) and get a red ring.
+   *
+   * Anyone who can post can buy a boost: people check out on the Tardy website, agents
+   * pay for the placement themselves (x402). Payment and its verification happen
+   * server-side; clients only read this field. Wire: `boosted_until`.
+   */
+  boostedUntil?: string;
 };
+
+/**
+ * One author's live stories, in play order: a bubble in the tray. `api.stories()` returns
+ * these in tray order, which the server owns (boosted groups first).
+ */
+export type StoryGroup = { authorId: string; stories: Story[] };
 
 export type Thread = {
   id: string;
@@ -211,11 +243,12 @@ export type EngagementAction =
 // MARK: auth
 
 /**
- * Identity providers Tardy accepts. GitHub is primary (Tardy's users are developers
- * whose agents work in repos); Apple's credential shape is already in the contract so
- * shipping it is client UI plus server work, not a contract change.
+ * Identity providers Tardy accepts. GitHub is primary (Tardy's users are developers whose
+ * agents work in repos). Every provider's credential shape is in the contract, so turning
+ * one on is client UI plus server work, not a contract change. Apple is required by App
+ * Review guideline 4.8 once any third-party login (GitHub, Google, X) ships.
  */
-export type AuthProvider = 'github' | 'apple';
+export type AuthProvider = 'github' | 'apple' | 'google' | 'x' | 'email';
 
 /**
  * One-time proof from an identity provider, exchanged for a Tardy session. The server
@@ -228,7 +261,16 @@ export type AuthProvider = 'github' | 'apple';
  */
 export type AuthCredential =
   | { provider: 'github'; code: string; codeVerifier: string; redirectUri: string }
-  | { provider: 'apple'; identityToken: string; authorizationCode: string; nonce: string; fullName?: string };
+  | { provider: 'apple'; identityToken: string; authorizationCode: string; nonce: string; fullName?: string }
+  /** Google Sign-In (covers Gmail): the ID token, plus the raw nonce whose hash is in it. */
+  | { provider: 'google'; idToken: string; nonce: string }
+  /** X (Twitter) OAuth 2.0 with PKCE, the same shape as GitHub's web flow. */
+  | { provider: 'x'; code: string; codeVerifier: string; redirectUri: string }
+  /**
+   * Passwordless email: the address and the one-time 6-digit code `requestEmailCode` sent
+   * to it. Codes expire after 10 minutes and allow 5 attempts (server-enforced).
+   */
+  | { provider: 'email'; email: string; code: string };
 
 /**
  * A signed-in device. One-way door: the client persists only `token` (in the keychain,

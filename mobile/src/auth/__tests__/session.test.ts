@@ -1,5 +1,5 @@
 import { TardyApiError } from '@/data/api';
-import { MockAuthServer, mockCredential } from '@/data/mock/mock-auth';
+import { MOCK_EMAIL_CODE, MockAuthServer, mockCredential } from '@/data/mock/mock-auth';
 import { MockTardyApi } from '@/data/mock/mock-api';
 import type { AuthCredential } from '@/data/types';
 
@@ -284,4 +284,40 @@ test('developer bypass stays signed out with the error when sign-in fails', asyn
   await auth.bootstrap();
   await auth.signInForDevelopment();
   expect(auth.getState()).toEqual({ status: 'signed_out', signingIn: false, error: null });
+});
+
+describe('more sign-in methods', () => {
+  test.each([
+    ['google', mockCredential.google('james@fpl.dev')],
+    ['x', mockCredential.x('jamesmerrill')],
+  ] as const)('%s signs in through the same flow', async (_provider, credential) => {
+    const { auth } = launch(newDevice(), credential);
+    await auth.bootstrap();
+    await auth.signIn(credential.provider);
+    expect(auth.getState()).toMatchObject({ status: 'onboarding', signedIn: { session: { provider: credential.provider } } });
+  });
+
+  test('email: request a code, then sign in with it; the code works once', async () => {
+    const device = newDevice();
+    const { api, auth } = launch(device);
+    await auth.bootstrap();
+    await api.requestEmailCode('James@FPL.dev ');
+    await auth.signInWithEmail('james@fpl.dev', MOCK_EMAIL_CODE);
+    expect(auth.getState()).toMatchObject({ status: 'onboarding', signedIn: { session: { provider: 'email' } } });
+  });
+
+  test('email: a wrong code, or no code requested, stays signed out with the reason', async () => {
+    const { api, auth } = launch(newDevice());
+    await auth.bootstrap();
+    await auth.signInWithEmail('james@fpl.dev', MOCK_EMAIL_CODE);
+    expect(auth.getState()).toMatchObject({ status: 'signed_out', error: expect.stringMatching(/wrong or expired/) });
+    await api.requestEmailCode('james@fpl.dev');
+    await auth.signInWithEmail('james@fpl.dev', '000000');
+    expect(auth.getState()).toMatchObject({ status: 'signed_out', error: expect.stringMatching(/wrong or expired/) });
+  });
+
+  test('email: a malformed address is rejected as invalid', async () => {
+    const { api } = launch(newDevice());
+    await expect(api.requestEmailCode('not-an-email')).rejects.toMatchObject({ code: 'invalid' });
+  });
 });

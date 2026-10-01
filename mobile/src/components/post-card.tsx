@@ -8,6 +8,7 @@ import { logEngagement, toggleAlarm, toggleFollowing, toggleLiked, toggleSaved, 
 import { colors, layout, radius, timeAgo } from '@/theme';
 
 import { CarouselDots, MediaCarousel } from './media-carousel';
+import { StyleChip } from './style-chip';
 import { Avatar, Icon, NameLine, PressableScale, Reaction, StatusPill } from './ui';
 
 /** Cards float with a gutter so the feed reads as a stack of updates, not a photo wall. */
@@ -135,9 +136,10 @@ export const PostCard = memo(function PostCard({
           {post.caption}
         </Text>
 
-        {(post.status || post.links.length > 0) && (
+        {(post.status || post.style || post.links.length > 0) && (
           <View style={styles.meta}>
             {post.status && <StatusPill value={post.status} />}
+            <StyleChip style={post.style} variant="card" />
             {post.links.map((link) => (
               <PressableScale
                 key={link.url + link.label}

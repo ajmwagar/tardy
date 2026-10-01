@@ -8,9 +8,9 @@ import { PostCard } from '@/components/post-card';
 import { BreakingTicker } from '@/components/breaking-ticker';
 import { openFaultMenu } from '@/components/fault-menu';
 import { EmptyState, ErrorState, FeedSkeleton, InlineRetry } from '@/components/states';
-import { StoriesRow, type StoryGroup } from '@/components/stories-row';
+import { StoriesRow } from '@/components/stories-row';
 import { Icon, PressableScale } from '@/components/ui';
-import type { Post } from '@/data/types';
+import type { Post, StoryGroup } from '@/data/types';
 import { api, ensureAccounts, loadFeedPage, loadTrending, logEngagement, reportError, useStore } from '@/state/store';
 import { colors, type } from '@/theme';
 

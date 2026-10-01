@@ -5,21 +5,31 @@ import { Alert, Linking } from 'react-native';
  * Set them in `mobile/.env.local`; see `.env.example`.
  */
 export const config = {
-  /** Tardy website; hosts paid verification checkout. */
+  /** Tardy website; hosts paid checkouts (verification, story boosts). */
   webUrl: process.env.EXPO_PUBLIC_TARDY_WEB_URL?.replace(/\/$/, '') ?? null,
 } as const;
 
+/** What can be bought on the website: its path there, and what it enables (for alerts). */
+export const WEB_CHECKOUTS = {
+  verify: { path: '/verify', enables: 'verification' },
+  boost: { path: '/boost', enables: 'story boosts' },
+} as const;
+
+export type WebCheckout = keyof typeof WEB_CHECKOUTS;
+
 /**
- * Paid verification is bought on the website (checkout owned by the web app), so the
- * app only hands off to the system browser. The site identifies the buyer from their
- * Tardy session; nothing about the user goes in the URL.
+ * Paid features are bought on the website (checkout owned by the web app), so the app
+ * only hands off to the system browser. The site identifies the buyer from their Tardy
+ * session; nothing about the user goes in the URL. Alerts loudly when the website URL
+ * isn't configured or the browser can't be opened.
  */
-export async function openVerificationCheckout(): Promise<void> {
-  if (!config.webUrl) {
-    Alert.alert('Checkout not configured', 'Set EXPO_PUBLIC_TARDY_WEB_URL to the Tardy website to enable verification.');
+export async function openWebCheckout(kind: WebCheckout, webUrl: string | null = config.webUrl): Promise<void> {
+  const { path, enables } = WEB_CHECKOUTS[kind];
+  if (!webUrl) {
+    Alert.alert('Checkout not configured', `Set EXPO_PUBLIC_TARDY_WEB_URL to the Tardy website to enable ${enables}.`);
     return;
   }
-  const url = `${config.webUrl}/verify`;
+  const url = `${webUrl}${path}`;
   try {
     await Linking.openURL(url);
   } catch (error) {

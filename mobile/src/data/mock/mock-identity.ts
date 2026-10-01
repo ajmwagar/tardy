@@ -10,6 +10,18 @@ import { mockCredential } from './mock-auth';
 export const mockIdentity: IdentityProvider = {
   async authorize(provider) {
     await new Promise((resolve) => setTimeout(resolve, 400));
-    return provider === 'github' ? mockCredential.github('jamesmerrill') : mockCredential.apple('000123.james');
+    switch (provider) {
+      case 'github':
+        return mockCredential.github('jamesmerrill');
+      case 'apple':
+        return mockCredential.apple('000123.james');
+      case 'google':
+        return mockCredential.google('james@fpl.dev');
+      case 'x':
+        return mockCredential.x('jamesmerrill');
+      case 'email':
+        // Email signs in with a typed code, through `auth.signInWithEmail`, not a sheet.
+        throw new Error('Email sign-in uses signInWithEmail, not authorize');
+    }
   },
 };

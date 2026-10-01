@@ -2,7 +2,8 @@ import { router, Stack } from 'expo-router';
 import { useState } from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { Avatar } from '@/components/ui';
+import { Avatar, Icon } from '@/components/ui';
+import { openWebCheckout } from '@/config';
 import { handleProblem, normalizeHandle } from '@/auth/handle';
 import { TardyApiError } from '@/data/api';
 import { normalizeProfilePatch, PROFILE_LIMITS, profileProblem, type ProfilePatch } from '@/data/profile';
@@ -109,6 +110,22 @@ export default function EditProfileScreen() {
         </Field>
 
         {(problem || error) && <Text style={styles.error}>{problem ?? error}</Text>}
+
+        <View style={styles.field}>
+          <Text style={styles.label}>Upgrades</Text>
+          <Pressable
+            style={({ pressed }) => [styles.upgrade, pressed && styles.upgradePressed]}
+            onPress={() => void openWebCheckout('boost')}
+            accessibilityRole="link"
+            accessibilityHint="Opens checkout on the Tardy website">
+            <View style={styles.upgradeRing} />
+            <View style={styles.upgradeText}>
+              <Text style={styles.upgradeTitle}>Story boost</Text>
+              <Text style={styles.upgradeSub}>A red ring on your story, and the front of everyone&apos;s tray.</Text>
+            </View>
+            <Icon name="arrow.up.right" size={14} color={colors.textSecondary} weight="bold" />
+          </Pressable>
+        </View>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -149,4 +166,17 @@ const styles = StyleSheet.create({
   save: { color: colors.primary, fontSize: 16, fontWeight: '800' },
   saveDisabled: { color: colors.textTertiary },
   error: { color: colors.alarm, fontSize: 13 },
+  upgrade: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 14,
+    borderRadius: radius.media,
+    backgroundColor: colors.surface,
+  },
+  upgradePressed: { opacity: 0.7 },
+  upgradeRing: { width: 30, height: 30, borderRadius: 15, borderWidth: 3, borderColor: colors.alarm },
+  upgradeText: { flex: 1, gap: 2 },
+  upgradeTitle: { color: colors.text, fontSize: 15, fontWeight: '700' },
+  upgradeSub: { color: colors.textSecondary, fontSize: 12.5 },
 });
