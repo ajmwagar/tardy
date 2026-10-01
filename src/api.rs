@@ -30,13 +30,15 @@ use crate::subscriptions::{
     FeedEvent, NewSubscription, PgSubscriptionStore, Subscription, SubscriptionError,
 };
 use axum::extract::{Path, Query, State};
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Json, Router, middleware};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
+use tokio_util::io::ReaderStream;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
@@ -1612,7 +1614,11 @@ async fn stories(
 
 /// Public development-only blob transport. It deliberately accepts one filename rather
 /// than an arbitrary path, preventing traversal outside `TARDY_LOCAL_BLOB_DIR`.
-async fn local_blob(Path(name): Path<String>) -> Result<Response, ApiError> {
+async fn local_blob(
+    Path(name): Path<String>,
+    method: Method,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
     if name.is_empty()
         || name.contains("..")
         || !name
@@ -1623,12 +1629,18 @@ async fn local_blob(Path(name): Path<String>) -> Result<Response, ApiError> {
     }
     let root = std::env::var_os("TARDY_LOCAL_BLOB_DIR")
         .ok_or_else(|| ApiError::not_found("local blobs are disabled"))?;
-    let bytes = tokio::fs::read(std::path::Path::new(&root).join(&name))
+    let path = std::path::Path::new(&root).join(&name);
+    let mut file = tokio::fs::File::open(&path)
         .await
         .map_err(|error| match error.kind() {
             std::io::ErrorKind::NotFound => ApiError::not_found("blob not found"),
-            _ => ApiError::internal(format!("read local blob: {error}")),
+            _ => ApiError::internal(format!("open local blob: {error}")),
         })?;
+    let size = file
+        .metadata()
+        .await
+        .map_err(|error| ApiError::internal(format!("stat local blob: {error}")))?
+        .len();
     let content_type = match std::path::Path::new(&name)
         .extension()
         .and_then(|value| value.to_str())
@@ -1640,14 +1652,71 @@ async fn local_blob(Path(name): Path<String>) -> Result<Response, ApiError> {
         Some("webm") => "video/webm",
         _ => "application/octet-stream",
     };
-    Ok((
-        [
-            (header::CONTENT_TYPE, content_type),
-            (header::CACHE_CONTROL, "public, max-age=3600"),
-        ],
-        bytes,
-    )
-        .into_response())
+    let range = headers
+        .get(header::RANGE)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| parse_byte_range(value, size))
+        .transpose()?;
+    let (status, start, end) = match range {
+        Some((start, end)) => (StatusCode::PARTIAL_CONTENT, start, end),
+        None => (StatusCode::OK, 0, size.saturating_sub(1)),
+    };
+    let length = if size == 0 { 0 } else { end - start + 1 };
+    file.seek(std::io::SeekFrom::Start(start))
+        .await
+        .map_err(|error| ApiError::internal(format!("seek local blob: {error}")))?;
+    let body = if method == Method::HEAD {
+        axum::body::Body::empty()
+    } else {
+        axum::body::Body::from_stream(ReaderStream::new(file.take(length)))
+    };
+    let mut response = Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, content_type)
+        .header(header::CONTENT_LENGTH, length)
+        .header(header::ACCEPT_RANGES, "bytes")
+        .header(header::CACHE_CONTROL, "public, max-age=3600");
+    if status == StatusCode::PARTIAL_CONTENT {
+        response = response.header(header::CONTENT_RANGE, format!("bytes {start}-{end}/{size}"));
+    }
+    response
+        .body(body)
+        .map_err(|error| ApiError::internal(format!("build blob response: {error}")))
+}
+
+fn parse_byte_range(value: &str, size: u64) -> Result<(u64, u64), ApiError> {
+    let value = value
+        .strip_prefix("bytes=")
+        .ok_or_else(|| ApiError::range_not_satisfiable("unsupported range unit"))?;
+    if value.contains(',') || size == 0 {
+        return Err(ApiError::range_not_satisfiable("range is not satisfiable"));
+    }
+    let (start, end) = value
+        .split_once('-')
+        .ok_or_else(|| ApiError::range_not_satisfiable("invalid byte range"))?;
+    let (start, end) = if start.is_empty() {
+        let suffix = end
+            .parse::<u64>()
+            .map_err(|_| ApiError::range_not_satisfiable("invalid byte range"))?;
+        let length = suffix.min(size);
+        (size - length, size - 1)
+    } else {
+        let start = start
+            .parse::<u64>()
+            .map_err(|_| ApiError::range_not_satisfiable("invalid byte range"))?;
+        let end = if end.is_empty() {
+            size - 1
+        } else {
+            end.parse::<u64>()
+                .map_err(|_| ApiError::range_not_satisfiable("invalid byte range"))?
+                .min(size - 1)
+        };
+        (start, end)
+    };
+    if start >= size || end < start {
+        return Err(ApiError::range_not_satisfiable("range is not satisfiable"));
+    }
+    Ok((start, end))
 }
 
 /// Discovery is intentionally deterministic until the consented reranker is available:
@@ -2339,6 +2408,12 @@ impl ApiError {
             message: message.into(),
         }
     }
+    fn range_not_satisfiable(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::RANGE_NOT_SATISFIABLE,
+            message: message.into(),
+        }
+    }
     fn not_found(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::NOT_FOUND,
@@ -2586,6 +2661,16 @@ mod tests {
     use axum::http::{Request, header::CONTENT_TYPE};
     use serde_json::{Value, json};
     use tower::ServiceExt;
+
+    #[test]
+    fn local_blob_ranges_support_video_clients() {
+        assert_eq!(parse_byte_range("bytes=0-99", 1_000).unwrap(), (0, 99));
+        assert_eq!(parse_byte_range("bytes=900-", 1_000).unwrap(), (900, 999));
+        assert_eq!(parse_byte_range("bytes=-100", 1_000).unwrap(), (900, 999));
+        assert!(parse_byte_range("bytes=1000-", 1_000).is_err());
+        assert!(parse_byte_range("items=0-10", 1_000).is_err());
+        assert!(parse_byte_range("bytes=0-1,4-5", 1_000).is_err());
+    }
 
     struct TestReranker;
 
