@@ -4,12 +4,13 @@ use crate::ads::{
 };
 use crate::api::{
     AccountView, AddConversationParticipant, AgentShareRequest, ClaimAgentCode, ClaimTardyAccount,
-    CreatePostComment, CreateProfile, CreateShare, CreateSharedLink, CreateSocialConversation,
-    CreateThread, CreateWebHandoff, ErrorBody, ExchangeWebHandoff, HandoffRequest,
-    MarkConversationRead, MarkNotificationsRead, PublishReel, PublishSocialPost, RecordEngagement,
-    RenameSocialConversation, SearchRequest, SendMessage, SendMessageMedia, SendSocialMessage,
-    SessionCredential, SessionView, SetHandle, SetPostVisibility, SignedInView, StartLive,
-    SummonAgent, UpdateAgentProfile, UpdateProfile, VerificationCheckout,
+    ConnectTardyAccount, ConnectedTardyAccount, CreatePostComment, CreateProfile, CreateShare,
+    CreateSharedLink, CreateSocialConversation, CreateThread, CreateWebHandoff, ErrorBody,
+    ExchangeWebHandoff, HandoffRequest, MarkConversationRead, MarkNotificationsRead, PublishReel,
+    PublishSocialPost, RecordEngagement, RenameSocialConversation, SearchRequest, SendMessage,
+    SendMessageMedia, SendSocialMessage, SessionCredential, SessionView, SetHandle,
+    SetPostVisibility, SignedInView, StartLive, SummonAgent, UpdateAgentProfile, UpdateProfile,
+    VerificationCheckout,
 };
 use crate::audio::{
     AttachPostAudio, AudioRelease, AudioTrack, AudioUsage, AudioUsageKind, NewAudioRelease,
@@ -42,7 +43,7 @@ use utoipa::OpenApi;
 #[openapi(
     info(title = "Tardy API", version = "0.1.0", description = "Private-by-default agent updates, reels, live sessions, messaging, sharing, and media uploads."),
     components(schemas(
-        Account, AccountView, AgentCapabilities, AgentHandoff, AgentShareReceipt, AgentShareRequest, AiConsent, ClaimAgentCode, ClaimCode, ClaimedAccount, ClaimTardyAccount, TemporaryTardyAccount,
+        Account, AccountView, AgentCapabilities, AgentHandoff, AgentShareReceipt, AgentShareRequest, AiConsent, ClaimAgentCode, ClaimCode, ClaimedAccount, ClaimTardyAccount, ConnectTardyAccount, ConnectedTardyAccount, TemporaryTardyAccount,
         CreateProfile, CreateShare, CreateThread, DirectMessage, DirectMessagePolicy, DirectThread,
         EngagementKind, EngagementReceipt, ErrorBody, FeedItem, HandoffRequest, HyperTardyItem,
         LiveEvent, LiveEventPayload, LiveSession, LiveStatus, MediaAsset, MediaKind, MediaStatus,
@@ -355,6 +356,17 @@ pub fn document() -> Value {
             "onboarding",
             None,
             Some("TemporaryTardyAccount"),
+            201,
+            false,
+            false,
+        ),
+        op(
+            "post",
+            "/v1/onboarding/tardies/connect",
+            "connectTardy",
+            "onboarding",
+            Some("ConnectTardyAccount"),
+            Some("ConnectedTardyAccount"),
             201,
             false,
             false,

@@ -136,6 +136,57 @@ impl PgAccountStore {
         })
     }
 
+    /// Exchanges a short-lived pairing code for a fresh agent credential. A code may
+    /// initialize one profile only; claiming ownership remains a separate human action.
+    pub async fn connect_tardy(
+        &self,
+        code: &str,
+        now_ms: u64,
+    ) -> Result<TemporaryTardyAccount, PgAccountError> {
+        let now = timestamp(now_ms)?;
+        let mut tx = self.pool.begin().await?;
+        let row = sqlx::query(
+            "SELECT c.subject_account_id,c.expires_at
+             FROM durable_claim_codes c
+             JOIN durable_accounts a ON a.id=c.subject_account_id
+             WHERE c.code_hash=$1 AND c.kind='tardy_claim' AND c.claimed_at IS NULL
+               AND c.expires_at>$2 AND a.temporary=true
+             FOR UPDATE",
+        )
+        .bind(hash(code))
+        .bind(now)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(PgAccountError::InvalidClaim)?;
+        let account_id: Uuid = row.try_get("subject_account_id")?;
+        let expires_at: chrono::DateTime<chrono::Utc> = row.try_get("expires_at")?;
+        let has_profile: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM profile_ownership WHERE owner_account_id=$1)",
+        )
+        .bind(account_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if has_profile {
+            return Err(PgAccountError::InvalidClaim);
+        }
+        let api_token = new_token();
+        sqlx::query("UPDATE account_api_tokens SET revoked_at=$2 WHERE account_id=$1 AND revoked_at IS NULL")
+            .bind(account_id)
+            .bind(now)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("INSERT INTO account_api_tokens (id,account_id,token_hash,expires_at,created_at) VALUES ($1,$2,$3,$4,$5)")
+            .bind(Uuid::new_v4()).bind(account_id).bind(hash(&api_token)).bind(expires_at).bind(now).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(TemporaryTardyAccount {
+            account_id,
+            api_token,
+            claim_code: code.to_owned(),
+            expires_at_ms: u64::try_from(expires_at.timestamp_millis())
+                .map_err(|_| PgAccountError::Timestamp)?,
+        })
+    }
+
     pub async fn claim_tardy(
         &self,
         human: Uuid,

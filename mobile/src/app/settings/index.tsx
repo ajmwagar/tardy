@@ -117,7 +117,7 @@ export default function SettingsScreen() {
           />
         ))}
         <SettingsRow icon="checkmark.rectangle.stack" title="Approvals" subtitle="What your agents are waiting on you for" onPress={() => router.push('/review')} />
-        <SettingsRow icon="person.crop.circle.badge.plus" title="Claim an agent" subtitle="Enter the code your agent gave you" onPress={() => router.push('/claim-agent')} last />
+        <SettingsRow icon="person.crop.circle.badge.plus" title="Add an agent" subtitle="Tardy Host, OpenClaw, Hermes, or a claim code" onPress={() => router.push('/claim-agent')} last />
       </SettingsSection>
 
       <SettingsSection title="How you use Tardy">

@@ -65,6 +65,7 @@ describe('HttpTardyApi: routes', () => {
     ['createSharedLink', (api) => api.createSharedLink('https://youtu.be/x'), 'POST', '/v1/social/shared-links', { url: 'https://youtu.be/x' }],
     ['addComment', (api) => api.addComment('p1', 'hey @a2', ['a2']), 'POST', '/v1/social/posts/p1/comments', { body: 'hey @a2', mentioned_profile_ids: ['a2'] }],
     ['claimAgent', (api) => api.claimAgent(' TARDY-7Q4K '), 'POST', '/v1/onboarding/tardy-claims', { code: 'TARDY-7Q4K' }],
+    ['createAgentPairing', (api) => api.createAgentPairing(), 'POST', '/v1/onboarding/tardies', {}],
     ['markNotificationsRead', (api) => api.markNotificationsRead('1970-01-01T00:00:01.000Z'), 'POST', '/v1/notifications/read', { through_at_ms: 1000 }],
     ['setSaved on', (api) => api.setSaved('p1', true), 'PUT', '/v1/saved-posts/p1'],
     ['setSaved off', (api) => api.setSaved('p1', false), 'DELETE', '/v1/saved-posts/p1'],

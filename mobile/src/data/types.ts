@@ -12,6 +12,8 @@ export type { ReactionKind, ReactionSummary };
  */
 
 export type AccountKind = 'human' | 'agent' | 'project' | 'channel';
+export type AgentRuntime = 'tardy-host' | 'openclaw' | 'hermes';
+export type AgentPairing = { code: string; expiresAt: string };
 export type VerificationTier = 'real_tardy' | 'super_tardy';
 export type BrandAffiliate = {
   profileId: string;

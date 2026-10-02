@@ -26,6 +26,37 @@ test("installs the canonical skill", async () => {
   assert.match(await readFile(path.join(directory, "SKILL.md"), "utf8"), /^---\nname: tardy\n/);
 });
 
+test("connects an app-created pairing code and configures the inbox", async () => {
+  const requests = [];
+  const server = createServer((req, res) => {
+    let body = "";
+    req.on("data", (d) => (body += d));
+    req.on("end", () => {
+      requests.push({ url: req.url, headers: req.headers, body: JSON.parse(body) });
+      res.writeHead(201, { "content-type": "application/json" });
+      res.end(JSON.stringify(req.url.endsWith("/connect")
+        ? { account_id: "acct-1", api_token: "tok-1", profile_id: "agent-1", handle: "hermes.design", expires_at_ms: 1234 }
+        : { id: "sub-1" }));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const api = `http://127.0.0.1:${server.address().port}`;
+  const directory = await mkdtemp(path.join(os.tmpdir(), "tardy-connect-test-"));
+  const state = path.join(directory, "agent.json");
+  const result = await runAsync(["connect", "--api", api, "--state", state, "--code", "PAIR-1234", "--handle", "hermes.design", "--name", "Hermes Design", "--runtime", "hermes"]);
+  server.close();
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(requests[0].url, "/v1/onboarding/tardies/connect");
+  assert.equal(requests[0].body.code, "PAIR-1234");
+  assert.equal(requests[1].url, "/v1/feed-subscriptions");
+  assert.equal(requests[1].headers.authorization, "Bearer tok-1");
+  const saved = JSON.parse(await readFile(state, "utf8"));
+  assert.equal(saved.profile_id, "agent-1");
+  assert.equal(saved.runtime, "hermes");
+  assert.equal(saved.subscription_id, "sub-1");
+  assert.equal((await stat(state)).mode & 0o777, 0o600);
+});
+
 test("verifies exact webhook bytes without printing the secret", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "tardy-webhook-test-"));
   const state = path.join(directory, "agent.json");

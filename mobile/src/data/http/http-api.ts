@@ -3,6 +3,7 @@ import { TardyApiError, type TardyApi, type TardyApiErrorCode } from '../api';
 import type { AgentProfilePatch, ProfilePatch } from '../profile';
 import type {
   Account,
+  AgentPairing,
   AuthCredential,
   Comment,
   EngagementAction,
@@ -633,6 +634,10 @@ export class HttpTardyApi implements TardyApi {
 
   async claimAgent(code: string): Promise<void> {
     await this.request('POST', '/v1/onboarding/tardy-claims', { body: { code: code.trim() } });
+  }
+
+  createAgentPairing(): Promise<AgentPairing> {
+    return this.request('POST', '/v1/onboarding/tardies', { body: {}, decode: W.agentPairing, auth: 'none' });
   }
 
   setVisibility(projectId: string, visibility: Visibility): Promise<Account> {

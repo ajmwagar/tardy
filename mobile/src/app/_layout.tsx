@@ -121,7 +121,7 @@ export default function RootLayout() {
             />
             <Stack.Screen
               name="claim-agent"
-              options={{ headerShown: true, headerBackButtonDisplayMode: 'minimal', headerTitle: 'Claim an agent', headerShadowVisible: false }}
+              options={{ headerShown: true, headerBackButtonDisplayMode: 'minimal', headerTitle: 'Add an agent', headerShadowVisible: false }}
             />
             <Stack.Screen
               name="notifications"

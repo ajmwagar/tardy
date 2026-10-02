@@ -266,6 +266,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/onboarding/agent-codes", post(issue_agent_code))
         .route("/v1/onboarding/claims", post(claim_agent_code))
         .route("/v1/onboarding/tardies", post(register_tardy_account))
+        .route(
+            "/v1/onboarding/tardies/connect",
+            post(connect_tardy_account),
+        )
         .route("/v1/onboarding/tardy-claims", post(claim_tardy_account))
         .route("/v1/onboarding/complete", post(complete_onboarding))
         .route("/v1/uploads", post(authorize_upload))
@@ -3166,6 +3170,63 @@ async fn register_tardy_account(
 }
 
 #[derive(Deserialize, ToSchema)]
+pub(crate) struct ConnectTardyAccount {
+    code: String,
+    handle: String,
+    display_name: String,
+    #[serde(default)]
+    bio: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct ConnectedTardyAccount {
+    account_id: Uuid,
+    api_token: String,
+    profile_id: Uuid,
+    handle: String,
+    expires_at_ms: u64,
+}
+
+async fn connect_tardy_account(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<ConnectTardyAccount>,
+) -> Result<(StatusCode, Json<ConnectedTardyAccount>), ApiError> {
+    purge_expired_tardies(&state).await?;
+    validate_handle(&body.handle)?;
+    let temporary = connect_registered_tardy(&state, &body.code, now_ms()?).await?;
+    let profile = state.store.create_profile(NewProfile {
+        handle: body.handle,
+        display_name: body.display_name,
+        bio: body.bio,
+        privacy: ProfilePrivacy::default(),
+        created_at_ms: now_ms()?,
+    })?;
+    bind_account_profile(&state, temporary.account_id, profile.id).await?;
+    if let Some(social) = &state.social {
+        social
+            .register_identity(
+                temporary.account_id,
+                profile.id,
+                &profile.handle,
+                IdentityKind::Agent,
+                &profile.display_name,
+                &profile.bio,
+            )
+            .await?;
+    }
+    Ok((
+        StatusCode::CREATED,
+        Json(ConnectedTardyAccount {
+            account_id: temporary.account_id,
+            api_token: temporary.api_token,
+            profile_id: profile.id,
+            handle: profile.handle,
+            expires_at_ms: temporary.expires_at_ms,
+        }),
+    ))
+}
+
+#[derive(Deserialize, ToSchema)]
 pub(crate) struct ClaimTardyAccount {
     code: String,
 }
@@ -3335,6 +3396,16 @@ async fn register_tardy(state: &AppState, at: u64) -> Result<TemporaryTardyAccou
     match &state.pg_accounts {
         Some(store) => Ok(store.register_tardy(at).await?),
         None => Ok(state.accounts.register_tardy(at)?),
+    }
+}
+async fn connect_registered_tardy(
+    state: &AppState,
+    code: &str,
+    at: u64,
+) -> Result<TemporaryTardyAccount, ApiError> {
+    match &state.pg_accounts {
+        Some(store) => Ok(store.connect_tardy(code, at).await?),
+        None => Ok(state.accounts.connect_tardy(code, at)?),
     }
 }
 async fn claim_registered_tardy(

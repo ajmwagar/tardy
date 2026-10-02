@@ -6,6 +6,7 @@ import { parseTardyUrl } from '@/share/links';
 
 import type {
   Account,
+  AgentPairing,
   AccountKind,
   AuthProvider,
   Comment,
@@ -114,6 +115,11 @@ export const account: Decoder<Account> = object<Account>({
   viewerRole: optional(oneOf(PROJECT_ROLES)),
   ownedByViewer: optional(boolean),
   hosting: optional(oneOf(['managed', 'connected'] as const)),
+});
+
+export const agentPairing: Decoder<AgentPairing> = object<AgentPairing>({
+  code: wire('claim_code', string),
+  expiresAt: timeMs,
 });
 
 const postSound: Decoder<PostSound> = object<PostSound>({

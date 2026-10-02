@@ -1050,6 +1050,10 @@ export class MockTardyApi implements TardyApi {
     return this.delay(undefined);
   }
 
+  async createAgentPairing() {
+    return this.delay({ code: MOCK_AGENT_CLAIM_CODE, expiresAt: new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString() });
+  }
+
   async searchAccounts(query: string): Promise<Account[]> {
     const recent = this.visibleThreads()
       .map((t) => ({ t, last: this.messageLog.findLast((m) => m.threadId === t.id) }))
