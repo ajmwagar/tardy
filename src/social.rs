@@ -350,12 +350,37 @@ impl PgSocialStore {
         author: Option<Uuid>,
         limit: i64,
     ) -> Result<Vec<AppFeedPost>, SocialError> {
+        self.visible_app_posts(viewer, author, None, limit).await
+    }
+
+    /// One post, or `NotFound` when it does not exist or `viewer` may not see it (the two
+    /// are indistinguishable on purpose).
+    pub async fn app_post(
+        &self,
+        viewer: Option<Uuid>,
+        id: Uuid,
+    ) -> Result<AppFeedPost, SocialError> {
+        self.visible_app_posts(viewer, None, Some(id), 1)
+            .await?
+            .into_iter()
+            .next()
+            .ok_or(SocialError::NotFound)
+    }
+
+    async fn visible_app_posts(
+        &self,
+        viewer: Option<Uuid>,
+        author: Option<Uuid>,
+        post: Option<Uuid>,
+        limit: i64,
+    ) -> Result<Vec<AppFeedPost>, SocialError> {
         let rows = sqlx::query(
             "SELECT p.id,p.author_profile_id,p.caption,p.created_at,l.canonical_url,
                     (SELECT count(*) FROM post_comments c WHERE c.post_id=p.id)::bigint AS comment_count
              FROM tardy_posts p
              LEFT JOIN shared_links l ON l.id=p.shared_link_id
              WHERE ($2::uuid IS NULL OR p.author_profile_id=$2)
+               AND ($4::uuid IS NULL OR p.id=$4)
                AND (p.visibility='public'
                     OR p.author_profile_id=$1
                     OR (p.visibility='followers' AND EXISTS (
@@ -366,6 +391,7 @@ impl PgSocialStore {
         .bind(viewer)
         .bind(author)
         .bind(limit)
+        .bind(post)
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(app_post_from_row).collect()
