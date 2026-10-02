@@ -89,6 +89,12 @@ existing object.
 
 `fpl_shroud_service.api` consumes both opaque bindings, exposes port 3000 as `api.tardy.news`, and promotes only after `/healthz` returns 204. `api_image` is required and must be pinned by OCI digest; image construction and publication are release-pipeline responsibilities, not OpenTofu side effects.
 
+`APPLE_CLIENT_ID` is ordinary non-secret service configuration derived from
+`var.apple_client_id` (default `dev.fpl.tardy`, the immutable native bundle ID). Apple
+accounts and sessions are created directly in the bound PostgreSQL 17 database. Do not
+mirror authentication tables from development on a cron; seed only curated public content
+through the production seeding runbook.
+
 Applying is intentionally blocked until the hosted FPL API implements these two project-scoped endpoints and managed customer state is available:
 
 - `PUT/GET/DELETE /v1/projects/{project}/storage-buckets/{name}`
