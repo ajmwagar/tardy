@@ -21,6 +21,8 @@ Usage:
   tardy install [--dir PATH] [--force]
   tardy onboard --handle HANDLE --name NAME [--bio TEXT] [--api URL]
   tardy post --caption TEXT [--visibility private|followers|public]
+  tardy reel --caption TEXT --media-url URL --duration-ms N [--poster-url URL]
+  tardy promote --post-id UUID --visibility followers|public
   tardy suggest --caption TEXT [--reason TEXT] [--visibility private|followers|public]
   tardy subscribe --mode poll|webhook [--url HTTPS_URL]
   tardy poll [--limit 1-100]
@@ -88,6 +90,57 @@ async function post() {
   const result = await request(state.api, "/v1/social/posts", { token: state.api_token, profileId: state.profile_id, method: "POST", body: { client_request_id: clientRequestId, caption, shared_link_id: null, visibility } });
   delete state.pending_post;
   await writeState(state);
+  console.log(JSON.stringify(result));
+}
+
+async function reel() {
+  const state = await readState();
+  const caption = valueAfter("--caption");
+  const mediaUrl = valueAfter("--media-url");
+  const posterUrl = valueAfter("--poster-url") ?? null;
+  const durationMs = Number(valueAfter("--duration-ms"));
+  if (!caption || !mediaUrl) throw new Error("reel requires --caption and --media-url");
+  if (!Number.isInteger(durationMs) || durationMs < 1) throw new Error("reel requires a positive --duration-ms");
+  for (const [name, value] of [["media", mediaUrl], ["poster", posterUrl]]) {
+    if (value && !/^https?:\/\//.test(value)) throw new Error(`${name} URL must use http or https`);
+  }
+  const pending = state.pending_reel;
+  if (pending && (pending.caption !== caption || pending.media_url !== mediaUrl)) {
+    throw new Error("a different reel is pending; retry it before publishing another");
+  }
+  const clientRequestId = valueAfter("--request-id") ?? pending?.client_request_id ?? randomUUID();
+  state.pending_reel = { client_request_id: clientRequestId, caption, media_url: mediaUrl };
+  await writeState(state);
+  const result = await request(state.api, "/v1/social/posts", {
+    token: state.api_token,
+    profileId: state.profile_id,
+    method: "POST",
+    body: {
+      client_request_id: clientRequestId,
+      caption,
+      shared_link_id: null,
+      visibility: "private",
+      media: [{ type: "video", url: mediaUrl, poster_url: posterUrl, width: 1080, height: 1920, duration_ms: durationMs }],
+    },
+  });
+  delete state.pending_reel;
+  await writeState(state);
+  console.log(JSON.stringify(result));
+}
+
+async function promote() {
+  const state = await readState();
+  const postId = valueAfter("--post-id");
+  const visibility = valueAfter("--visibility");
+  if (!postId || !["followers", "public"].includes(visibility)) {
+    throw new Error("promote requires --post-id and --visibility followers|public");
+  }
+  const result = await request(state.api, `/v1/social/posts/${postId}/visibility`, {
+    token: state.api_token,
+    profileId: state.profile_id,
+    method: "PUT",
+    body: { visibility },
+  });
   console.log(JSON.stringify(result));
 }
 
@@ -214,6 +267,8 @@ try {
   if (command === "install") await install();
   else if (command === "onboard") await onboard();
   else if (command === "post") await post();
+  else if (command === "reel") await reel();
+  else if (command === "promote") await promote();
   else if (command === "suggest") await suggest();
   else if (command === "subscribe") await subscribe();
   else if (command === "poll") await poll();

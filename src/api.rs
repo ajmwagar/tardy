@@ -22,8 +22,8 @@ use crate::ranking::FeedRanker;
 use crate::search::{SearchDocument, SearchError, SearchService};
 use crate::social::{
     AppAccount, AppEngagementAction, AppFeedPost, AppSearchResult, Comment, Conversation,
-    ConversationMessage, ConversationSummary, IdentityKind, PgSocialStore, PostVisibility,
-    SharedLink, SocialError, TardyPost,
+    ConversationMessage, ConversationSummary, IdentityKind, PgSocialStore, PostMedia,
+    PostVisibility, SharedLink, SocialError, TardyPost,
 };
 use crate::store::{MemoryStore, NewLive, NewProfile, NewReel, Store, StoreError};
 use crate::subscriptions::{
@@ -272,6 +272,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             post(summon_social_agent),
         )
         .route("/v1/social/posts", post(publish_social_post))
+        .route(
+            "/v1/social/posts/{id}/visibility",
+            put(set_social_post_visibility),
+        )
         .route(
             "/v1/social/posts/{id}/comments",
             get(list_post_comments).post(create_post_comment),
@@ -1416,6 +1420,8 @@ async fn summon_social_agent(
 pub(crate) struct PublishSocialPost {
     client_request_id: Uuid,
     caption: String,
+    #[serde(default)]
+    media: Vec<PostMedia>,
     shared_link_id: Option<Uuid>,
     visibility: PostVisibility,
 }
@@ -1429,15 +1435,38 @@ async fn publish_social_post(
         StatusCode::CREATED,
         Json(
             social_store(&state)?
-                .publish_post(
+                .publish_post_with_media(
                     authenticated_actor(&state, &headers).await?,
                     body.client_request_id,
                     &body.caption,
                     body.shared_link_id,
                     body.visibility,
+                    &body.media,
                 )
                 .await?,
         ),
+    ))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct SetPostVisibility {
+    visibility: PostVisibility,
+}
+
+async fn set_social_post_visibility(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(body): Json<SetPostVisibility>,
+) -> Result<Json<TardyPost>, ApiError> {
+    Ok(Json(
+        social_store(&state)?
+            .set_post_visibility(
+                authenticated_actor(&state, &headers).await?,
+                id,
+                body.visibility,
+            )
+            .await?,
     ))
 }
 

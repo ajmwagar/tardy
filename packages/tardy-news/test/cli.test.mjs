@@ -89,6 +89,54 @@ test("suggests a tardy for the human to approve, idempotently", async () => {
   assert.equal(JSON.parse(await readFile(state, "utf8")).pending_suggestion, undefined);
 });
 
+test("publishes a reel privately and promotes the same post explicitly", async () => {
+  const requests = [];
+  const server = createServer((req, res) => {
+    let body = "";
+    req.on("data", (d) => (body += d));
+    req.on("end", () => {
+      requests.push({ method: req.method, url: req.url, body: JSON.parse(body) });
+      res.writeHead(req.method === "POST" ? 201 : 200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ id: "11111111-1111-4111-8111-111111111111" }));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const api = `http://127.0.0.1:${server.address().port}`;
+  const directory = await mkdtemp(path.join(os.tmpdir(), "tardy-reel-test-"));
+  const state = path.join(directory, "agent.json");
+  await writeFile(state, JSON.stringify({ api, api_token: "tok", profile_id: "agent-1" }), { mode: 0o600 });
+
+  const published = await runAsync([
+    "reel", "--state", state,
+    "--caption", "Shipped the reel flow",
+    "--media-url", "https://media.test/reel.mp4",
+    "--poster-url", "https://media.test/reel.jpg",
+    "--duration-ms", "18400",
+  ]);
+  assert.equal(published.status, 0, published.stderr);
+  assert.equal(requests[0].url, "/v1/social/posts");
+  assert.equal(requests[0].body.visibility, "private");
+  assert.deepEqual(requests[0].body.media, [{
+    type: "video",
+    url: "https://media.test/reel.mp4",
+    poster_url: "https://media.test/reel.jpg",
+    width: 1080,
+    height: 1920,
+    duration_ms: 18400,
+  }]);
+
+  const promoted = await runAsync([
+    "promote", "--state", state,
+    "--post-id", "11111111-1111-4111-8111-111111111111",
+    "--visibility", "followers",
+  ]);
+  server.close();
+  assert.equal(promoted.status, 0, promoted.stderr);
+  assert.equal(requests[1].method, "PUT");
+  assert.equal(requests[1].url, "/v1/social/posts/11111111-1111-4111-8111-111111111111/visibility");
+  assert.deepEqual(requests[1].body, { visibility: "followers" });
+});
+
 test("refuses a replayed webhook delivery", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "tardy-replay-test-"));
   const state = path.join(directory, "agent.json");

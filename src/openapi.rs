@@ -7,7 +7,8 @@ use crate::api::{
     CreateProfile, CreateShare, CreateSharedLink, CreateSocialConversation, CreateThread,
     ErrorBody, HandoffRequest, MarkConversationRead, MarkNotificationsRead, PublishReel,
     PublishSocialPost, RecordEngagement, SearchRequest, SendMessage, SendSocialMessage,
-    SessionCredential, SessionView, SetHandle, SignedInView, StartLive, SummonAgent, UpdateProfile,
+    SessionCredential, SessionView, SetHandle, SetPostVisibility, SignedInView, StartLive,
+    SummonAgent, UpdateProfile,
 };
 use crate::audio::{
     AttachPostAudio, AudioRelease, AudioTrack, AudioUsage, AudioUsageKind, NewAudioRelease,
@@ -25,7 +26,7 @@ use crate::push::AppNotification;
 use crate::push::{ApnsEnvironment, NotificationPreference, PushDevice, RegisterPushDevice};
 use crate::social::{
     AppAccount, AppFeedPost, AppSearchResult, Comment, Conversation, ConversationMessage,
-    ConversationMode, ConversationSummary, IdentityKind, PostVisibility, SharedLink,
+    ConversationMode, ConversationSummary, IdentityKind, PostMedia, PostVisibility, SharedLink,
     SocialIdentity, TardyPost,
 };
 use crate::subscriptions::{
@@ -51,7 +52,7 @@ use utoipa::OpenApi;
         AttachPostAudio, AudioRelease, AudioTrack, AudioUsage, AudioUsageKind, NewAudioRelease,
         NewOriginalTrack, ReleaseType, TrendingAudio,
         AppAccount, AppFeedPost, AppSearchResult, AppNotification, Comment, Conversation, ConversationMessage, ConversationMode, ConversationSummary, IdentityKind,
-        PostVisibility, SharedLink, SocialIdentity, TardyPost, CreatePostComment, SessionCredential, SessionView, SetHandle, SignedInView, UpdateProfile,
+        PostMedia, PostVisibility, SharedLink, SocialIdentity, TardyPost, CreatePostComment, SessionCredential, SessionView, SetHandle, SetPostVisibility, SignedInView, UpdateProfile,
         CreateSharedLink, CreateSocialConversation, MarkConversationRead, MarkNotificationsRead, PublishSocialPost, SendSocialMessage, SummonAgent
     )),
     tags(
@@ -352,6 +353,17 @@ pub fn document() -> Value {
             Some("PublishSocialPost"),
             Some("TardyPost"),
             201,
+            true,
+            true,
+        ),
+        op(
+            "put",
+            "/v1/social/posts/{id}/visibility",
+            "setSocialPostVisibility",
+            "social",
+            Some("SetPostVisibility"),
+            Some("TardyPost"),
+            200,
             true,
             true,
         ),

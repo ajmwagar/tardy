@@ -175,10 +175,22 @@ pub struct TardyPost {
     pub id: Uuid,
     pub author_profile_id: Uuid,
     pub caption: String,
+    pub media: Vec<PostMedia>,
     pub shared_link_id: Option<Uuid>,
     pub visibility: PostVisibility,
     #[schema(value_type = String, format = DateTime)]
     pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct PostMedia {
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub url: String,
+    pub poster_url: Option<String>,
+    pub width: u32,
+    pub height: u32,
+    pub duration_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -372,7 +384,7 @@ impl PgSocialStore {
         limit: i64,
     ) -> Result<Vec<AppFeedPost>, SocialError> {
         let rows = sqlx::query(
-            "SELECT p.id,p.author_profile_id,p.caption,p.created_at,l.canonical_url,
+            "SELECT p.id,p.author_profile_id,p.caption,p.media,p.created_at,l.canonical_url,
                     (SELECT count(*) FROM post_comments c WHERE c.post_id=p.id)::bigint AS comment_count,
                     (SELECT count(*) FROM post_likes x WHERE x.post_id=p.id)::bigint AS like_count,
                     EXISTS(SELECT 1 FROM post_likes x WHERE x.post_id=p.id AND x.profile_id=$1) AS viewer_has_liked
@@ -395,8 +407,8 @@ impl PgSocialStore {
                 Ok(AppFeedPost {
                     id: row.try_get("id")?,
                     author_id: row.try_get("author_profile_id")?,
-                    format: "photo",
-                    media: Vec::new(),
+                    format: post_format(&row)?,
+                    media: app_media(&row)?,
                     caption: row.try_get("caption")?,
                     links: link
                         .map(|url| {
@@ -430,7 +442,7 @@ impl PgSocialStore {
         limit: i64,
     ) -> Result<Vec<AppFeedPost>, SocialError> {
         let rows = sqlx::query(
-            "SELECT p.id,p.author_profile_id,p.caption,p.created_at,l.canonical_url,
+            "SELECT p.id,p.author_profile_id,p.caption,p.media,p.created_at,l.canonical_url,
                     (SELECT count(*) FROM post_comments c WHERE c.post_id=p.id)::bigint AS comment_count,
                     (SELECT count(*) FROM post_likes x WHERE x.post_id=p.id)::bigint AS like_count,
                     EXISTS(SELECT 1 FROM post_likes x WHERE x.post_id=p.id AND x.profile_id=$1) AS viewer_has_liked
@@ -458,7 +470,7 @@ impl PgSocialStore {
         id: Uuid,
     ) -> Result<AppFeedPost, SocialError> {
         let row = sqlx::query(
-            "SELECT p.id,p.author_profile_id,p.caption,p.created_at,l.canonical_url,
+            "SELECT p.id,p.author_profile_id,p.caption,p.media,p.created_at,l.canonical_url,
                     (SELECT count(*) FROM post_comments c WHERE c.post_id=p.id)::bigint AS comment_count,
                     (SELECT count(*) FROM post_likes x WHERE x.post_id=p.id)::bigint AS like_count,
                     EXISTS(SELECT 1 FROM post_likes x WHERE x.post_id=p.id AND x.profile_id=$1) AS viewer_has_liked
@@ -492,7 +504,7 @@ impl PgSocialStore {
         }
         let rows = sqlx::query(
             "WITH q AS (SELECT websearch_to_tsquery('english',$2) value)
-             SELECT p.id,p.author_profile_id,p.caption,p.created_at,l.canonical_url,
+             SELECT p.id,p.author_profile_id,p.caption,p.media,p.created_at,l.canonical_url,
                     (SELECT count(*) FROM post_comments c WHERE c.post_id=p.id)::bigint AS comment_count,
                     (SELECT count(*) FROM post_likes x WHERE x.post_id=p.id)::bigint AS like_count,
                     EXISTS(SELECT 1 FROM post_likes x WHERE x.post_id=p.id AND x.profile_id=$1) AS viewer_has_liked,
@@ -1059,10 +1071,49 @@ impl PgSocialStore {
         shared_link_id: Option<Uuid>,
         visibility: PostVisibility,
     ) -> Result<TardyPost, SocialError> {
+        self.publish_post_with_media(
+            actor,
+            client_request_id,
+            caption,
+            shared_link_id,
+            visibility,
+            &[],
+        )
+        .await
+    }
+
+    pub async fn publish_post_with_media(
+        &self,
+        actor: Uuid,
+        client_request_id: Uuid,
+        caption: &str,
+        shared_link_id: Option<Uuid>,
+        visibility: PostVisibility,
+        media: &[PostMedia],
+    ) -> Result<TardyPost, SocialError> {
         let caption = validated_text(caption, 5_000)?;
-        let row = sqlx::query("INSERT INTO tardy_posts (id,author_profile_id,client_request_id,caption,shared_link_id,visibility) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (author_profile_id,client_request_id) DO UPDATE SET client_request_id=excluded.client_request_id RETURNING id,author_profile_id,caption,shared_link_id,visibility,created_at")
-            .bind(Uuid::new_v4()).bind(actor).bind(client_request_id).bind(caption).bind(shared_link_id).bind(visibility_name(visibility)).fetch_one(&self.pool).await?;
+        validate_post_media(media)?;
+        let media =
+            serde_json::to_value(media).map_err(|_| SocialError::Invalid("invalid media"))?;
+        let row = sqlx::query("INSERT INTO tardy_posts (id,author_profile_id,client_request_id,caption,media,shared_link_id,visibility) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (author_profile_id,client_request_id) DO UPDATE SET client_request_id=excluded.client_request_id RETURNING id,author_profile_id,caption,media,shared_link_id,visibility,created_at")
+            .bind(Uuid::new_v4()).bind(actor).bind(client_request_id).bind(caption).bind(media).bind(shared_link_id).bind(visibility_name(visibility)).fetch_one(&self.pool).await?;
         Ok(post_from_row(&row)?)
+    }
+
+    pub async fn set_post_visibility(
+        &self,
+        actor: Uuid,
+        id: Uuid,
+        visibility: PostVisibility,
+    ) -> Result<TardyPost, SocialError> {
+        let row = sqlx::query("UPDATE tardy_posts SET visibility=$3 WHERE id=$1 AND author_profile_id=$2 RETURNING id,author_profile_id,caption,media,shared_link_id,visibility,created_at")
+            .bind(id)
+            .bind(actor)
+            .bind(visibility_name(visibility))
+            .fetch_optional(&self.pool)
+            .await?
+            .ok_or(SocialError::NotFound)?;
+        post_from_row(&row)
     }
 
     pub async fn comment(
@@ -1344,8 +1395,8 @@ fn app_post_from_row(row: sqlx::postgres::PgRow) -> Result<AppFeedPost, SocialEr
     Ok(AppFeedPost {
         id: row.try_get("id")?,
         author_id: row.try_get("author_profile_id")?,
-        format: "photo",
-        media: Vec::new(),
+        format: post_format(&row)?,
+        media: app_media(&row)?,
         caption: row.try_get("caption")?,
         links: link
             .map(|url| vec![serde_json::json!({"kind":"other","label":"Open link","url":url})])
@@ -1369,10 +1420,54 @@ fn post_from_row(row: &sqlx::postgres::PgRow) -> Result<TardyPost, SocialError> 
         id: row.try_get("id")?,
         author_profile_id: row.try_get("author_profile_id")?,
         caption: row.try_get("caption")?,
+        media: serde_json::from_value(row.try_get("media")?)
+            .map_err(|_| SocialError::Invalid("persisted media"))?,
         shared_link_id: row.try_get("shared_link_id")?,
         visibility: parse_visibility(row.try_get::<String, _>("visibility")?.as_str())?,
         created_at: row.try_get("created_at")?,
     })
+}
+
+fn post_format(row: &sqlx::postgres::PgRow) -> Result<&'static str, SocialError> {
+    let media = app_media(row)?;
+    Ok(
+        if media.first().is_some_and(|item| item["type"] == "video") {
+            "reel"
+        } else {
+            "photo"
+        },
+    )
+}
+
+fn app_media(row: &sqlx::postgres::PgRow) -> Result<Vec<serde_json::Value>, SocialError> {
+    serde_json::from_value(row.try_get("media")?)
+        .map_err(|_| SocialError::Invalid("persisted media"))
+}
+
+fn validate_post_media(media: &[PostMedia]) -> Result<(), SocialError> {
+    if media.len() > 4 {
+        return Err(SocialError::Invalid("too many media items"));
+    }
+    for item in media {
+        if item.kind != "video"
+            || item.width == 0
+            || item.height == 0
+            || item.duration_ms == 0
+            || url::Url::parse(&item.url)
+                .ok()
+                .filter(|url| matches!(url.scheme(), "http" | "https"))
+                .is_none()
+            || item.poster_url.as_deref().is_some_and(|value| {
+                url::Url::parse(value)
+                    .ok()
+                    .filter(|url| matches!(url.scheme(), "http" | "https"))
+                    .is_none()
+            })
+        {
+            return Err(SocialError::Invalid("invalid post media"));
+        }
+    }
+    Ok(())
 }
 fn message_from_row(row: &sqlx::postgres::PgRow) -> Result<ConversationMessage, SocialError> {
     Ok(ConversationMessage {

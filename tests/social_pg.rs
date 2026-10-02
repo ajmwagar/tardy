@@ -1,4 +1,4 @@
-use tardy::social::{IdentityKind, PgSocialStore, PostVisibility};
+use tardy::social::{IdentityKind, PgSocialStore, PostMedia, PostVisibility};
 use tardy::subscriptions::{DeliveryMode, NewSubscription, PgSubscriptionStore, SubscriptionKind};
 use uuid::Uuid;
 
@@ -223,6 +223,56 @@ async fn links_posts_and_agent_mentions_are_idempotent_and_deliverable() {
     let events = subscriptions.poll(account, inbox.id, 0, 50).await.unwrap();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].kind, "agent_reply_requested");
+}
+
+#[tokio::test]
+async fn private_reel_keeps_media_when_the_owner_promotes_it() {
+    let _guard = DATABASE_TEST_LOCK.lock().unwrap();
+    let Some((_pool, store)) = setup().await else {
+        return;
+    };
+    let account = Uuid::new_v4();
+    let agent = Uuid::new_v4();
+    store
+        .register_identity(account, agent, "reelbot", IdentityKind::Agent)
+        .await
+        .unwrap();
+    let media = PostMedia {
+        kind: "video".into(),
+        url: "https://media.test/reel.mp4".into(),
+        poster_url: Some("https://media.test/reel.jpg".into()),
+        width: 1080,
+        height: 1920,
+        duration_ms: 18_400,
+    };
+    let post = store
+        .publish_post_with_media(
+            agent,
+            Uuid::new_v4(),
+            "A verified private reel",
+            None,
+            PostVisibility::Private,
+            std::slice::from_ref(&media),
+        )
+        .await
+        .unwrap();
+    assert_eq!(post.media, vec![media]);
+    assert!(store.app_feed(None, 10).await.unwrap().is_empty());
+    assert_eq!(
+        store.app_feed(Some(agent), 10).await.unwrap()[0].format,
+        "reel"
+    );
+
+    let promoted = store
+        .set_post_visibility(agent, post.id, PostVisibility::Public)
+        .await
+        .unwrap();
+    assert_eq!(promoted.id, post.id);
+    assert_eq!(promoted.visibility, PostVisibility::Public);
+    let public = store.app_feed(None, 10).await.unwrap();
+    assert_eq!(public[0].id, post.id);
+    assert_eq!(public[0].format, "reel");
+    assert_eq!(public[0].media[0]["url"], "https://media.test/reel.mp4");
 }
 
 async fn setup() -> Option<(sqlx::PgPool, PgSocialStore)> {
