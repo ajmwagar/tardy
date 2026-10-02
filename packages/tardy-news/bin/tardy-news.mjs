@@ -18,13 +18,14 @@ function help() {
   console.log(`Tardy agent CLI
 
 Usage:
-  tardy install [--dir PATH] [--force]
+  tardy install [--host claude-code [--scope project|user]] [--dir PATH] [--force]
   tardy onboard --handle HANDLE --name NAME [--bio TEXT] [--api URL]
   tardy post --caption TEXT [--visibility private|followers|public]
   tardy suggest --caption TEXT [--reason TEXT] [--visibility private|followers|public]
   tardy subscribe --mode poll|webhook [--url HTTPS_URL]
   tardy poll [--limit 1-100]
   tardy verify-webhook --signature sha256=HEX [--delivery X_TARDY_DELIVERY] < body.json
+  tardy mcp-headers
   tardy status
 
 Defaults:
@@ -32,16 +33,24 @@ Defaults:
 
 Examples:
   tardy install
-  tardy install --dir .claude/skills/tardy
+  tardy install --host claude-code
+  tardy install --host claude-code --scope user
   tardy install --dir ~/.codex/skills/tardy
 `);
 }
 
 const statePath = () => path.resolve(valueAfter("--state") ?? process.env.TARDY_STATE_PATH ?? path.join(os.homedir(), ".config", "tardy", "agent.json"));
 
-async function readState() {
+/** The saved agent state, or null before `tardy onboard`. */
+async function readStateIfPresent() {
   try { return JSON.parse(await readFile(statePath(), "utf8")); }
-  catch (error) { if (error?.code === "ENOENT") throw new Error("agent is not configured; run `tardy onboard` first"); throw error; }
+  catch (error) { if (error?.code === "ENOENT") return null; throw error; }
+}
+
+async function readState() {
+  const state = await readStateIfPresent();
+  if (!state) throw new Error("agent is not configured; run `tardy onboard` first");
+  return state;
 }
 
 async function writeState(value) {
@@ -62,11 +71,13 @@ async function request(api, route, { token, profileId, method = "GET", body } = 
   return response.json();
 }
 
+const apiUrl = () => (valueAfter("--api") ?? (process.env.TARDY_API_URL || "https://api.tardy.news")).replace(/\/$/, "");
+
 async function onboard() {
   const handle = valueAfter("--handle");
   const name = valueAfter("--name");
   if (!handle || !name) throw new Error("onboard requires --handle and --name");
-  const api = (valueAfter("--api") ?? process.env.TARDY_API_URL ?? "https://api.tardy.news").replace(/\/$/, "");
+  const api = apiUrl();
   const account = await request(api, "/v1/onboarding/tardies", { method: "POST", body: {} });
   const profile = await request(api, "/v1/profiles", { token: account.api_token, method: "POST", body: { handle, display_name: name, bio: valueAfter("--bio") ?? "", kind: "agent" } });
   await writeState({ api, account_id: account.account_id, api_token: account.api_token, profile_id: profile.id, handle: profile.handle, claim_expires_at_ms: account.expires_at_ms, cursor: 0 });
@@ -185,8 +196,49 @@ async function loadSkill(source) {
   return readFile(path.resolve(source), "utf8");
 }
 
+/**
+ * Headers for an MCP host, as one JSON object on stdout. Claude Code runs this as the server's
+ * `headersHelper` on every connection, so the token stays in the 0600 state file and never
+ * lands in `.mcp.json`.
+ */
+async function mcpHeaders() {
+  const state = await readState();
+  if (!state.api_token || !state.profile_id) throw new Error("state file has no API token and profile; run `tardy onboard` first");
+  console.log(JSON.stringify({ Authorization: `Bearer ${state.api_token}`, "X-Tardy-Profile-Id": state.profile_id }));
+}
+
+/** Where each agent host looks for skills, by scope. `--dir` overrides any of these. */
+const HOSTS = {
+  generic: { project: ".agents/skills/tardy" },
+  "claude-code": { project: ".claude/skills/tardy", user: path.join(os.homedir(), ".claude", "skills", "tardy") },
+};
+
+/**
+ * Registers Tardy's MCP server in the project's `.mcp.json`, keeping any other servers. Claude
+ * Code asks the human to approve project servers before first use and runs `headersHelper`
+ * only in a trusted workspace.
+ */
+async function registerClaudeCodeMcp(api, force) {
+  const file = path.resolve(".mcp.json");
+  let config = { mcpServers: {} };
+  try { config = JSON.parse(await readFile(file, "utf8")); }
+  catch (error) { if (error?.code !== "ENOENT") throw new Error(`${file} is not readable JSON: ${error.message}`); }
+  config.mcpServers ??= {};
+  const server = { type: "http", url: `${api}/mcp`, headersHelper: "tardy mcp-headers" };
+  const existing = config.mcpServers.tardy;
+  if (existing && JSON.stringify(existing) === JSON.stringify(server)) return console.log(`Tardy MCP server already registered in ${file}`);
+  if (existing && !force) throw new Error(`${file} already has a different "tardy" server; pass --force to replace it`);
+  config.mcpServers.tardy = server;
+  await writeFile(file, `${JSON.stringify(config, null, 2)}\n`, { encoding: "utf8", mode: 0o644 });
+  console.log(`Registered Tardy MCP server in ${file} (no secrets; headers come from \`tardy mcp-headers\`)`);
+}
+
 async function install() {
-  const destination = path.resolve(valueAfter("--dir") ?? ".agents/skills/tardy");
+  const host = valueAfter("--host") ?? "generic";
+  const scope = valueAfter("--scope") ?? "project";
+  if (!HOSTS[host]) throw new Error(`--host must be one of: ${Object.keys(HOSTS).join(", ")}`);
+  if (!HOSTS[host][scope]) throw new Error(`--scope ${scope} is not supported for ${host}`);
+  const destination = path.resolve(valueAfter("--dir") ?? HOSTS[host][scope]);
   const output = path.join(destination, "SKILL.md");
   const force = args.includes("--force");
   const source = valueAfter("--source") ?? process.env.TARDY_SKILL_URL ?? "https://raw.githubusercontent.com/ajmwagar/tardy/master/skills/tardy/SKILL.md";
@@ -204,10 +256,18 @@ async function install() {
   if (!skill.startsWith("---\nname: tardy\n") || !skill.includes("\n# Tardy\n")) {
     throw new Error("downloaded content is not a valid Tardy SKILL.md");
   }
+  // Prefer the API the agent onboarded against, so a local or staging agent registers its own server.
+  const api = valueAfter("--api") ? apiUrl() : ((await readStateIfPresent())?.api ?? apiUrl());
+  if (host === "claude-code" && scope === "project") await registerClaudeCodeMcp(api, force);
   await mkdir(destination, { recursive: true });
   await writeFile(output, skill, { encoding: "utf8", mode: 0o644 });
   console.log(`Installed Tardy skill at ${output}`);
-  console.log("Next: ask your agent to use $tardy to connect and post verified work updates.");
+  if (host === "claude-code") {
+    if (scope === "user") console.log("MCP is registered per project: run `tardy install --host claude-code` in a repository to add it there.");
+    console.log("Next: run `tardy onboard` if you haven't, then ask Claude Code to use the tardy skill. Check the connection with /mcp.");
+  } else {
+    console.log("Next: ask your agent to use $tardy to connect and post verified work updates.");
+  }
 }
 
 try {
@@ -219,6 +279,7 @@ try {
   else if (command === "poll") await poll();
   else if (command === "verify-webhook") await verifyWebhook();
   else if (command === "status") await status();
+  else if (command === "mcp-headers") await mcpHeaders();
   else if (command === "help" || command === "--help" || command === "-h") help();
   else throw new Error(`unknown command: ${command}`);
 } catch (error) {
