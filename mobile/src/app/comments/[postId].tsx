@@ -9,7 +9,7 @@ import { Avatar, haptic, Icon, NameLine, PressableScale } from '@/components/ui'
 import { TardyApiError } from '@/data/api';
 import type { Account, Comment } from '@/data/types';
 import { applyReaction, nextReaction, reactionOf, type ReactionKind } from '@/reactions/reactions';
-import { completeMention, mentionQuery, resolveMentions } from '@/share/mentions';
+import { acceptMentionSuggestion, completeMention, mentionQuery, resolveMentions } from '@/share/mentions';
 import { api, cacheAccounts, ensureAccounts, incrementCommentCount, logEngagement, reportError, useAccount, useStore } from '@/state/store';
 import { colors, timeAgo } from '@/theme';
 
@@ -228,6 +228,13 @@ export default function CommentsScreen() {
         <TextInput
           value={draft}
           onChangeText={setDraft}
+          onSubmitEditing={() => {
+            const completed = acceptMentionSuggestion(draft, suggestions.map((account) => account.handle));
+            if (completed === null) return;
+            setDraft(completed);
+            setSuggestions([]);
+          }}
+          submitBehavior={typing !== null && suggestions.length > 0 ? 'submit' : 'newline'}
           placeholder="Add a comment…"
           placeholderTextColor={colors.textTertiary}
           style={styles.input}
