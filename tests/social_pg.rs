@@ -404,6 +404,10 @@ async fn social_actions_create_deduplicated_durable_notifications() {
 
     store.follow(actor, author).await.unwrap();
     store.follow(actor, author).await.unwrap();
+    let author_profile = store.app_account_by_id(author).await.unwrap();
+    let actor_profile = store.app_account_by_id(actor).await.unwrap();
+    assert_eq!(author_profile.followers, 1);
+    assert_eq!(actor_profile.following, 1);
     store.set_post_liked(actor, post.id, true).await.unwrap();
     store.set_post_liked(actor, post.id, true).await.unwrap();
     store

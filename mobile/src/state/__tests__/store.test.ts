@@ -61,8 +61,20 @@ describe('optimistic interactions', () => {
 
   it('a failed follow rolls back', async () => {
     seedFollowing([]);
+    const viewer = {
+      id: 'viewer', kind: 'human' as const, handle: 'viewer', name: 'Viewer', avatarUrl: '', bio: '', verified: false,
+      followers: 2, following: 3, postCount: 0,
+    };
+    const target = {
+      id: post.authorId, kind: 'human' as const, handle: 'target', name: 'Target', avatarUrl: '', bio: '', verified: false,
+      followers: 7, following: 1, postCount: 1,
+    };
+    cacheViewerAccount(viewer);
+    cacheAccounts([target]);
     await toggleFollowing(post.authorId);
     expect(getState().following.has(post.authorId)).toBe(false);
+    expect(getState().accounts.get('me')?.following).toBe(3);
+    expect(getState().accounts.get(post.authorId)?.followers).toBe(7);
     expect(getState().lastError).toMatch(/follow them/);
   });
 });

@@ -5,7 +5,7 @@ import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import { openWebCheckout } from '@/config';
 import type { Account, Post } from '@/data/types';
-import { api, loadFeedPage, toggleFollowing, useIsFollowing } from '@/state/store';
+import { api, loadFeedPage, toggleFollowing, useAccount, useIsFollowing } from '@/state/store';
 import { colors, compact, layout, radius, type } from '@/theme';
 
 import { PostTile } from './post-tile';
@@ -45,7 +45,8 @@ function useThreadWith(accountId: string, enabled: boolean): string | null {
   return threadId;
 }
 
-function Header({ account, isMe }: { account: Account; isMe: boolean }) {
+function Header({ account: initialAccount, isMe }: { account: Account; isMe: boolean }) {
+  const account = useAccount(initialAccount.id) ?? initialAccount;
   const following = useIsFollowing(account.id);
   const threadId = useThreadWith(account.id, !isMe);
   return (

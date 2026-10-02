@@ -461,7 +461,10 @@ async fn create_session(
                 .await?
         }
     };
-    Ok((StatusCode::CREATED, Json(signed_in_view(&state, session))))
+    Ok((
+        StatusCode::CREATED,
+        Json(signed_in_view(&state, session).await?),
+    ))
 }
 
 async fn development_session(
@@ -476,7 +479,10 @@ async fn development_session(
         .ok_or_else(|| ApiError::internal("PostgreSQL accounts are not configured"))?
         .development_session("orangej20@gmail.com", now_ms()?)
         .await?;
-    Ok((StatusCode::CREATED, Json(signed_in_view(&state, session))))
+    Ok((
+        StatusCode::CREATED,
+        Json(signed_in_view(&state, session).await?),
+    ))
 }
 
 async fn current_session(
@@ -493,7 +499,7 @@ async fn current_session(
         .resume_human_session(token, now_ms()?)
         .await
         .map_err(|_| ApiError::unauthorized("invalid bearer token"))?;
-    Ok(Json(signed_in_view(&state, session)))
+    Ok(Json(signed_in_view(&state, session).await?))
 }
 
 async fn delete_session(
@@ -523,7 +529,7 @@ async fn current_profile(
         .ok_or_else(|| ApiError::internal("PostgreSQL accounts are not configured"))?
         .human_profile_for_account(account)
         .await?;
-    Ok(Json(account_view(&state, profile)))
+    Ok(Json(account_view(&state, profile).await?))
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -547,7 +553,7 @@ async fn update_profile(
         .ok_or_else(|| ApiError::internal("PostgreSQL accounts are not configured"))?
         .update_human_profile(account, body.display_name.as_deref(), body.bio.as_deref())
         .await?;
-    Ok(Json(account_view(&state, profile)))
+    Ok(Json(account_view(&state, profile).await?))
 }
 
 async fn generate_profile_avatar(
@@ -563,7 +569,7 @@ async fn generate_profile_avatar(
         .ok_or_else(|| ApiError::internal("PostgreSQL accounts are not configured"))?
         .set_human_avatar(account, &avatar_url)
         .await?;
-    Ok(Json(account_view(&state, profile)))
+    Ok(Json(account_view(&state, profile).await?))
 }
 
 async fn generated_avatar(Path(seed): Path<Uuid>) -> impl IntoResponse {
@@ -609,7 +615,7 @@ async fn set_profile_handle(
         .ok_or_else(|| ApiError::internal("PostgreSQL accounts are not configured"))?
         .set_human_handle(account, &body.handle)
         .await?;
-    Ok(Json(account_view(&state, profile)))
+    Ok(Json(account_view(&state, profile).await?))
 }
 
 async fn suggested_follows(
@@ -650,7 +656,7 @@ async fn complete_onboarding(
         .complete_human_onboarding(session.profile.account_id, now_ms()?)
         .await?;
     let session = accounts.resume_human_session(token, now_ms()?).await?;
-    Ok(Json(signed_in_view(&state, session)))
+    Ok(Json(signed_in_view(&state, session).await?))
 }
 
 async fn current_following(
@@ -714,38 +720,42 @@ async fn search_profiles(
     Ok(Json(accounts))
 }
 
-fn signed_in_view(state: &AppState, value: HumanSession) -> SignedInView {
+async fn signed_in_view(state: &AppState, value: HumanSession) -> Result<SignedInView, ApiError> {
     let onboarded_at_ms = value.profile.onboarded_at_ms;
-    SignedInView {
+    Ok(SignedInView {
         session: SessionView {
             token: value.token,
             account_id: value.profile.profile_id,
             provider: value.provider,
             expires_at_ms: value.expires_at_ms,
         },
-        account: account_view(state, value.profile),
+        account: account_view(state, value.profile).await?,
         onboarded_at_ms,
-    }
+    })
 }
 
-fn account_view(_state: &AppState, value: HumanProfile) -> AccountView {
-    let avatar_url = if value.avatar_url.is_empty() {
-        dicebear_avatar_url(IdentityKind::Human, &value.handle)
-    } else {
-        value.avatar_url
-    };
-    AccountView {
-        id: value.profile_id,
+async fn account_view(state: &AppState, value: HumanProfile) -> Result<AccountView, ApiError> {
+    let account = social_store(state)?
+        .app_account_by_id(value.profile_id)
+        .await?;
+    Ok(AccountView {
+        id: account.id,
         kind: "human",
-        handle: value.handle,
-        display_name: value.display_name,
-        avatar_url,
-        bio: value.bio,
-        verified: false,
-        followers: 0,
-        following: 0,
-        post_count: 0,
-    }
+        handle: account.handle,
+        display_name: account.display_name,
+        avatar_url: if account.avatar_url.is_empty()
+            || account.avatar_url == "https://tardy.news/favicon.svg"
+        {
+            dicebear_avatar_url(IdentityKind::Human, &value.handle)
+        } else {
+            account.avatar_url
+        },
+        bio: account.bio,
+        verified: account.verified,
+        followers: account.followers.max(0) as u64,
+        following: account.following.max(0) as u64,
+        post_count: account.post_count.max(0) as u64,
+    })
 }
 
 const LOCAL_MEDIA: [(&str, &str, u64); 7] = [

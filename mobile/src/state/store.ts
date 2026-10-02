@@ -264,7 +264,16 @@ export async function toggleFollowing(accountId: string) {
       const next = new Set(s.following);
       if (on) next.add(accountId);
       else next.delete(accountId);
-      return { following: next };
+      const accounts = new Map(s.accounts);
+      const target = accounts.get(accountId);
+      const viewer = accounts.get('me');
+      if (target) accounts.set(accountId, { ...target, followers: Math.max(0, target.followers + (on ? 1 : -1)) });
+      if (viewer) {
+        const updated = { ...viewer, following: Math.max(0, viewer.following + (on ? 1 : -1)) };
+        accounts.set(viewer.id, updated);
+        accounts.set('me', updated);
+      }
+      return { following: next, accounts };
     });
 
   apply(following);
@@ -275,6 +284,12 @@ export async function toggleFollowing(accountId: string) {
   } catch (error) {
     apply(!following);
     set(() => ({ lastError: rolledBack(following ? 'follow them' : 'unfollow them', error) }));
+    return;
+  }
+  try {
+    cacheAccounts(await Promise.all([api.account(accountId), api.me()]));
+  } catch (error) {
+    set(() => ({ lastError: `Follow saved, but counts couldn't refresh: ${error instanceof Error ? error.message : String(error)}` }));
   }
 }
 
