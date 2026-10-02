@@ -132,6 +132,17 @@ describe('wire types', () => {
     ]);
   });
 
+  it('decodes typed private agent attachments', () => {
+    const wire = {
+      id: 'm-file', conversation_id: 't1', sequence: 6, sender_profile_id: 'agent', body: 'Listen to this',
+      shared_link_id: null, created_at: '2026-09-30T12:00:00.5+00:00',
+      media: [{ asset_id: 'asset-2', type: 'audio', url: 'https://r2.test/audio', content_type: 'audio/mpeg', byte_length: 4096, width: null, height: null, file_name: 'mix.mp3', alt_text: 'New mix' }],
+    };
+    expect(W.message(wire, 'r').media).toEqual([
+      { assetId: 'asset-2', type: 'audio', url: 'https://r2.test/audio', contentType: 'audio/mpeg', byteLength: 4096, fileName: 'mix.mp3', altText: 'New mix' },
+    ]);
+  });
+
   it('decodes enriched shared-link media and caption', () => {
     expect(W.sharedLink({
       id: 'l1', canonical_url: 'https://instagram.com/reel/1', provider: 'instagram', status: 'ready',
