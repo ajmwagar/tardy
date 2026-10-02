@@ -302,10 +302,13 @@ export type Message = {
 
 export type MessageMedia = {
   assetId: string;
-  type: 'image';
+  type: 'image' | 'video' | 'audio' | 'document';
   url: string;
-  width: number;
-  height: number;
+  contentType?: string;
+  byteLength?: number;
+  width?: number;
+  height?: number;
+  fileName?: string;
   altText?: string;
 };
 

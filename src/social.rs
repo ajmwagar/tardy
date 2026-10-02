@@ -173,8 +173,11 @@ pub struct MessageMedia {
     pub kind: String,
     #[serde(default)]
     pub url: String,
-    pub width: u32,
-    pub height: u32,
+    pub content_type: String,
+    pub byte_length: u64,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub file_name: Option<String>,
     pub alt_text: Option<String>,
 }
 
@@ -1220,8 +1223,17 @@ impl PgSocialStore {
             .map(|sequence| after.max(sequence - 1))
             .unwrap_or(after);
         let rows = sqlx::query("SELECT m.id,m.conversation_id,m.sequence,m.sender_profile_id,m.body,m.shared_link_id,m.created_at,
-                    (SELECT COALESCE(jsonb_agg(jsonb_build_object('asset_id',mm.asset_id,'type','image','url','','width',mm.width,'height',mm.height,'alt_text',mm.alt_text) ORDER BY mm.position), '[]'::jsonb)
-                     FROM conversation_message_media mm WHERE mm.message_id=m.id) AS media,
+                    (SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                        'asset_id',mm.asset_id,
+                        'type',CASE WHEN a.content_type LIKE 'image/%' THEN 'image' WHEN a.content_type LIKE 'video/%' THEN 'video' WHEN a.content_type LIKE 'audio/%' THEN 'audio' ELSE 'document' END,
+                        'url','',
+                        'content_type',a.content_type,
+                        'byte_length',a.byte_length,
+                        'width',mm.width,
+                        'height',mm.height,
+                        'file_name',mm.file_name,
+                        'alt_text',mm.alt_text) ORDER BY mm.position), '[]'::jsonb)
+                     FROM conversation_message_media mm JOIN media_assets a ON a.id=mm.asset_id WHERE mm.message_id=m.id) AS media,
                     (SELECT COALESCE(jsonb_agg(jsonb_build_object('kind',r.kind,'account_ids',r.account_ids) ORDER BY r.sort), '[]'::jsonb)
                      FROM (SELECT kind,array_agg(reactor_profile_id ORDER BY reactor_profile_id) account_ids,
                                   min(CASE kind WHEN 'like' THEN 1 WHEN 'love' THEN 2 WHEN 'laugh' THEN 3 WHEN 'emphasize' THEN 4 WHEN 'question' THEN 5 WHEN 'seen' THEN 6 ELSE 7 END) sort
@@ -1491,9 +1503,18 @@ impl PgSocialStore {
         }
         if media.len() > 4
             || media.iter().any(|item| {
-                item.kind != "image"
-                    || item.width == 0
-                    || item.height == 0
+                !matches!(item.kind.as_str(), "image" | "video" | "audio" | "document")
+                    || item.content_type.is_empty()
+                    || item.byte_length == 0
+                    || item
+                        .width
+                        .zip(item.height)
+                        .is_some_and(|(width, height)| width == 0 || height == 0)
+                    || item.width.is_some() != item.height.is_some()
+                    || item
+                        .file_name
+                        .as_deref()
+                        .is_some_and(|name| name.is_empty() || name.len() > 255)
                     || item
                         .alt_text
                         .as_deref()
@@ -1513,8 +1534,8 @@ impl PgSocialStore {
         let row = sqlx::query("INSERT INTO conversation_messages (id,conversation_id,sequence,sender_profile_id,body,shared_link_id) VALUES ($1,$2,$3,$4,$5,$6) RETURNING created_at")
             .bind(id).bind(conversation_id).bind(sequence).bind(actor).bind(body).bind(shared_link_id).fetch_one(&mut *tx).await?;
         for (position, item) in media.iter().enumerate() {
-            sqlx::query("INSERT INTO conversation_message_media (message_id,position,asset_id,width,height,alt_text) VALUES ($1,$2,$3,$4,$5,$6)")
-                .bind(id).bind(position as i16).bind(item.asset_id).bind(item.width as i32).bind(item.height as i32).bind(&item.alt_text).execute(&mut *tx).await?;
+            sqlx::query("INSERT INTO conversation_message_media (message_id,position,asset_id,width,height,alt_text,file_name) VALUES ($1,$2,$3,$4,$5,$6,$7)")
+                .bind(id).bind(position as i16).bind(item.asset_id).bind(item.width.map(|value| value as i32)).bind(item.height.map(|value| value as i32)).bind(&item.alt_text).bind(&item.file_name).execute(&mut *tx).await?;
         }
         let agents: Vec<(Uuid, i64)> = sqlx::query_as("SELECT agent_profile_id,context_from_sequence FROM conversation_agent_grants WHERE conversation_id=$1 AND can_reply AND agent_profile_id<>$2 AND context_from_sequence<=$3")
             .bind(conversation_id).bind(actor).bind(sequence).fetch_all(&mut *tx).await?;

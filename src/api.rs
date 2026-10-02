@@ -1722,8 +1722,9 @@ pub(crate) struct SendSocialMessage {
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct SendMessageMedia {
     asset_id: Uuid,
-    width: u32,
-    height: u32,
+    width: Option<u32>,
+    height: Option<u32>,
+    file_name: Option<String>,
     alt_text: Option<String>,
 }
 
@@ -1806,17 +1807,42 @@ async fn send_social_message(
     let mut media = Vec::with_capacity(body.media.len());
     for item in body.media {
         let asset = state.media.ready_asset(actor, item.asset_id).await?;
-        if asset.kind != crate::media::MediaKind::Poster
-            || !asset.content_type.starts_with("image/")
-        {
-            return Err(ApiError::bad_request("message attachment must be an image"));
-        }
+        let kind = match asset.kind {
+            crate::media::MediaKind::Poster if asset.content_type.starts_with("image/") => "image",
+            crate::media::MediaKind::VideoOriginal => "video",
+            crate::media::MediaKind::Voiceover | crate::media::MediaKind::AudioOriginal => "audio",
+            crate::media::MediaKind::Document => "document",
+            crate::media::MediaKind::MessageAttachment
+                if asset.content_type.starts_with("image/") =>
+            {
+                "image"
+            }
+            crate::media::MediaKind::MessageAttachment
+                if asset.content_type.starts_with("video/") =>
+            {
+                "video"
+            }
+            crate::media::MediaKind::MessageAttachment
+                if asset.content_type.starts_with("audio/") =>
+            {
+                "audio"
+            }
+            crate::media::MediaKind::MessageAttachment => "document",
+            _ => {
+                return Err(ApiError::bad_request(
+                    "media kind cannot be attached to a message",
+                ));
+            }
+        };
         media.push(crate::social::MessageMedia {
             asset_id: item.asset_id,
-            kind: "image".into(),
+            kind: kind.into(),
             url: String::new(),
+            content_type: asset.content_type,
+            byte_length: asset.byte_length,
             width: item.width,
             height: item.height,
+            file_name: item.file_name,
             alt_text: item.alt_text,
         });
     }

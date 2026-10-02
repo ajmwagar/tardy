@@ -18,6 +18,8 @@ pub enum MediaKind {
     AudioOriginal,
     Poster,
     VideoOriginal,
+    Document,
+    MessageAttachment,
 }
 
 impl MediaKind {
@@ -28,6 +30,8 @@ impl MediaKind {
             Self::AudioOriginal => "audio_original",
             Self::Poster => "poster",
             Self::VideoOriginal => "video_original",
+            Self::Document => "document",
+            Self::MessageAttachment => "message_attachment",
         }
     }
 
@@ -38,6 +42,8 @@ impl MediaKind {
             Self::Voiceover => 25 << 20,
             Self::AudioOriginal => 500 << 20,
             Self::VideoOriginal => 250 << 20,
+            Self::Document => 50 << 20,
+            Self::MessageAttachment => 250 << 20,
         }
     }
     fn allows(self, mime: &str) -> bool {
@@ -50,6 +56,24 @@ impl MediaKind {
                 "audio/mp4" | "audio/mpeg" | "audio/ogg" | "audio/wav" | "audio/flac"
             ),
             Self::VideoOriginal => matches!(mime, "video/mp4" | "video/quicktime" | "video/webm"),
+            Self::Document => matches!(mime, "application/pdf" | "text/markdown" | "text/plain"),
+            Self::MessageAttachment => matches!(
+                mime,
+                "image/jpeg"
+                    | "image/png"
+                    | "image/webp"
+                    | "video/mp4"
+                    | "video/quicktime"
+                    | "video/webm"
+                    | "audio/mp4"
+                    | "audio/mpeg"
+                    | "audio/ogg"
+                    | "audio/wav"
+                    | "audio/flac"
+                    | "application/pdf"
+                    | "text/markdown"
+                    | "text/plain"
+            ),
         }
     }
     fn key_segment(self) -> &'static str {
@@ -59,6 +83,8 @@ impl MediaKind {
             Self::AudioOriginal => "music-originals",
             Self::Poster => "poster",
             Self::VideoOriginal => "video",
+            Self::Document => "documents",
+            Self::MessageAttachment => "message-attachments",
         }
     }
 }
@@ -459,7 +485,10 @@ impl MediaService {
             content_type: session.content_type,
             byte_length: session.byte_length,
             sha256_base64: session.sha256_base64,
-            status: if session.kind == MediaKind::Poster {
+            status: if matches!(
+                session.kind,
+                MediaKind::Poster | MediaKind::MessageAttachment
+            ) {
                 MediaStatus::Ready
             } else {
                 MediaStatus::Quarantined
@@ -544,6 +573,8 @@ fn parse_kind(value: &str) -> Result<MediaKind, MediaError> {
         "music-originals" | "audio_original" => Ok(MediaKind::AudioOriginal),
         "poster" => Ok(MediaKind::Poster),
         "video" | "video_original" => Ok(MediaKind::VideoOriginal),
+        "documents" | "document" => Ok(MediaKind::Document),
+        "message-attachments" | "message_attachment" => Ok(MediaKind::MessageAttachment),
         _ => Err(MediaError::MetadataMismatch),
     }
 }
@@ -625,6 +656,40 @@ mod tests {
         let asset = service.complete(profile, auth.id, 2).await.unwrap();
         assert_eq!(asset.status, MediaStatus::Quarantined);
         assert_eq!(service.complete(profile, auth.id, 3).await.unwrap(), asset);
+    }
+
+    #[tokio::test]
+    async fn private_message_files_are_ready_but_executables_are_rejected() {
+        let service = MediaService::new(Some(Arc::new(Fake {
+            metadata: Mutex::new(None),
+        })));
+        let profile = Uuid::new_v4();
+        let auth = service
+            .authorize(
+                profile,
+                UploadIntent {
+                    profile_id: profile,
+                    kind: MediaKind::MessageAttachment,
+                    content_type: "application/pdf".into(),
+                    byte_length: 42,
+                    sha256_base64: None,
+                },
+                1,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            service.complete(profile, auth.id, 2).await.unwrap().status,
+            MediaStatus::Ready
+        );
+        let executable = UploadIntent {
+            profile_id: profile,
+            kind: MediaKind::MessageAttachment,
+            content_type: "application/x-mach-binary".into(),
+            byte_length: 42,
+            sha256_base64: None,
+        };
+        assert!(matches!(service.authorize(profile, executable, 3).await, Err(MediaError::UnsupportedType)));
     }
 
     #[tokio::test]

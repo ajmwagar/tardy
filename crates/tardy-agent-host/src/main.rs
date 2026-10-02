@@ -813,7 +813,28 @@ async fn upload_images(
             return Err("TARDY_IMAGE path must stay inside the configured workspace".into());
         }
         let bytes = tokio::fs::read(&path).await?;
-        let (width, height) = png_dimensions(&bytes)?;
+        let extension = path
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let (content_type, dimensions) = match extension.as_str() {
+            "png" => ("image/png", Some(png_dimensions(&bytes)?)),
+            "jpg" | "jpeg" => ("image/jpeg", None),
+            "webp" => ("image/webp", None),
+            "mp4" => ("video/mp4", None),
+            "mov" => ("video/quicktime", None),
+            "webm" => ("video/webm", None),
+            "mp3" => ("audio/mpeg", None),
+            "wav" => ("audio/wav", None),
+            "m4a" => ("audio/mp4", None),
+            "ogg" => ("audio/ogg", None),
+            "flac" => ("audio/flac", None),
+            "pdf" => ("application/pdf", None),
+            "md" | "markdown" => ("text/markdown", None),
+            "txt" => ("text/plain", None),
+            _ => return Err("TARDY_FILE has an unsupported extension".into()),
+        };
         let authorization = app
             .client
             .post(format!("{}/v1/uploads", api(app)))
@@ -821,8 +842,8 @@ async fn upload_images(
             .header("x-tardy-profile-id", &app.credential.profile_id)
             .json(&json!({
                 "profile_id": app.credential.profile_id,
-                "kind": "poster",
-                "content_type": "image/png",
+                "kind": "message_attachment",
+                "content_type": content_type,
                 "byte_length": bytes.len(),
                 "sha256_base64": null
             }))
@@ -859,8 +880,12 @@ async fn upload_images(
         .await?;
         uploaded.push(PendingMedia {
             asset_id: id.to_owned(),
-            width,
-            height,
+            width: dimensions.map(|value| value.0),
+            height: dimensions.map(|value| value.1),
+            file_name: path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .map(str::to_owned),
             alt_text: directive.alt_text.clone(),
         });
     }

@@ -1,4 +1,5 @@
 import { Image } from 'expo-image';
+import * as WebBrowser from 'expo-web-browser';
 import { router, Stack, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActionSheetIOS, Alert, Animated, AppState, Easing, FlatList, KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -7,7 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ErrorState, Pulse, SkeletonBlock } from '@/components/states';
 import { Avatar, haptic, Icon, IconButton, NameLine, PressableScale, StatusPill } from '@/components/ui';
 import { TardyApiError } from '@/data/api';
-import type { Account, Message, Post, ThreadRef } from '@/data/types';
+import type { Account, Message, MessageMedia, Post, ThreadRef } from '@/data/types';
 import { LinkPreview } from '@/components/link-preview';
 import { ReactionChips, ReactionPicker, type ReactionAnchor } from '@/components/reactions';
 import { ThreadAvatar } from '@/components/thread-avatar';
@@ -29,6 +30,30 @@ const LINK_CARD_WIDTH = 260;
  * are this device's record of what it just did; the server does not send them (yet).
  */
 type Row = Message & { pending?: boolean; failed?: boolean; event?: string };
+
+const attachmentLabel = (media: MessageMedia) =>
+  media.fileName ?? media.altText ?? (media.type === 'video' ? 'Video' : media.type === 'audio' ? 'Audio' : 'Document');
+
+function MessageFileCard({ media }: { media: MessageMedia }) {
+  const icon = media.type === 'video' ? 'play.rectangle.fill' : media.type === 'audio' ? 'waveform' : 'doc.text.fill';
+  const detail = [media.contentType, media.byteLength ? `${Math.max(1, Math.round(media.byteLength / 1024))} KB` : null]
+    .filter(Boolean)
+    .join(' · ');
+  return (
+    <Pressable
+      style={styles.fileCard}
+      onPress={() => void WebBrowser.openBrowserAsync(media.url)}
+      accessibilityRole="link"
+      accessibilityLabel={`Open ${attachmentLabel(media)}`}>
+      <Icon name={icon} size={24} color={colors.primary} />
+      <View style={styles.fileText}>
+        <Text style={styles.fileName} numberOfLines={2}>{attachmentLabel(media)}</Text>
+        {detail ? <Text style={styles.fileDetail}>{detail}</Text> : null}
+      </View>
+      <Icon name="arrow.up.right" size={14} color={colors.textTertiary} />
+    </Pressable>
+  );
+}
 
 function SharedPostCard({ message }: { message: Message }) {
   const ref = message.sharedPost;
@@ -147,7 +172,7 @@ const Bubble = memo(function Bubble({
   const sender = useAccount(row.senderId);
   const formatted = useMemo(() => messageImages(row.text), [row.text]);
   const images = [
-    ...(row.media ?? []).map((item) => ({ url: item.url, alt: item.altText ?? 'Image attachment' })),
+    ...(row.media ?? []).filter((item) => item.type === 'image').map((item) => ({ url: item.url, alt: item.altText ?? 'Image attachment' })),
     ...formatted.images.filter((item) => !(row.media ?? []).some((media) => media.url === item.url)),
   ];
   const bubbleRef = useRef<View>(null);
@@ -166,6 +191,7 @@ const Bubble = memo(function Bubble({
         {row.sharedPost && <SharedPostCard message={row} />}
         {row.sharedLinkId && !row.sharedPost ? <LinkCard id={row.sharedLinkId} url={isUrl(row.text) ? row.text : ''} /> : null}
         {images.map((image) => <MessageImageCard key={image.url} image={image} />)}
+        {(row.media ?? []).filter((item) => item.type !== 'image').map((item) => <MessageFileCard key={item.assetId} media={item} />)}
         {formatted.text && !(row.sharedLinkId && isUrl(row.text)) ? (
           <Pressable
             ref={bubbleRef}
@@ -612,6 +638,10 @@ const styles = StyleSheet.create({
   sharedCaption: { color: colors.text, fontSize: 13 },
   sharedHidden: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 12 },
   sharedHiddenText: { color: colors.textTertiary, fontSize: 13, flexShrink: 1 },
+  fileCard: { width: 250, minHeight: 68, borderRadius: radius.media, backgroundColor: colors.surface, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  fileText: { flex: 1, gap: 3 },
+  fileName: { color: colors.text, fontSize: 13.5, fontWeight: '700' },
+  fileDetail: { color: colors.textTertiary, fontSize: 11 },
   messageImage: { width: 260, height: 260, borderRadius: radius.media, backgroundColor: colors.elevated },
   imageModal: { flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' },
   imageFull: { width: '100%', height: '100%' },
