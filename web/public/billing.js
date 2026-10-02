@@ -1,6 +1,7 @@
 (() => {
   'use strict';
-  const api = document.querySelector('meta[name="tardy-api-url"]')?.content?.replace(/\/$/, '');
+  const local = location.hostname === '127.0.0.1' || location.hostname === 'localhost';
+  const api = (local ? 'http://127.0.0.1:3300' : document.querySelector('meta[name="tardy-api-url"]')?.content)?.replace(/\/$/, '');
   const status = document.querySelector('#billing-status');
   const buttons = [...document.querySelectorAll('[data-tier]')];
   const manage = document.querySelector('#manage-billing');
