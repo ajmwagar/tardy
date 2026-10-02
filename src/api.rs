@@ -2351,7 +2351,13 @@ async fn share_to_agent(
     if let Some(subscriptions) = &state.subscriptions {
         subscriptions.publish_direct_message(&message).await?;
         subscriptions
-            .publish_agent_share(Uuid::new_v4(), body.target_profile_id, &handoff)
+            .publish_agent_share(
+                Uuid::new_v4(),
+                body.target_profile_id,
+                &handoff,
+                thread.id,
+                message.sequence,
+            )
             .await?;
     }
     Ok((

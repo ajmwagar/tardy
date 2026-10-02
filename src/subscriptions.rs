@@ -219,6 +219,8 @@ impl PgSubscriptionStore {
         event_id: Uuid,
         recipient_profile_id: Uuid,
         handoff: &AgentHandoff,
+        conversation_id: Uuid,
+        message_sequence: u64,
     ) -> Result<(), SubscriptionError> {
         self.emit(
             "agent_share",
@@ -226,7 +228,14 @@ impl PgSubscriptionStore {
             None,
             Some(recipient_profile_id),
             Vec::new(),
-            serde_json::to_value(handoff).map_err(|_| SubscriptionError::Invalid)?,
+            serde_json::json!({
+                "conversation_id": conversation_id,
+                "message_sequence": message_sequence,
+                "context_from_sequence": 1,
+                "legacy_dm": true,
+                "body": handoff.prompt,
+                "handoff": handoff,
+            }),
         )
         .await
     }

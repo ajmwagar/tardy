@@ -214,9 +214,11 @@ async function verifyWebhook() {
   const supplied = valueAfter("--signature")?.replace(/^sha256=/, "");
   if (!supplied || !/^[0-9a-f]{64}$/i.test(supplied)) throw new Error("--signature must be sha256=<64 hex characters>");
   const body = await readStdin();
-  const expected = createHmac("sha256", state.webhook_secret).update(body).digest();
   const actual = Buffer.from(supplied, "hex");
-  if (!timingSafeEqual(expected, actual)) throw new Error("webhook signature is invalid");
+  const decoded = Buffer.from(state.webhook_secret, "base64url");
+  const encodedExpected = createHmac("sha256", decoded).update(body).digest();
+  const legacyExpected = createHmac("sha256", state.webhook_secret).update(body).digest();
+  if (!timingSafeEqual(encodedExpected, actual) && !timingSafeEqual(legacyExpected, actual)) throw new Error("webhook signature is invalid");
   // Replays: a valid delivery id seen before is refused. Only after the signature checks out,
   // so a forged request can't poison the list.
   const delivery = valueAfter("--delivery");
