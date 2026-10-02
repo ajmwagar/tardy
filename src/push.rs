@@ -336,24 +336,44 @@ impl PgPushStore {
     pub async fn enqueue(&self, notification: NewNotification) -> Result<Uuid, PushError> {
         validate_name(&notification.category)?;
         let mut transaction = self.pool.begin().await?;
-        let notification_id = notification_id_for_event(notification.source_event_id);
-        sqlx::query(
-            "INSERT INTO push_notifications
+        let notification_id = enqueue_notification(&mut transaction, &notification).await?;
+        transaction.commit().await?;
+        Ok(notification_id)
+    }
+
+    /// Enqueue inside a caller-owned transaction so the domain event and its notification
+    /// cannot commit independently. The caller remains responsible for committing.
+    pub async fn enqueue_in(
+        transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        notification: &NewNotification,
+    ) -> Result<Uuid, PushError> {
+        validate_name(&notification.category)?;
+        enqueue_notification(transaction, notification).await
+    }
+}
+
+async fn enqueue_notification(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    notification: &NewNotification,
+) -> Result<Uuid, PushError> {
+    let notification_id = notification_id_for_event(notification.source_event_id);
+    sqlx::query(
+        "INSERT INTO push_notifications
                (id,source_event_id,account_id,category,title,body,deep_link,data)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
              ON CONFLICT (source_event_id) DO NOTHING",
-        )
-        .bind(notification_id)
-        .bind(notification.source_event_id)
-        .bind(notification.account_id)
-        .bind(&notification.category)
-        .bind(&notification.title)
-        .bind(&notification.body)
-        .bind(&notification.deep_link)
-        .bind(Value::Object(notification.data))
-        .execute(&mut *transaction)
-        .await?;
-        sqlx::query(
+    )
+    .bind(notification_id)
+    .bind(notification.source_event_id)
+    .bind(notification.account_id)
+    .bind(&notification.category)
+    .bind(&notification.title)
+    .bind(&notification.body)
+    .bind(&notification.deep_link)
+    .bind(Value::Object(notification.data.clone()))
+    .execute(&mut **transaction)
+    .await?;
+    sqlx::query(
             "INSERT INTO push_deliveries (id,notification_id,device_id)
              SELECT gen_random_uuid(),n.id,d.id FROM push_notifications n
              JOIN push_devices d ON d.account_id=n.account_id
@@ -362,12 +382,12 @@ impl PgPushStore {
              ON CONFLICT (notification_id,device_id) DO NOTHING",
         )
         .bind(notification_id)
-        .execute(&mut *transaction)
+        .execute(&mut **transaction)
         .await?;
-        transaction.commit().await?;
-        Ok(notification_id)
-    }
+    Ok(notification_id)
+}
 
+impl PgPushStore {
     pub async fn claim_deliveries(
         &self,
         worker: &str,

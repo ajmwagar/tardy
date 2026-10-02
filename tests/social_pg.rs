@@ -1,3 +1,4 @@
+use tardy::push::PgPushStore;
 use tardy::social::{IdentityKind, PgSocialStore, PostMedia, PostVisibility};
 use tardy::subscriptions::{DeliveryMode, NewSubscription, PgSubscriptionStore, SubscriptionKind};
 use uuid::Uuid;
@@ -280,10 +281,69 @@ async fn private_reel_keeps_media_when_the_owner_promotes_it() {
     assert_eq!(public[0].media[0]["url"], "https://media.test/reel.mp4");
 }
 
+#[tokio::test]
+async fn human_group_notifies_members_then_becomes_work_when_an_agent_is_summoned() {
+    let _guard = DATABASE_TEST_LOCK.lock().unwrap();
+    let Some((pool, store)) = setup().await else {
+        return;
+    };
+    let owner_account = Uuid::new_v4();
+    let james_account = Uuid::new_v4();
+    let friend_account = Uuid::new_v4();
+    let avery = Uuid::new_v4();
+    let james = Uuid::new_v4();
+    let friend = Uuid::new_v4();
+    let agent = Uuid::new_v4();
+    for (account, profile, handle, kind) in [
+        (owner_account, avery, "avery-group", IdentityKind::Human),
+        (james_account, james, "james-group", IdentityKind::Human),
+        (friend_account, friend, "friend-group", IdentityKind::Human),
+        (owner_account, agent, "builder-group", IdentityKind::Agent),
+    ] {
+        store
+            .register_identity(account, profile, handle, kind)
+            .await
+            .unwrap();
+    }
+
+    let conversation = store
+        .create_group_conversation(avery, &[james, friend])
+        .await
+        .unwrap();
+    assert_eq!(conversation.mode, tardy::social::ConversationMode::Dm);
+    assert_eq!(conversation.participants.len(), 3);
+    let push = PgPushStore::new(pool.clone());
+    assert_eq!(
+        push.notifications(james_account, 10).await.unwrap().len(),
+        1
+    );
+    assert_eq!(
+        push.notifications(friend_account, 10).await.unwrap().len(),
+        1
+    );
+
+    let message = store
+        .send_message(avery, conversation.id, "Let’s build this together", None)
+        .await
+        .unwrap();
+    let notifications = push.notifications(james_account, 10).await.unwrap();
+    assert_eq!(notifications.len(), 2);
+    assert_eq!(notifications[0].kind, "message");
+    assert_eq!(notifications[0].actor_id, avery);
+    assert_eq!(notifications[0].text, message.body);
+
+    let promoted = store
+        .summon_agent(owner_account, avery, conversation.id, agent, true)
+        .await
+        .unwrap();
+    assert_eq!(promoted.mode, tardy::social::ConversationMode::Work);
+    assert_eq!(promoted.participants.len(), 4);
+}
+
 async fn setup() -> Option<(sqlx::PgPool, PgSocialStore)> {
     let url = std::env::var("TEST_DATABASE_URL").ok()?;
     let pool = sqlx::PgPool::connect(&url).await.unwrap();
     sqlx::migrate!().run(&pool).await.unwrap();
-    sqlx::query("TRUNCATE comment_mentions,post_comments,tardy_posts,conversation_agent_grants,conversation_messages,conversation_participants,conversations,profile_follows,social_identities,shared_links,webhook_deliveries,feed_subscriptions,feed_events,outbox RESTART IDENTITY CASCADE").execute(&pool).await.unwrap();
+    sqlx::query("TRUNCATE push_deliveries,push_notifications,notification_preferences,push_devices,comment_mentions,post_comments,tardy_posts,conversation_agent_grants,conversation_messages,conversation_participants,conversations,profile_follows,social_identities,shared_links,webhook_deliveries,feed_subscriptions,feed_events,outbox RESTART IDENTITY CASCADE").execute(&pool).await.unwrap();
     Some((pool.clone(), PgSocialStore::new(pool)))
 }

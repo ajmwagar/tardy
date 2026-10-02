@@ -1209,7 +1209,10 @@ async fn create_shared_link(
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct CreateSocialConversation {
-    recipient_profile_id: Uuid,
+    #[serde(default)]
+    recipient_profile_id: Option<Uuid>,
+    #[serde(default)]
+    participant_profile_ids: Vec<Uuid>,
 }
 
 async fn create_social_conversation(
@@ -1217,13 +1220,17 @@ async fn create_social_conversation(
     headers: HeaderMap,
     Json(body): Json<CreateSocialConversation>,
 ) -> Result<(StatusCode, Json<Conversation>), ApiError> {
+    let mut recipients = body.participant_profile_ids;
+    if let Some(recipient) = body.recipient_profile_id {
+        recipients.push(recipient);
+    }
     Ok((
         StatusCode::CREATED,
         Json(
             social_store(&state)?
-                .create_conversation(
+                .create_group_conversation(
                     authenticated_actor(&state, &headers).await?,
-                    body.recipient_profile_id,
+                    &recipients,
                 )
                 .await?,
         ),
@@ -3097,7 +3104,9 @@ impl From<SocialError> for ApiError {
             SocialError::Database(sqlx::Error::RowNotFound) => {
                 Self::not_found("social resource not found")
             }
-            SocialError::Database(_) => Self::internal(value.to_string()),
+            SocialError::Database(_) | SocialError::Notification(_) => {
+                Self::internal(value.to_string())
+            }
         }
     }
 }

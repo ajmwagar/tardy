@@ -1,3 +1,4 @@
+use crate::push::{NewNotification, PgPushStore};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
@@ -16,6 +17,8 @@ pub struct FollowGraph {
 pub enum SocialError {
     #[error("social database: {0}")]
     Database(#[from] sqlx::Error),
+    #[error("social notification: {0}")]
+    Notification(#[from] crate::push::PushError),
     #[error("invalid social request: {0}")]
     Invalid(&'static str),
     #[error("social resource not found")]
@@ -731,15 +734,36 @@ impl PgSocialStore {
         actor: Uuid,
         recipient: Uuid,
     ) -> Result<Conversation, SocialError> {
-        if actor == recipient {
+        self.create_group_conversation(actor, &[recipient]).await
+    }
+
+    pub async fn create_group_conversation(
+        &self,
+        actor: Uuid,
+        recipients: &[Uuid],
+    ) -> Result<Conversation, SocialError> {
+        let mut recipients = recipients.to_vec();
+        recipients.sort_unstable();
+        recipients.dedup();
+        if recipients.is_empty() || recipients.len() > 31 || recipients.contains(&actor) {
             return Err(SocialError::Invalid(
-                "conversation requires another participant",
+                "conversation requires 1-31 other participants",
             ));
         }
         let mut tx = self.pool.begin().await?;
         require_identity(&mut tx, actor).await?;
-        let recipient_kind = require_identity(&mut tx, recipient).await?;
-        let mode = if recipient_kind == IdentityKind::Agent {
+        let mut agent = None;
+        for recipient in &recipients {
+            if require_identity(&mut tx, *recipient).await? == IdentityKind::Agent {
+                if recipients.len() != 1 {
+                    return Err(SocialError::Invalid(
+                        "agents must be summoned after creating a human group",
+                    ));
+                }
+                agent = Some(*recipient);
+            }
+        }
+        let mode = if agent.is_some() {
             ConversationMode::Work
         } else {
             ConversationMode::Dm
@@ -747,18 +771,50 @@ impl PgSocialStore {
         let id = Uuid::new_v4();
         sqlx::query("INSERT INTO conversations (id,mode,created_by,promoted_by,promoted_at) VALUES ($1,$2,$3,CASE WHEN $2='work' THEN $3 END,CASE WHEN $2='work' THEN now() END)")
             .bind(id).bind(mode_name(mode)).bind(actor).execute(&mut *tx).await?;
-        for profile in [actor, recipient] {
+        let mut participants = Vec::with_capacity(recipients.len() + 1);
+        participants.push(actor);
+        participants.extend(recipients.iter().copied());
+        for profile in &participants {
             sqlx::query("INSERT INTO conversation_participants (conversation_id,profile_id,invited_by) VALUES ($1,$2,$3)").bind(id).bind(profile).bind(actor).execute(&mut *tx).await?;
         }
-        if mode == ConversationMode::Work {
+        if let Some(agent) = agent {
             sqlx::query("INSERT INTO conversation_agent_grants (conversation_id,agent_profile_id,granted_by,context_from_sequence) VALUES ($1,$2,$3,1)")
-                .bind(id).bind(recipient).bind(actor).execute(&mut *tx).await?;
+                .bind(id).bind(agent).bind(actor).execute(&mut *tx).await?;
+        }
+        let inviter: String =
+            sqlx::query_scalar("SELECT handle FROM social_identities WHERE profile_id=$1")
+                .bind(actor)
+                .fetch_one(&mut *tx)
+                .await?;
+        let accounts: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT DISTINCT account_id FROM social_identities WHERE profile_id=ANY($1) AND kind='human'",
+        )
+        .bind(&recipients)
+        .fetch_all(&mut *tx)
+        .await?;
+        for account in accounts {
+            PgPushStore::enqueue_in(
+                &mut tx,
+                &NewNotification {
+                    source_event_id: Uuid::new_v4(),
+                    account_id: account,
+                    category: "conversation_invite".into(),
+                    title: "New Tardy conversation".into(),
+                    body: format!("@{inviter} added you to a conversation"),
+                    deep_link: Some(format!("tardy://messages/{id}")),
+                    data: serde_json::Map::from_iter([
+                        ("actor_id".into(), serde_json::json!(actor)),
+                        ("conversation_id".into(), serde_json::json!(id)),
+                    ]),
+                },
+            )
+            .await?;
         }
         tx.commit().await?;
         Ok(Conversation {
             id,
             mode,
-            participants: vec![actor, recipient],
+            participants,
         })
     }
 
@@ -964,6 +1020,40 @@ impl PgSocialStore {
             .bind(conversation_id).bind(actor).bind(sequence).fetch_all(&mut *tx).await?;
         for agent in agents {
             emit_agent_event(&mut tx, "work_message", id, agent, serde_json::json!({"conversation_id": conversation_id, "message_id": id, "sequence": sequence, "body": body, "shared_link_id": shared_link_id})).await?;
+        }
+        let sender: String =
+            sqlx::query_scalar("SELECT handle FROM social_identities WHERE profile_id=$1")
+                .bind(actor)
+                .fetch_one(&mut *tx)
+                .await?;
+        let recipient_accounts: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT DISTINCT i.account_id FROM conversation_participants p
+             JOIN social_identities i ON i.profile_id=p.profile_id
+             WHERE p.conversation_id=$1 AND p.profile_id<>$2 AND i.kind='human'",
+        )
+        .bind(conversation_id)
+        .bind(actor)
+        .fetch_all(&mut *tx)
+        .await?;
+        let preview: String = body.chars().take(180).collect();
+        for account in recipient_accounts {
+            PgPushStore::enqueue_in(
+                &mut tx,
+                &NewNotification {
+                    source_event_id: Uuid::new_v4(),
+                    account_id: account,
+                    category: "message".into(),
+                    title: format!("@{sender}"),
+                    body: preview.clone(),
+                    deep_link: Some(format!("tardy://messages/{conversation_id}")),
+                    data: serde_json::Map::from_iter([
+                        ("actor_id".into(), serde_json::json!(actor)),
+                        ("conversation_id".into(), serde_json::json!(conversation_id)),
+                        ("message_id".into(), serde_json::json!(id)),
+                    ]),
+                },
+            )
+            .await?;
         }
         let message = ConversationMessage {
             id,
