@@ -55,7 +55,7 @@ async fn main() -> Result<(), BoxError> {
             TapbackDecider::from_env()?.decide("host-doctor", &body)
         })
         .await??;
-        println!("{}", decision.as_api_kind().unwrap_or("none"));
+        println!("{}", decision.as_choice());
         return Ok(());
     }
     if command == "doctor" {
@@ -775,15 +775,24 @@ async fn fetch_context(
 }
 
 async fn acknowledge(app: &App, activation: &WorkActivation) -> Result<(), BoxError> {
+    if app
+        .data
+        .lock()
+        .await
+        .acknowledged_messages
+        .contains(&activation.message_id)
+    {
+        return Ok(());
+    }
     let obvious = obvious_tapback(&activation.body);
-    let kind = if obvious.is_some() {
-        obvious.and_then(|tapback| tapback.as_api_kind())
+    let acknowledgement = if obvious.is_some() {
+        obvious
     } else if let Some(decider) = app.tapbacks.as_ref() {
         let decider = Arc::clone(decider);
         let handle = app.credential.handle.clone();
         let body = activation.body.clone();
         match tokio::task::spawn_blocking(move || decider.decide(&handle, &body)).await {
-            Ok(Ok(tapback)) => tapback.as_api_kind(),
+            Ok(Ok(tapback)) => Some(tapback),
             Ok(Err(error)) => {
                 tracing::warn!(%error, "RLCD tapback failed; adding no reaction");
                 None
@@ -794,24 +803,45 @@ async fn acknowledge(app: &App, activation: &WorkActivation) -> Result<(), BoxEr
             }
         }
     } else {
-        obvious_tapback(&activation.body).and_then(|tapback| tapback.as_api_kind())
+        obvious_tapback(&activation.body)
     };
-    let Some(kind) = kind else {
+    let Some(acknowledgement) = acknowledgement else {
         return Ok(());
     };
-    request_ok(
-        app.client
-            .put(format!(
-                "{}/v1/social/conversations/{}/messages/{}/reaction",
-                api(app),
-                activation.conversation_id,
-                activation.message_id
-            ))
-            .bearer_auth(&app.credential.api_token)
-            .header("x-tardy-profile-id", &app.credential.profile_id)
-            .json(&json!({"kind":kind})),
-    )
-    .await
+    if let Some(body) = acknowledgement.as_message() {
+        request_ok(
+            app.client
+                .post(format!(
+                    "{}/v1/social/conversations/{}/messages",
+                    api(app),
+                    activation.conversation_id
+                ))
+                .bearer_auth(&app.credential.api_token)
+                .header("x-tardy-profile-id", &app.credential.profile_id)
+                .json(&json!({"body": body, "shared_link_id": null, "media": []})),
+        )
+        .await?;
+    } else if let Some(kind) = acknowledgement.as_api_kind() {
+        request_ok(
+            app.client
+                .put(format!(
+                    "{}/v1/social/conversations/{}/messages/{}/reaction",
+                    api(app),
+                    activation.conversation_id,
+                    activation.message_id
+                ))
+                .bearer_auth(&app.credential.api_token)
+                .header("x-tardy-profile-id", &app.credential.profile_id)
+                .json(&json!({"kind":kind})),
+        )
+        .await?;
+    } else {
+        return Ok(());
+    }
+    let mut data = app.data.lock().await;
+    data.acknowledged_messages
+        .insert(activation.message_id.clone());
+    store_json(&app.data_path, &*data).await
 }
 
 async fn set_typing(app: &App, conversation: &str, active: bool) -> Result<(), BoxError> {

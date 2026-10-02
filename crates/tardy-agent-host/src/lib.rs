@@ -47,6 +47,9 @@ pub struct HostData {
     pub context_cursors: BTreeMap<String, i64>,
     #[serde(default)]
     pub processed_deliveries: BTreeSet<String>,
+    /// Source message ids whose immediate acknowledgement was delivered.
+    #[serde(default)]
+    pub acknowledged_messages: BTreeSet<String>,
     #[serde(default)]
     pub queue: VecDeque<QueuedEvent>,
     #[serde(default)]
@@ -349,6 +352,8 @@ pub struct CodexResult {
 pub enum Tapback {
     /// No social reaction is appropriate; do not add a tap-back.
     None,
+    /// A short chat acknowledgement for a clear request that will take work.
+    OnIt,
     /// Neutral acknowledgement: the agent received the message and will handle it.
     Seen,
     /// Positive acknowledgement or agreement.
@@ -364,9 +369,23 @@ pub enum Tapback {
 }
 
 impl Tapback {
+    pub fn as_choice(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::OnIt => "on_it",
+            Self::Seen => "seen",
+            Self::Like => "like",
+            Self::Love => "love",
+            Self::Laugh => "laugh",
+            Self::Emphasize => "emphasize",
+            Self::Question => "question",
+        }
+    }
+
     pub fn as_api_kind(self) -> Option<&'static str> {
         match self {
             Self::None => None,
+            Self::OnIt => None,
             Self::Seen => Some("seen"),
             Self::Like => Some("like"),
             Self::Love => Some("love"),
@@ -374,6 +393,10 @@ impl Tapback {
             Self::Emphasize => Some("emphasize"),
             Self::Question => Some("question"),
         }
+    }
+
+    pub fn as_message(self) -> Option<&'static str> {
+        (self == Self::OnIt).then_some("On it!")
     }
 }
 
@@ -397,7 +420,8 @@ impl TapbackDecider {
         let mut client = OodaHttpClient::from_env()?
             .with_timeout(std::time::Duration::from_millis(timeout_ms))?
             .with_max_attempts(1);
-        if let Ok(model) = std::env::var("TARDY_TAPBACK_MODEL")
+        if let Ok(model) =
+            std::env::var("TARDY_ACK_MODEL").or_else(|_| std::env::var("TARDY_TAPBACK_MODEL"))
             && !model.trim().is_empty()
         {
             client = client.with_model(model);
@@ -423,7 +447,7 @@ pub fn decide_tapback(
         client,
         serde_json::json!({"agent_handle": handle, "message": body}),
         "tapback",
-        "Choose whether this agent should apply one immediate social tapback before doing the work. Match ordinary human chat: like for thanks, approval, agreement, or a solid suggestion (for example 'Thanks!', 'nice', 'sounds good', or a thumbs-up sentiment); love for affection, strong excitement, celebration, or 'love it'; laugh for a clear joke, playful teasing, or something intentionally funny; emphasize for genuinely urgent or striking news; question only when the agent itself is genuinely confused, not merely because the person asked a question. Use seen specifically to acknowledge neutral work pickup such as 'please inspect this'. Choose none when a reaction would add noise: ambiguous chatter, corrections, sensitive or negative messages, routine back-and-forth that does not need acknowledgement, or anything you are not confident how to react to. Do not overreact.",
+        "Choose one immediate acknowledgement before this agent does the work. Match ordinary human chat: on_it for a clear request or assignment the agent is accepting; like for thanks, approval, agreement, or a solid suggestion; love for affection, strong excitement, celebration, or 'love it'; laugh for a clear joke or playful teasing; emphasize for genuinely urgent or striking news; question only when the agent itself is genuinely confused, not merely because the person asked a question. Use seen for a neutral FYI that benefits from acknowledgement but is not a request. Choose none when any acknowledgement would add noise: ambiguous chatter, corrections, sensitive or negative messages, routine back-and-forth, or low confidence. Prefer on_it over seen for actionable work. Do not overreact.",
     )?;
     if decision.confidence < minimum_confidence {
         return Ok(Tapback::None);
@@ -476,7 +500,7 @@ pub fn obvious_tapback(body: &str) -> Option<Tapback> {
         ]
         .iter()
         .any(|prefix| text.starts_with(prefix));
-    work_request.then_some(Tapback::Seen)
+    work_request.then_some(Tapback::OnIt)
 }
 
 impl CodexRunner {
@@ -867,6 +891,15 @@ mod tests {
             decide_tapback(&uncertain, "buildbot", "maybe a joke", 0.55).unwrap(),
             Tapback::None
         );
+
+        let work = ScriptedClient::new([
+            r#"{"answers":{"tapback":{"type":"choice","choice":"on_it","confidence":0.94}}}"#,
+        ]);
+        assert_eq!(
+            decide_tapback(&work, "buildbot", "Please ship the fix", 0.55).unwrap(),
+            Tapback::OnIt
+        );
+        assert_eq!(Tapback::OnIt.as_message(), Some("On it!"));
     }
 
     #[test]
@@ -879,7 +912,7 @@ mod tests {
         );
         assert_eq!(
             obvious_tapback("Please inspect the failing test"),
-            Some(Tapback::Seen)
+            Some(Tapback::OnIt)
         );
         assert_eq!(obvious_tapback("Change the name on line 12."), None);
         assert_eq!(obvious_tapback("I'm worried this leaked data."), None);
