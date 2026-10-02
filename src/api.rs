@@ -224,6 +224,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/reels/{id}/engagements", post(record_engagement))
         .route("/v1/saved-posts", get(list_saved_posts))
         .route("/v1/saved-posts/{id}", put(save_post).delete(unsave_post))
+        .route("/v1/posts/{id}/like", put(like_post).delete(unlike_post))
         .route(
             "/v1/ai-consents/search",
             post(grant_search_consent).delete(revoke_search_consent),
@@ -337,6 +338,28 @@ async fn record_app_engagements(
             other => other.into(),
         })?;
     Ok(StatusCode::ACCEPTED)
+}
+
+async fn like_post(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    social_store(&state)?
+        .set_post_liked(authenticated_actor(&state, &headers).await?, id, true)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn unlike_post(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    social_store(&state)?
+        .set_post_liked(authenticated_actor(&state, &headers).await?, id, false)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Session restoration is an explicit route even before the provider exchange lands.

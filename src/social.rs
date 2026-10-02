@@ -322,6 +322,44 @@ impl PgSocialStore {
         Ok(())
     }
 
+    /// Sets the viewer's current like state. PUT and DELETE are intentionally idempotent.
+    pub async fn set_post_liked(
+        &self,
+        viewer: Uuid,
+        post_id: Uuid,
+        liked: bool,
+    ) -> Result<(), SocialError> {
+        let visible: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM tardy_posts p WHERE p.id=$1 AND
+             (p.visibility='public' OR p.author_profile_id=$2 OR
+              (p.visibility='followers' AND EXISTS(SELECT 1 FROM profile_follows f
+               WHERE f.follower_profile_id=$2 AND f.followed_profile_id=p.author_profile_id))))",
+        )
+        .bind(post_id)
+        .bind(viewer)
+        .fetch_one(&self.pool)
+        .await?;
+        if !visible {
+            return Err(SocialError::NotFound);
+        }
+        if liked {
+            sqlx::query(
+                "INSERT INTO post_likes (post_id,profile_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+            )
+            .bind(post_id)
+            .bind(viewer)
+            .execute(&self.pool)
+            .await?;
+        } else {
+            sqlx::query("DELETE FROM post_likes WHERE post_id=$1 AND profile_id=$2")
+                .bind(post_id)
+                .bind(viewer)
+                .execute(&self.pool)
+                .await?;
+        }
+        Ok(())
+    }
+
     pub async fn app_feed(
         &self,
         viewer: Option<Uuid>,
@@ -329,7 +367,9 @@ impl PgSocialStore {
     ) -> Result<Vec<AppFeedPost>, SocialError> {
         let rows = sqlx::query(
             "SELECT p.id,p.author_profile_id,p.caption,p.created_at,l.canonical_url,
-                    (SELECT count(*) FROM post_comments c WHERE c.post_id=p.id)::bigint AS comment_count
+                    (SELECT count(*) FROM post_comments c WHERE c.post_id=p.id)::bigint AS comment_count,
+                    (SELECT count(*) FROM post_likes x WHERE x.post_id=p.id)::bigint AS like_count,
+                    EXISTS(SELECT 1 FROM post_likes x WHERE x.post_id=p.id AND x.profile_id=$1) AS viewer_has_liked
              FROM tardy_posts p
              LEFT JOIN shared_links l ON l.id=p.shared_link_id
              WHERE p.visibility='public'
@@ -360,12 +400,12 @@ impl PgSocialStore {
                     created_at_ms: row
                         .try_get::<DateTime<Utc>, _>("created_at")?
                         .timestamp_millis(),
-                    like_count: 0,
+                    like_count: row.try_get("like_count")?,
                     comment_count: row.try_get("comment_count")?,
                     share_count: 0,
                     alarm_count: 0,
                     repost_count: 0,
-                    viewer_has_liked: false,
+                    viewer_has_liked: row.try_get("viewer_has_liked")?,
                     viewer_has_alarm: false,
                     viewer_has_reposted: false,
                     viewer_has_saved: false,
@@ -385,7 +425,9 @@ impl PgSocialStore {
     ) -> Result<Vec<AppFeedPost>, SocialError> {
         let rows = sqlx::query(
             "SELECT p.id,p.author_profile_id,p.caption,p.created_at,l.canonical_url,
-                    (SELECT count(*) FROM post_comments c WHERE c.post_id=p.id)::bigint AS comment_count
+                    (SELECT count(*) FROM post_comments c WHERE c.post_id=p.id)::bigint AS comment_count,
+                    (SELECT count(*) FROM post_likes x WHERE x.post_id=p.id)::bigint AS like_count,
+                    EXISTS(SELECT 1 FROM post_likes x WHERE x.post_id=p.id AND x.profile_id=$1) AS viewer_has_liked
              FROM tardy_posts p
              LEFT JOIN shared_links l ON l.id=p.shared_link_id
              WHERE ($2::uuid IS NULL OR p.author_profile_id=$2)
@@ -407,14 +449,15 @@ impl PgSocialStore {
     pub async fn app_accounts(&self, ids: &[Uuid]) -> Result<Vec<AppAccount>, SocialError> {
         let rows = sqlx::query(
             "SELECT i.profile_id,i.kind,i.handle,
-                    COALESCE(h.display_name,i.handle) AS display_name,
+                    COALESCE(h.display_name,s.display_name,i.handle) AS display_name,
                     COALESCE(NULLIF(h.avatar_url,''),'https://tardy.news/favicon.svg') AS avatar_url,
-                    COALESCE(h.bio,'') AS bio,
+                    COALESCE(h.bio,CASE WHEN s.id IS NOT NULL THEN 'Updates from '||s.display_name||', with links to the original source.' END,'') AS bio,
                     (SELECT count(*) FROM profile_follows f WHERE f.followed_profile_id=i.profile_id)::bigint AS followers,
                     (SELECT count(*) FROM profile_follows f WHERE f.follower_profile_id=i.profile_id)::bigint AS following,
                     (SELECT count(*) FROM tardy_posts p WHERE p.author_profile_id=i.profile_id)::bigint AS post_count
              FROM social_identities i
              LEFT JOIN human_profiles h ON h.profile_id=i.profile_id
+             LEFT JOIN source_channels s ON i.kind='channel' AND i.handle='source-'||s.id
              WHERE i.profile_id=ANY($1)",
         )
         .bind(ids)
@@ -452,16 +495,17 @@ impl PgSocialStore {
         let prefix = format!("{query}%");
         let rows = sqlx::query(
             "SELECT i.profile_id,i.kind,i.handle,
-                    COALESCE(h.display_name,i.handle) AS display_name,
+                    COALESCE(h.display_name,s.display_name,i.handle) AS display_name,
                     COALESCE(NULLIF(h.avatar_url,''),'https://tardy.news/favicon.svg') AS avatar_url,
-                    COALESCE(h.bio,'') AS bio,
+                    COALESCE(h.bio,CASE WHEN s.id IS NOT NULL THEN 'Updates from '||s.display_name||', with links to the original source.' END,'') AS bio,
                     (SELECT count(*) FROM profile_follows f WHERE f.followed_profile_id=i.profile_id)::bigint AS followers,
                     (SELECT count(*) FROM profile_follows f WHERE f.follower_profile_id=i.profile_id)::bigint AS following,
                     (SELECT count(*) FROM tardy_posts p WHERE p.author_profile_id=i.profile_id)::bigint AS post_count,
                     i.account_id=$1 AS owned_by_viewer
              FROM social_identities i
              LEFT JOIN human_profiles h ON h.profile_id=i.profile_id
-             WHERE $2='' OR i.handle ILIKE $3 OR COALESCE(h.display_name,i.handle) ILIKE $3
+             LEFT JOIN source_channels s ON i.kind='channel' AND i.handle='source-'||s.id
+             WHERE $2='' OR i.handle ILIKE $3 OR COALESCE(h.display_name,s.display_name,i.handle) ILIKE $3
              ORDER BY (i.account_id=$1 AND i.kind='agent') DESC,
                       (lower(i.handle)=$2) DESC,
                       (i.handle ILIKE $4) DESC,
@@ -1228,12 +1272,12 @@ fn app_post_from_row(row: sqlx::postgres::PgRow) -> Result<AppFeedPost, SocialEr
         created_at_ms: row
             .try_get::<DateTime<Utc>, _>("created_at")?
             .timestamp_millis(),
-        like_count: 0,
+        like_count: row.try_get("like_count")?,
         comment_count: row.try_get("comment_count")?,
         share_count: 0,
         alarm_count: 0,
         repost_count: 0,
-        viewer_has_liked: false,
+        viewer_has_liked: row.try_get("viewer_has_liked")?,
         viewer_has_alarm: false,
         viewer_has_reposted: false,
         viewer_has_saved: false,

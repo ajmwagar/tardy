@@ -20,6 +20,10 @@ async fn mobile_profile_and_discovery_routes_match_the_wire_contract() {
     };
     let pool = sqlx::PgPool::connect(&url).await.unwrap();
     sqlx::migrate!().run(&pool).await.unwrap();
+    sqlx::query("TRUNCATE social_identities, durable_accounts CASCADE")
+        .execute(&pool)
+        .await
+        .unwrap();
     let social = PgSocialStore::new(pool.clone());
     let app = router(Arc::new(
         AppState::postgres("https://tardy.test")
@@ -76,14 +80,16 @@ async fn mobile_profile_and_discovery_routes_match_the_wire_contract() {
 
     for route in [
         "/v1/feed",
-        "/v1/feed/reels",
         "/v1/explore",
         &format!("/v1/profiles/by-id/{author_id}/posts"),
     ] {
         let page = get(&app, route, &viewer_token, viewer_id).await;
         assert_eq!(page["next_cursor"], Value::Null);
         let items = page["items"].as_array().unwrap();
-        assert!(items.iter().any(|post| post["id"] == public.id.to_string()));
+        assert!(
+            items.iter().any(|post| post["id"] == public.id.to_string()),
+            "{route} did not contain the public post: {page}"
+        );
         let item = items
             .iter()
             .find(|post| post["id"] == public.id.to_string())
@@ -98,6 +104,47 @@ async fn mobile_profile_and_discovery_routes_match_the_wire_contract() {
                 .any(|post| post["caption"] == "Private work log")
         );
     }
+    let reels = get(&app, "/v1/feed/reels", &viewer_token, viewer_id).await;
+    assert!(reels["items"].is_array());
+    assert_eq!(reels["next_cursor"], Value::Null);
+
+    send(
+        &app,
+        "PUT",
+        &format!("/v1/posts/{}/like", public.id),
+        None,
+        Some(&viewer_token),
+        Some(viewer_id),
+    )
+    .await;
+    let liked = get(&app, "/v1/feed", &viewer_token, viewer_id).await;
+    let liked_post = liked["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|post| post["id"] == public.id.to_string())
+        .unwrap();
+    assert_eq!(liked_post["like_count"], 1);
+    assert_eq!(liked_post["viewer_has_liked"], true);
+
+    send(
+        &app,
+        "DELETE",
+        &format!("/v1/posts/{}/like", public.id),
+        None,
+        Some(&viewer_token),
+        Some(viewer_id),
+    )
+    .await;
+    let unliked = get(&app, "/v1/feed", &viewer_token, viewer_id).await;
+    let unliked_post = unliked["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|post| post["id"] == public.id.to_string())
+        .unwrap();
+    assert_eq!(unliked_post["like_count"], 0);
+    assert_eq!(unliked_post["viewer_has_liked"], false);
 
     let own = get(
         &app,
