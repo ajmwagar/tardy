@@ -43,6 +43,30 @@ async fn apple_identity_creates_resumable_per_device_session() {
     assert_eq!(profile.handle, "person.example");
     assert!(profile.onboarded_at_ms.is_none());
     let profile = store
+        .update_human_profile(
+            signed_in.profile.account_id,
+            Some("Updated Person"),
+            Some("Shipping Tardy."),
+        )
+        .await
+        .unwrap();
+    assert_eq!(profile.display_name, "Updated Person");
+    assert_eq!(profile.bio, "Shipping Tardy.");
+    let profile = store
+        .set_human_avatar(
+            signed_in.profile.account_id,
+            "https://tardy.test/v1/avatars/seed",
+        )
+        .await
+        .unwrap();
+    assert_eq!(profile.avatar_url, "https://tardy.test/v1/avatars/seed");
+    assert!(matches!(
+        store
+            .update_human_profile(signed_in.profile.account_id, Some(""), None)
+            .await,
+        Err(PgAccountError::InvalidDisplayName)
+    ));
+    let profile = store
         .complete_human_onboarding(signed_in.profile.account_id, now + 1)
         .await
         .unwrap();

@@ -1,7 +1,7 @@
 import { faults } from '@/data/mock/faults';
 import { POSTS } from '@/data/mock/fixtures';
 
-import { cacheAccounts, cacheViewerAccount, clearError, flushEngagement, getState, ingestPosts, resetViewerState, seedFollowing, setLiked, toggleAlarm, toggleFollowing, toggleRepost, toggleSaved } from '../store';
+import { cacheAccounts, cacheViewerAccount, clearError, flushEngagement, getState, incrementCommentCount, ingestPosts, resetViewerState, seedFollowing, setLiked, toggleAlarm, toggleFollowing, toggleRepost, toggleSaved } from '../store';
 
 /**
  * Rollback paths, driven by the dev fault switch. Injected interaction faults throw before
@@ -19,6 +19,12 @@ afterEach(() => {
 afterAll(() => flushEngagement());
 
 describe('optimistic interactions', () => {
+  it('updates the shared count after a confirmed comment', () => {
+    const before = getState().posts.get(post.id)!.commentCount;
+    incrementCommentCount(post.id);
+    expect(getState().posts.get(post.id)!.commentCount).toBe(before + 1);
+  });
+
   it('a failed like rolls back and sets lastError', async () => {
     const before = getState().posts.get(post.id)!;
     expect(before.liked).toBe(false);

@@ -80,7 +80,7 @@ const Reel = memo(function Reel({ post, active, height }: { post: Post; active: 
           color="#fff"
           icon="bubble.left"
           label="Comments"
-          count={post.commentCount}
+          count={state?.commentCount ?? post.commentCount}
           onPress={() => router.push({ pathname: '/comments/[postId]', params: { postId: post.id } })}
         />
         <Reaction

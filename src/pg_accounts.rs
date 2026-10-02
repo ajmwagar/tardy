@@ -26,6 +26,10 @@ pub enum PgAccountError {
     InvalidHandle,
     #[error("handle is already taken")]
     HandleConflict,
+    #[error("display name must be 1 to 80 characters")]
+    InvalidDisplayName,
+    #[error("bio must be at most 500 characters")]
+    InvalidBio,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -387,6 +391,50 @@ impl PgAccountStore {
             return Err(error.into());
         }
         tx.commit().await?;
+        self.human_profile_for_account(account_id).await
+    }
+
+    pub async fn update_human_profile(
+        &self,
+        account_id: Uuid,
+        display_name: Option<&str>,
+        bio: Option<&str>,
+    ) -> Result<HumanProfile, PgAccountError> {
+        let display_name = display_name.map(str::trim);
+        if display_name.is_some_and(|value| value.is_empty() || value.chars().count() > 80) {
+            return Err(PgAccountError::InvalidDisplayName);
+        }
+        let bio = bio.map(str::trim);
+        if bio.is_some_and(|value| value.chars().count() > 500) {
+            return Err(PgAccountError::InvalidBio);
+        }
+        let changed = sqlx::query(
+            "UPDATE human_profiles SET display_name=COALESCE($2,display_name),bio=COALESCE($3,bio) WHERE account_id=$1",
+        )
+        .bind(account_id)
+        .bind(display_name)
+        .bind(bio)
+        .execute(&self.pool)
+        .await?;
+        if changed.rows_affected() != 1 {
+            return Err(PgAccountError::InvalidClaim);
+        }
+        self.human_profile_for_account(account_id).await
+    }
+
+    pub async fn set_human_avatar(
+        &self,
+        account_id: Uuid,
+        avatar_url: &str,
+    ) -> Result<HumanProfile, PgAccountError> {
+        let changed = sqlx::query("UPDATE human_profiles SET avatar_url=$2 WHERE account_id=$1")
+            .bind(account_id)
+            .bind(avatar_url)
+            .execute(&self.pool)
+            .await?;
+        if changed.rows_affected() != 1 {
+            return Err(PgAccountError::InvalidClaim);
+        }
         self.human_profile_for_account(account_id).await
     }
 

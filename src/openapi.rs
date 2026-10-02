@@ -7,7 +7,7 @@ use crate::api::{
     CreateProfile, CreateShare, CreateSharedLink, CreateSocialConversation, CreateThread,
     ErrorBody, HandoffRequest, MarkConversationRead, MarkNotificationsRead, PublishReel,
     PublishSocialPost, RecordEngagement, SearchRequest, SendMessage, SendSocialMessage,
-    SessionCredential, SessionView, SetHandle, SignedInView, StartLive, SummonAgent,
+    SessionCredential, SessionView, SetHandle, SignedInView, StartLive, SummonAgent, UpdateProfile,
 };
 use crate::audio::{
     AttachPostAudio, AudioRelease, AudioTrack, AudioUsage, AudioUsageKind, NewAudioRelease,
@@ -51,7 +51,7 @@ use utoipa::OpenApi;
         AttachPostAudio, AudioRelease, AudioTrack, AudioUsage, AudioUsageKind, NewAudioRelease,
         NewOriginalTrack, ReleaseType, TrendingAudio,
         AppAccount, AppNotification, Comment, Conversation, ConversationMessage, ConversationMode, ConversationSummary, IdentityKind,
-        PostVisibility, SharedLink, SocialIdentity, TardyPost, CreatePostComment, SessionCredential, SessionView, SetHandle, SignedInView,
+        PostVisibility, SharedLink, SocialIdentity, TardyPost, CreatePostComment, SessionCredential, SessionView, SetHandle, SignedInView, UpdateProfile,
         CreateSharedLink, CreateSocialConversation, MarkConversationRead, MarkNotificationsRead, PublishSocialPost, SendSocialMessage, SummonAgent
     )),
     tags(
@@ -100,6 +100,28 @@ pub fn document() -> Value {
             "onboarding",
             None,
             Some("SignedInView"),
+            200,
+            true,
+            false,
+        ),
+        op(
+            "patch",
+            "/v1/profile",
+            "updateCurrentProfile",
+            "profiles",
+            Some("UpdateProfile"),
+            Some("AccountView"),
+            200,
+            true,
+            false,
+        ),
+        op(
+            "post",
+            "/v1/profile/avatar/generate",
+            "generateProfileAvatar",
+            "profiles",
+            None,
+            Some("AccountView"),
             200,
             true,
             false,

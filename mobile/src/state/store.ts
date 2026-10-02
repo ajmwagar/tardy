@@ -43,6 +43,7 @@ type PostState = {
   alarmCount: number;
   reposted: boolean;
   repostCount: number;
+  commentCount: number;
 };
 
 type State = {
@@ -149,6 +150,7 @@ export function ingestPosts(posts: Post[]) {
           alarmCount: p.alarmCount,
           reposted: p.viewerHasReposted,
           repostCount: p.repostCount,
+          commentCount: p.commentCount,
         });
       }
     }
@@ -165,6 +167,11 @@ export async function loadFeedPage(page: Promise<{ items: Post[]; nextCursor: st
 
 export function usePostState(id: string): PostState | undefined {
   return useStore((s) => s.posts.get(id));
+}
+
+/** Applies a server-confirmed comment to every feed surface that renders this post. */
+export function incrementCommentCount(id: string) {
+  patchPost(id, (post) => ({ ...post, commentCount: post.commentCount + 1 }));
 }
 
 function patchPost(id: string, patch: (p: PostState) => PostState) {

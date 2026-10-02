@@ -188,7 +188,9 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/sessions", post(create_session))
         .route("/v1/dev/session", post(development_session))
         .route("/v1/session", get(current_session).delete(delete_session))
-        .route("/v1/profile", get(current_profile))
+        .route("/v1/profile", get(current_profile).patch(update_profile))
+        .route("/v1/profile/avatar/generate", post(generate_profile_avatar))
+        .route("/v1/avatars/{seed}", get(generated_avatar))
         .route("/v1/profile/handle", put(set_profile_handle))
         .route("/v1/profile/suggested-follows", get(suggested_follows))
         .route("/v1/profile/following", get(current_following))
@@ -479,6 +481,72 @@ async fn current_profile(
         .human_profile_for_account(account)
         .await?;
     Ok(Json(account_view(&state, profile)))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct UpdateProfile {
+    display_name: Option<String>,
+    bio: Option<String>,
+}
+
+async fn update_profile(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<UpdateProfile>,
+) -> Result<Json<AccountView>, ApiError> {
+    if body.display_name.is_none() && body.bio.is_none() {
+        return Err(ApiError::bad_request("profile update is empty"));
+    }
+    let account = authenticated_account(&state, &headers).await?;
+    let profile = state
+        .pg_accounts
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("PostgreSQL accounts are not configured"))?
+        .update_human_profile(account, body.display_name.as_deref(), body.bio.as_deref())
+        .await?;
+    Ok(Json(account_view(&state, profile)))
+}
+
+async fn generate_profile_avatar(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<AccountView>, ApiError> {
+    let account = authenticated_account(&state, &headers).await?;
+    let seed = Uuid::new_v4();
+    let avatar_url = format!("{}/v1/avatars/{seed}", state.public_base_url);
+    let profile = state
+        .pg_accounts
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("PostgreSQL accounts are not configured"))?
+        .set_human_avatar(account, &avatar_url)
+        .await?;
+    Ok(Json(account_view(&state, profile)))
+}
+
+async fn generated_avatar(Path(seed): Path<Uuid>) -> impl IntoResponse {
+    let bytes = seed.as_bytes();
+    let background = format!(
+        "#{:02x}{:02x}{:02x}",
+        bytes[0] / 2,
+        bytes[1] / 2,
+        bytes[2] / 2
+    );
+    let accent = format!(
+        "#{:02x}{:02x}{:02x}",
+        160 + bytes[3] % 96,
+        140 + bytes[4] % 116,
+        bytes[5]
+    );
+    let svg = format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160"><rect width="160" height="160" rx="36" fill="{background}"/><circle cx="80" cy="73" r="45" fill="{accent}"/><circle cx="63" cy="68" r="6" fill="#111"/><circle cx="97" cy="68" r="6" fill="#111"/><path d="M57 92 Q80 110 103 92" fill="none" stroke="#111" stroke-width="8" stroke-linecap="round"/><path d="M80 16 L91 36 H69 Z" fill="#ffd400"/></svg>"##
+    );
+    (
+        [
+            (header::CONTENT_TYPE, "image/svg+xml; charset=utf-8"),
+            (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+        ],
+        svg,
+    )
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -2800,6 +2868,9 @@ impl From<PgAccountError> for ApiError {
                 status: StatusCode::CONFLICT,
                 message: value.to_string(),
             },
+            PgAccountError::InvalidDisplayName | PgAccountError::InvalidBio => {
+                Self::bad_request(value.to_string())
+            }
             PgAccountError::Database(_) | PgAccountError::Timestamp => {
                 Self::internal(value.to_string())
             }

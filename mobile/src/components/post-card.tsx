@@ -134,7 +134,7 @@ export const PostCard = memo(function PostCard({
             count={likeCount}
             onPress={() => toggleLiked(post.id)}
           />
-          <Reaction icon="bubble.left" label="Comments" count={post.commentCount} onPress={openComments} />
+          <Reaction icon="bubble.left" label="Comments" count={state?.commentCount ?? post.commentCount} onPress={openComments} />
           <Reaction
             icon="arrow.2.squarepath"
             label="Repost"
