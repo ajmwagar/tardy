@@ -87,7 +87,7 @@ existing object.
 
 `fpl_postgres_database.primary` returns an opaque binding reference. At deployment, FPL resolves it into `DATABASE_URL`; the URL and password never appear in customer state or outputs.
 
-`fpl_shroud_service.api` consumes both opaque bindings, exposes port 3000 as `api.tardy.news`, and promotes only after `/healthz` returns 200. `api_image` is required and must be pinned by OCI digest; image construction and publication are release-pipeline responsibilities, not OpenTofu side effects.
+`fpl_shroud_service.api` consumes both opaque bindings, exposes port 3000 as `api.tardy.news`, and promotes only after `/healthz` returns 204. `api_image` is required and must be pinned by OCI digest; image construction and publication are release-pipeline responsibilities, not OpenTofu side effects.
 
 Applying is intentionally blocked until the hosted FPL API implements these two project-scoped endpoints and managed customer state is available:
 

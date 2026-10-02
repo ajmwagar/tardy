@@ -120,7 +120,7 @@ resource "fpl_shroud_service" "api" {
   health {
     type            = "http"
     path            = "/healthz"
-    expected_status = 200
+    expected_status = 204
   }
 }
 
