@@ -18,7 +18,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let public_base_url =
         std::env::var("TARDY_PUBLIC_BASE_URL").unwrap_or_else(|_| format!("http://{bind}"));
     let listener = tokio::net::TcpListener::bind(&bind).await?;
-    tracing::info!(%bind, %public_base_url, "tardy listening");
+    tracing::info!(%bind, %public_base_url, delivery = "fab", "tardy listening");
     let database_url = required("DATABASE_URL")?;
     let mut state = AppState::postgres(public_base_url)?;
     tracing::info!(ranker = state.ranker.name(), "for you ranker selected");
