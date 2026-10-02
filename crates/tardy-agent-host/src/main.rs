@@ -14,8 +14,9 @@ use std::{
 };
 use tardy_agent_host::{
     AgentCommand, AgentCredential, BoxError, CodexRunner, ConversationMessage, HostData,
-    InboxEvent, PendingReply, QueuedEvent, TapbackDecider, WorkActivation, activation_prompt,
-    dispatchable_deliveries, load_json, obvious_tapback, store_json, verify_signature,
+    InboxEvent, PendingMedia, PendingReply, QueuedEvent, TapbackDecider, WorkActivation,
+    activation_prompt, dispatchable_deliveries, extract_image_directives, load_json,
+    obvious_tapback, store_json, verify_signature,
 };
 use tokio::sync::{Mutex, Notify};
 
@@ -295,6 +296,7 @@ async fn work_loop(app: App) {
                         let reply = PendingReply {
                             conversation_id: activation.conversation_id,
                             body,
+                            media: Vec::new(),
                             legacy_dm: activation.legacy_dm,
                             context_cursor: activation.sequence,
                         };
@@ -620,9 +622,12 @@ async fn process_one(app: &App, queued: &QueuedEvent) -> Result<(), BoxError> {
                     &activation_prompt(&app.credential.handle, &activation, &context),
                 )
                 .await?;
+            let (body, directives) = extract_image_directives(&result.reply)?;
+            let media = upload_images(app, &directives).await?;
             let pending = PendingReply {
                 conversation_id: activation.conversation_id.clone(),
-                body: result.reply,
+                body,
+                media,
                 legacy_dm: activation.legacy_dm,
                 context_cursor,
             };
@@ -786,9 +791,92 @@ async fn send_reply(app: &App, reply: &PendingReply) -> Result<(), BoxError> {
             .post(route)
             .bearer_auth(&app.credential.api_token)
             .header("x-tardy-profile-id", &app.credential.profile_id)
-            .json(&json!({"body": reply.body})),
+            .json(&json!({"body": reply.body, "media": reply.media})),
     )
     .await
+}
+
+async fn upload_images(
+    app: &App,
+    directives: &[tardy_agent_host::ImageDirective],
+) -> Result<Vec<PendingMedia>, BoxError> {
+    let workspace = std::fs::canonicalize(env_or("TARDY_AGENT_WORKSPACE", "."))?;
+    let mut uploaded = Vec::with_capacity(directives.len());
+    for directive in directives {
+        let candidate = if directive.path.is_absolute() {
+            directive.path.clone()
+        } else {
+            workspace.join(&directive.path)
+        };
+        let path = std::fs::canonicalize(candidate)?;
+        if !path.starts_with(&workspace) {
+            return Err("TARDY_IMAGE path must stay inside the configured workspace".into());
+        }
+        let bytes = tokio::fs::read(&path).await?;
+        let (width, height) = png_dimensions(&bytes)?;
+        let authorization = app
+            .client
+            .post(format!("{}/v1/uploads", api(app)))
+            .bearer_auth(&app.credential.api_token)
+            .header("x-tardy-profile-id", &app.credential.profile_id)
+            .json(&json!({
+                "profile_id": app.credential.profile_id,
+                "kind": "poster",
+                "content_type": "image/png",
+                "byte_length": bytes.len(),
+                "sha256_base64": null
+            }))
+            .send()
+            .await?;
+        if !authorization.status().is_success() {
+            return Err(format!(
+                "Tardy upload authorization returned HTTP {}: {}",
+                authorization.status(),
+                authorization.text().await?
+            )
+            .into());
+        }
+        let authorization: Value = authorization.json().await?;
+        let id = authorization["id"]
+            .as_str()
+            .ok_or("upload authorization omitted id")?;
+        let url = authorization["url"]
+            .as_str()
+            .ok_or("upload authorization omitted url")?;
+        let mut upload = app.client.put(url).body(bytes);
+        if let Some(headers) = authorization["headers"].as_object() {
+            for (name, value) in headers {
+                upload = upload.header(name, value.as_str().ok_or("invalid upload header")?);
+            }
+        }
+        request_ok(upload).await?;
+        request_ok(
+            app.client
+                .post(format!("{}/v1/uploads/{id}/complete", api(app)))
+                .bearer_auth(&app.credential.api_token)
+                .header("x-tardy-profile-id", &app.credential.profile_id),
+        )
+        .await?;
+        uploaded.push(PendingMedia {
+            asset_id: id.to_owned(),
+            width,
+            height,
+            alt_text: directive.alt_text.clone(),
+        });
+    }
+    Ok(uploaded)
+}
+
+fn png_dimensions(bytes: &[u8]) -> Result<(u32, u32), BoxError> {
+    if bytes.len() < 24 || &bytes[..8] != b"\x89PNG\r\n\x1a\n" || &bytes[12..16] != b"IHDR" {
+        return Err("TARDY_IMAGE currently accepts PNG files only".into());
+    }
+    let width = u32::from_be_bytes(bytes[16..20].try_into()?);
+    let height = u32::from_be_bytes(bytes[20..24].try_into()?);
+    if width == 0 || height == 0 {
+        return Err("PNG has invalid dimensions".into());
+    }
+    Ok((width, height))
 }
 
 async fn request_ok(builder: reqwest::RequestBuilder) -> Result<(), BoxError> {
