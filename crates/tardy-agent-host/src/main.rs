@@ -524,7 +524,7 @@ async fn publish_last_result_as_tardy(
             .bearer_auth(&app.credential.api_token)
             .header("x-tardy-profile-id", &app.credential.profile_id)
             .json(&json!({
-                "body": "I turned the last completed result into a private Tardy. You can promote it when it is ready.",
+                "body": format!("@{} turned this into a Tardy. It is private until you promote it.", app.credential.handle),
                 "shared_link_id": link_id
             })),
     )
