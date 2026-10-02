@@ -7,8 +7,8 @@ use crate::api::{
     CreateProfile, CreateShare, CreateSharedLink, CreateSocialConversation, CreateThread,
     CreateWebHandoff, ErrorBody, ExchangeWebHandoff, HandoffRequest, MarkConversationRead,
     MarkNotificationsRead, PublishReel, PublishSocialPost, RecordEngagement, SearchRequest,
-    SendMessage, SendSocialMessage, SessionCredential, SessionView, SetHandle, SetPostVisibility,
-    SignedInView, StartLive, SummonAgent, UpdateProfile, VerificationCheckout,
+    SendMessage, SendMessageMedia, SendSocialMessage, SessionCredential, SessionView, SetHandle,
+    SetPostVisibility, SignedInView, StartLive, SummonAgent, UpdateProfile, VerificationCheckout,
 };
 use crate::audio::{
     AttachPostAudio, AudioRelease, AudioTrack, AudioUsage, AudioUsageKind, NewAudioRelease,
@@ -26,7 +26,7 @@ use crate::push::AppNotification;
 use crate::push::{ApnsEnvironment, NotificationPreference, PushDevice, RegisterPushDevice};
 use crate::social::{
     AppAccount, AppFeedPost, AppSearchResult, Comment, Conversation, ConversationMessage,
-    ConversationMode, ConversationSummary, IdentityKind, PostMedia, PostVisibility,
+    ConversationMode, ConversationSummary, IdentityKind, MessageMedia, PostMedia, PostVisibility,
     SetBrandAffiliate, SharedLink, SocialIdentity, TardyPost,
 };
 use crate::subscriptions::{
@@ -53,9 +53,9 @@ use utoipa::OpenApi;
         DeliveryMode, FeedEvent, NewSubscription, Subscription, SubscriptionKind,
         AttachPostAudio, AudioRelease, AudioTrack, AudioUsage, AudioUsageKind, NewAudioRelease,
         NewOriginalTrack, ReleaseType, TrendingAudio, VerificationEntitlement, VerificationProduct, VerificationTier, BillingStatus, WebHandoff,
-        AppAccount, AppFeedPost, AppSearchResult, AppNotification, Comment, Conversation, ConversationMessage, ConversationMode, ConversationSummary, IdentityKind,
+        AppAccount, AppFeedPost, AppSearchResult, AppNotification, Comment, Conversation, ConversationMessage, ConversationMode, ConversationSummary, IdentityKind, MessageMedia,
         PostMedia, PostVisibility, SetBrandAffiliate, SharedLink, SocialIdentity, TardyPost, CreatePostComment, SessionCredential, SessionView, SetHandle, SetPostVisibility, SignedInView, UpdateProfile,
-        CreateSharedLink, CreateSocialConversation, MarkConversationRead, MarkNotificationsRead, PublishSocialPost, SendSocialMessage, SummonAgent, CreateWebHandoff, ExchangeWebHandoff, VerificationCheckout
+        CreateSharedLink, CreateSocialConversation, MarkConversationRead, MarkNotificationsRead, PublishSocialPost, SendMessageMedia, SendSocialMessage, SummonAgent, CreateWebHandoff, ExchangeWebHandoff, VerificationCheckout
     )),
     tags(
         (name = "onboarding"), (name = "profiles"), (name = "messaging"),

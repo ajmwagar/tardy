@@ -3,6 +3,7 @@ use tardy::ads::{HttpX402Facilitator, PaymentRequirements, PgAdsStore};
 use tardy::api::AdsRuntime;
 use tardy::apple_auth::AppleAuthenticator;
 use tardy::audio::PgAudioStore;
+use tardy::media::MediaService;
 use tardy::pg_accounts::PgAccountStore;
 use tardy::push::PgPushStore;
 use tardy::social::PgSocialStore;
@@ -28,6 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .connect(&database_url)
         .await?;
     sqlx::migrate!().run(&pool).await?;
+    state = state.with_media_service(MediaService::from_env_with_pool(pool.clone())?);
     state = state.with_push_store(PgPushStore::new(pool.clone()));
     state = state.with_pg_accounts(PgAccountStore::new(pool.clone()));
     state = state.with_social_store(PgSocialStore::new(pool.clone()));

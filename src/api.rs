@@ -144,6 +144,11 @@ impl AppState {
         self
     }
 
+    pub fn with_media_service(mut self, media: MediaService) -> Self {
+        self.media = Arc::new(media);
+        self
+    }
+
     pub fn with_ads(mut self, ads: AdsRuntime) -> Self {
         self.ads = Some(Arc::new(ads));
         self
@@ -1639,6 +1644,16 @@ async fn mark_social_conversation_read(
 pub(crate) struct SendSocialMessage {
     body: String,
     shared_link_id: Option<Uuid>,
+    #[serde(default)]
+    media: Vec<SendMessageMedia>,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct SendMessageMedia {
+    asset_id: Uuid,
+    width: u32,
+    height: u32,
+    alt_text: Option<String>,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -1716,19 +1731,39 @@ async fn send_social_message(
     headers: HeaderMap,
     Json(body): Json<SendSocialMessage>,
 ) -> Result<(StatusCode, Json<ConversationMessage>), ApiError> {
-    Ok((
-        StatusCode::CREATED,
-        Json(
-            social_store(&state)?
-                .send_message(
-                    authenticated_actor(&state, &headers).await?,
-                    id,
-                    &body.body,
-                    body.shared_link_id,
-                )
-                .await?,
-        ),
-    ))
+    let actor = authenticated_actor(&state, &headers).await?;
+    let mut media = Vec::with_capacity(body.media.len());
+    for item in body.media {
+        let asset = state.media.ready_asset(actor, item.asset_id).await?;
+        if asset.kind != crate::media::MediaKind::Poster
+            || !asset.content_type.starts_with("image/")
+        {
+            return Err(ApiError::bad_request("message attachment must be an image"));
+        }
+        media.push(crate::social::MessageMedia {
+            asset_id: item.asset_id,
+            kind: "image".into(),
+            url: String::new(),
+            width: item.width,
+            height: item.height,
+            alt_text: item.alt_text,
+        });
+    }
+    let mut message = social_store(&state)?
+        .send_message(actor, id, &body.body, body.shared_link_id, &media)
+        .await?;
+    hydrate_message_media(&state, &mut message).await?;
+    Ok((StatusCode::CREATED, Json(message)))
+}
+
+async fn hydrate_message_media(
+    state: &AppState,
+    message: &mut ConversationMessage,
+) -> Result<(), ApiError> {
+    for item in &mut message.media {
+        item.url = state.media.delivery_url(item.asset_id).await?;
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -1745,16 +1780,18 @@ async fn list_social_messages(
     headers: HeaderMap,
     Query(query): Query<SocialMessageQuery>,
 ) -> Result<Json<Vec<ConversationMessage>>, ApiError> {
-    Ok(Json(
-        social_store(&state)?
-            .messages(
-                authenticated_actor(&state, &headers).await?,
-                id,
-                query.after,
-                query.limit,
-            )
-            .await?,
-    ))
+    let mut messages = social_store(&state)?
+        .messages(
+            authenticated_actor(&state, &headers).await?,
+            id,
+            query.after,
+            query.limit,
+        )
+        .await?;
+    for message in &mut messages {
+        hydrate_message_media(&state, message).await?;
+    }
+    Ok(Json(messages))
 }
 
 #[derive(Deserialize, ToSchema)]
