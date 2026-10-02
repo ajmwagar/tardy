@@ -7,7 +7,7 @@ use crate::api::{
     CreateProfile, CreateShare, CreateSharedLink, CreateSocialConversation, CreateThread,
     ErrorBody, HandoffRequest, MarkConversationRead, MarkNotificationsRead, PublishReel,
     PublishSocialPost, RecordEngagement, SearchRequest, SendMessage, SendSocialMessage,
-    SessionCredential, SessionView, SignedInView, StartLive, SummonAgent,
+    SessionCredential, SessionView, SetHandle, SignedInView, StartLive, SummonAgent,
 };
 use crate::audio::{
     AttachPostAudio, AudioRelease, AudioTrack, AudioUsage, AudioUsageKind, NewAudioRelease,
@@ -25,7 +25,7 @@ use crate::push::AppNotification;
 use crate::push::{ApnsEnvironment, NotificationPreference, PushDevice, RegisterPushDevice};
 use crate::search::SearchResult;
 use crate::social::{
-    Comment, Conversation, ConversationMessage, ConversationMode, ConversationSummary,
+    AppAccount, Comment, Conversation, ConversationMessage, ConversationMode, ConversationSummary,
     IdentityKind, PostVisibility, SharedLink, SocialIdentity, TardyPost,
 };
 use crate::subscriptions::{
@@ -50,8 +50,8 @@ use utoipa::OpenApi;
         DeliveryMode, FeedEvent, NewSubscription, Subscription, SubscriptionKind,
         AttachPostAudio, AudioRelease, AudioTrack, AudioUsage, AudioUsageKind, NewAudioRelease,
         NewOriginalTrack, ReleaseType, TrendingAudio,
-        AppNotification, Comment, Conversation, ConversationMessage, ConversationMode, ConversationSummary, IdentityKind,
-        PostVisibility, SharedLink, SocialIdentity, TardyPost, CreatePostComment, SessionCredential, SessionView, SignedInView,
+        AppAccount, AppNotification, Comment, Conversation, ConversationMessage, ConversationMode, ConversationSummary, IdentityKind,
+        PostVisibility, SharedLink, SocialIdentity, TardyPost, CreatePostComment, SessionCredential, SessionView, SetHandle, SignedInView,
         CreateSharedLink, CreateSocialConversation, MarkConversationRead, MarkNotificationsRead, PublishSocialPost, SendSocialMessage, SummonAgent
     )),
     tags(
@@ -127,6 +127,28 @@ pub fn document() -> Value {
             false,
         ),
         op(
+            "put",
+            "/v1/profile/handle",
+            "setProfileHandle",
+            "profiles",
+            Some("SetHandle"),
+            Some("AccountView"),
+            200,
+            true,
+            false,
+        ),
+        op(
+            "get",
+            "/v1/profile/suggested-follows",
+            "getSuggestedFollows",
+            "profiles",
+            None,
+            Some("AppAccount"),
+            200,
+            true,
+            false,
+        ),
+        op(
             "get",
             "/v1/profile/following",
             "getCurrentFollowing",
@@ -178,6 +200,17 @@ pub fn document() -> Value {
             Some("ClaimTardyAccount"),
             None,
             204,
+            true,
+            false,
+        ),
+        op(
+            "post",
+            "/v1/onboarding/complete",
+            "completeOnboarding",
+            "onboarding",
+            None,
+            Some("SignedInView"),
+            200,
             true,
             false,
         ),

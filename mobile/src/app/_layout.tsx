@@ -4,7 +4,7 @@ import { ShareIntentProvider } from 'expo-share-intent';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { ErrorToast } from '@/components/states';
@@ -29,10 +29,12 @@ export default function RootLayout() {
 
   useEffect(() => {
     void loadAppPrefs();
+    // Never leave a real device behind the native splash while session restoration waits
+    // on the network. The branded boot state below remains visible and debuggable.
+    void SplashScreen.hideAsync();
     auth
       .bootstrap()
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
-      .finally(() => SplashScreen.hideAsync());
   }, []);
 
   if (error) {
@@ -43,7 +45,15 @@ export default function RootLayout() {
       </View>
     );
   }
-  if (gate === 'unknown') return null;
+  if (gate === 'unknown') {
+    return (
+      <View style={styles.fatal}>
+        <Text style={styles.bootMark}>TARDY</Text>
+        <ActivityIndicator color={colors.primary} />
+        <Text style={styles.fatalDetail}>Connecting to your feed…</Text>
+      </View>
+    );
+  }
 
   return (
     // Expo Go has no share extension (it needs a native build), so the provider is off there.
@@ -152,4 +162,5 @@ const styles = StyleSheet.create({
   fatal: { flex: 1, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 8 },
   fatalTitle: { color: colors.text, fontSize: 18, fontWeight: '700' },
   fatalDetail: { color: colors.textSecondary, textAlign: 'center' },
+  bootMark: { color: colors.primary, fontSize: 24, fontWeight: '900', letterSpacing: 3 },
 });

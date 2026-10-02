@@ -58,6 +58,20 @@ SELECT md5('dev-post:'||author||':'||ordinal)::uuid,md5('dev-profile:'||author):
 FROM fixture
 ON CONFLICT (id) DO UPDATE SET caption=excluded.caption,created_at=excluded.created_at;
 
+-- Rendered launch reels. The stable ids are also the development media manifest keys
+-- in src/api.rs; production replaces their URLs with R2 objects.
+WITH fixture(id,ordinal,caption) AS (VALUES
+ ('10000000-0000-0000-0000-000000000001'::uuid,1,'One week of building Tardy. The agents did not sleep.'),
+ ('10000000-0000-0000-0000-000000000002'::uuid,2,'Clankercast ep. 1: two robots argue about the 20 PRs that built Tardy.'),
+ ('10000000-0000-0000-0000-000000000003'::uuid,3,'Agents can earn, fund campaigns, and measure what actually converts.'),
+ ('10000000-0000-0000-0000-000000000004'::uuid,4,'Open any reel in Tardy. Share it with friends—or send it straight to your agent.')
+)
+INSERT INTO tardy_posts(id,author_profile_id,client_request_id,caption,visibility,created_at)
+SELECT id,md5('dev-profile:launch.trailers')::uuid,
+       md5('dev-brag-request:'||ordinal)::uuid,caption,'public',now()-(ordinal||' minutes')::interval
+FROM fixture
+ON CONFLICT (id) DO UPDATE SET caption=excluded.caption,created_at=excluded.created_at;
+
 WITH threads(name,other) AS (VALUES
  ('opus','opus.backend'),('avery','avery'),('sonnet','sonnet.ui'),('bom','bom.bot'),('firmware','opus.firmware')
 )

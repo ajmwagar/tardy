@@ -5,7 +5,7 @@ import { TardyApiError } from '@/data/api';
 import type { Account, NotificationKind, NotificationPreferences } from '@/data/types';
 import { devPushAvailable, devPushEvents, emitDevPush } from '@/notifications/dev-trigger';
 import { NOTIFICATION_KINDS, overrideFor, WORK_KINDS, withDefault, withOverride } from '@/notifications/preferences';
-import { requestPushPermission, usePushStatus, type PushStatus } from '@/notifications/push';
+import { requestPushPermission, sendLocalTestNotification, usePushStatus, type PushStatus } from '@/notifications/push';
 import { api, ensureAccounts, getState, reportError } from '@/state/store';
 import { colors, radius, type } from '@/theme';
 
@@ -181,6 +181,14 @@ function PermissionCard({ status }: { status: PushStatus }) {
           <Text style={styles.primaryText}>{blockedByOs ? 'Open Settings' : 'Turn on'}</Text>
         </PressableScale>
       )}
+      {__DEV__ && status.permission === 'granted' && (
+        <PressableScale
+          style={styles.secondaryButton}
+          scaleTo={0.97}
+          onPress={() => void sendLocalTestNotification().catch((error) => reportError(message(error)))}>
+          <Text style={styles.secondaryButtonText}>Send test notification</Text>
+        </PressableScale>
+      )}
     </View>
   );
 }
@@ -333,5 +341,7 @@ const styles = StyleSheet.create({
   segmentTextSelected: { color: colors.onPrimary },
   primaryButton: { height: 36, borderRadius: radius.pill, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.primary },
   primaryText: { color: colors.onPrimary, fontWeight: '800', fontSize: 14 },
+  secondaryButton: { height: 36, borderRadius: radius.pill, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.elevated },
+  secondaryButtonText: { color: colors.text, fontWeight: '800', fontSize: 14 },
   devResult: { paddingTop: 4 },
 });

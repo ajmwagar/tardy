@@ -1,0 +1,29 @@
+# Dependencies and Expo state
+node_modules
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Continuous Native Generation owns these folders. Keeping local prebuild output
+# out of EAS ensures app.json plugins (including Open in Tardy) are applied.
+/ios
+/android
+.kotlin/
+
+# Credentials, local configuration, and generated files
+.env*.local
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.jks
+*.pem
+*.tsbuildinfo
+*.orig.*
+.DS_Store
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+.metro-health-check*
+example

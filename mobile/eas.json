@@ -28,6 +28,7 @@
     },
     "production": {
       "extends": "base",
+      "environment": "production",
       "autoIncrement": true
     }
   },

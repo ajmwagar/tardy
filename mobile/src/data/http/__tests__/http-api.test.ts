@@ -72,7 +72,7 @@ describe('HttpTardyApi: routes', () => {
     ['setFollowing on', (api) => api.setFollowing('acct-2', true), 'PUT', '/v1/profiles/acct-2/follow'],
     ['setNotificationDefault', (api) => api.setNotificationDefault('review_requested', false), 'PUT', '/v1/push/preferences', { category: 'review_requested', enabled: false }],
     ['setNotificationOverride clear', (api) => api.setNotificationOverride('proj', 'shipped', null), 'PUT', '/v1/push/preferences/projects/proj', { category: 'shipped', enabled: null }],
-    ['registerPushToken', (api) => api.registerPushToken({ token: 'ExponentPushToken[x]', provider: 'expo', platform: 'ios' }), 'POST', '/v1/push/devices', { token: 'ExponentPushToken[x]', provider: 'expo', platform: 'ios' }],
+    ['registerPushToken', (api) => api.registerPushToken({ token: 'ab'.repeat(32), environment: 'sandbox', topic: 'dev.fpl.tardy' }), 'POST', '/v1/push/devices', { token: 'ab'.repeat(32), environment: 'sandbox', topic: 'dev.fpl.tardy' }],
     ['updateProfile', (api) => api.updateProfile({ name: 'Ada L' }), 'PATCH', '/v1/profile', { display_name: 'Ada L' }],
     ['setVisibility', (api) => api.setVisibility('proj', 'team'), 'PUT', '/v1/profiles/by-id/proj/visibility', { visibility: 'team' }],
     [

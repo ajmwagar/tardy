@@ -240,6 +240,24 @@ impl PgPushStore {
         )
     }
 
+    pub async fn unregister_token(
+        &self,
+        account_id: Uuid,
+        token: &str,
+    ) -> Result<(), PushError> {
+        let digest = device_token_digest(token)?;
+        sqlx::query(
+            "UPDATE push_devices SET active=false,invalidated_at=now(),updated_at=now()
+             WHERE account_id=$1 AND token_digest=$2 AND active",
+        )
+        .bind(account_id)
+        .bind(digest)
+        .execute(&self.pool)
+        .await?;
+        // Idempotent by design: signing out twice must not strand the client.
+        Ok(())
+    }
+
     pub async fn set_preference(
         &self,
         account_id: Uuid,

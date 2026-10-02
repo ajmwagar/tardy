@@ -147,10 +147,10 @@ describe('mock delivery point', () => {
   it('keeps preferences and tokens per viewer', async () => {
     const api = mock();
     await api.setNotificationDefault('like', true);
-    await api.registerPushToken({ token: 'ExponentPushToken[x]', provider: 'expo', platform: 'ios' });
+    await api.registerPushToken({ token: 'ab'.repeat(32), environment: 'sandbox', topic: 'dev.fpl.tardy' });
     expect(api.registeredPushTokens()).toHaveLength(1);
     expect((await api.notificationPreferences()).defaults.like).toBe(true);
-    await api.unregisterPushToken('ExponentPushToken[x]');
+    await api.unregisterPushToken('ab'.repeat(32));
     expect(api.registeredPushTokens()).toEqual([]);
     await expect(new MockTardyApi({ latencyMs: 0, viewerId: 'avery' }).notificationPreferences()).resolves.toEqual(DEFAULT_PREFERENCES);
   });

@@ -35,7 +35,18 @@ async fn apple_identity_creates_resumable_per_device_session() {
     ));
     assert_eq!(signed_in.provider, "apple");
     assert_eq!(signed_in.profile.display_name, "Person Example");
-    assert!(signed_in.profile.onboarded_at_ms.is_some());
+    assert!(signed_in.profile.onboarded_at_ms.is_none());
+    let profile = store
+        .set_human_handle(signed_in.profile.account_id, "person.example")
+        .await
+        .unwrap();
+    assert_eq!(profile.handle, "person.example");
+    assert!(profile.onboarded_at_ms.is_none());
+    let profile = store
+        .complete_human_onboarding(signed_in.profile.account_id, now + 1)
+        .await
+        .unwrap();
+    assert_eq!(profile.onboarded_at_ms, Some(now + 1));
     assert_eq!(
         store.authenticate(&signed_in.token, now).await.unwrap(),
         signed_in.profile.account_id
@@ -45,7 +56,7 @@ async fn apple_identity_creates_resumable_per_device_session() {
         .resume_human_session(&signed_in.token, now + 1)
         .await
         .unwrap();
-    assert_eq!(resumed.profile, signed_in.profile);
+    assert_eq!(resumed.profile, profile);
     store
         .revoke_human_session(&signed_in.token, now + 2)
         .await

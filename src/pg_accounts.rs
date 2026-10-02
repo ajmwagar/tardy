@@ -22,6 +22,10 @@ pub enum PgAccountError {
     Timestamp,
     #[error("identity assertion has already been used")]
     AssertionReplayed,
+    #[error("handle must be 3 to 30 lowercase letters, numbers, dots, or underscores")]
+    InvalidHandle,
+    #[error("handle is already taken")]
+    HandleConflict,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,12 +93,7 @@ impl PgAccountStore {
         let inserted = sqlx::query("INSERT INTO durable_accounts (id,email,kind,temporary,created_at) VALUES ($1,$2,'human',false,$3)")
             .bind(account.id).bind(&account.email).bind(now).execute(&mut *tx).await;
         if let Err(error) = inserted {
-            if error
-                .as_database_error()
-                .and_then(|value| value.code())
-                .as_deref()
-                == Some("23505")
-            {
+            if is_unique_violation(&error) {
                 return Err(PgAccountError::EmailConflict);
             }
             return Err(error.into());
@@ -342,6 +341,73 @@ impl PgAccountStore {
         human_profile(&row)
     }
 
+    pub async fn set_human_handle(
+        &self,
+        account_id: Uuid,
+        handle: &str,
+    ) -> Result<HumanProfile, PgAccountError> {
+        let handle = handle.trim().to_ascii_lowercase();
+        if !(3..=30).contains(&handle.len())
+            || !handle.chars().all(|character| {
+                character.is_ascii_lowercase()
+                    || character.is_ascii_digit()
+                    || matches!(character, '.' | '_')
+            })
+        {
+            return Err(PgAccountError::InvalidHandle);
+        }
+        let mut tx = self.pool.begin().await?;
+        let profile_id: Uuid = sqlx::query_scalar(
+            "SELECT profile_id FROM human_profiles WHERE account_id=$1 FOR UPDATE",
+        )
+        .bind(account_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(PgAccountError::InvalidClaim)?;
+        let changed = sqlx::query("UPDATE human_profiles SET handle=$1 WHERE account_id=$2")
+            .bind(&handle)
+            .bind(account_id)
+            .execute(&mut *tx)
+            .await;
+        if let Err(error) = changed {
+            if is_unique_violation(&error) {
+                return Err(PgAccountError::HandleConflict);
+            }
+            return Err(error.into());
+        }
+        let changed = sqlx::query("UPDATE social_identities SET handle=$1 WHERE profile_id=$2")
+            .bind(&handle)
+            .bind(profile_id)
+            .execute(&mut *tx)
+            .await;
+        if let Err(error) = changed {
+            if is_unique_violation(&error) {
+                return Err(PgAccountError::HandleConflict);
+            }
+            return Err(error.into());
+        }
+        tx.commit().await?;
+        self.human_profile_for_account(account_id).await
+    }
+
+    pub async fn complete_human_onboarding(
+        &self,
+        account_id: Uuid,
+        now_ms: u64,
+    ) -> Result<HumanProfile, PgAccountError> {
+        let changed = sqlx::query(
+            "UPDATE human_profiles SET onboarded_at=COALESCE(onboarded_at,$2) WHERE account_id=$1",
+        )
+        .bind(account_id)
+        .bind(timestamp(now_ms)?)
+        .execute(&self.pool)
+        .await?;
+        if changed.rows_affected() != 1 {
+            return Err(PgAccountError::InvalidClaim);
+        }
+        self.human_profile_for_account(account_id).await
+    }
+
     pub async fn following_profile_ids(
         &self,
         account_id: Uuid,
@@ -472,7 +538,7 @@ async fn ensure_human_profile(
     } else {
         display_name
     };
-    sqlx::query("INSERT INTO human_profiles (account_id,profile_id,handle,display_name,onboarded_at,created_at) VALUES ($1,$2,$3,$4,$5,$5)")
+    sqlx::query("INSERT INTO human_profiles (account_id,profile_id,handle,display_name,created_at) VALUES ($1,$2,$3,$4,$5)")
         .bind(account_id).bind(profile_id).bind(&handle).bind(&display_name).bind(now).execute(&mut **tx).await?;
     sqlx::query(
         "INSERT INTO profile_ownership (profile_id,owner_account_id,created_at) VALUES ($1,$2,$3)",
@@ -499,7 +565,7 @@ async fn ensure_human_profile(
         display_name,
         bio: String::new(),
         avatar_url: String::new(),
-        onboarded_at_ms: Some(millis(now)?),
+        onboarded_at_ms: None,
     })
 }
 
@@ -523,6 +589,13 @@ fn millis(value: DateTime<Utc>) -> Result<u64, PgAccountError> {
 }
 fn hash(value: &str) -> Vec<u8> {
     Sha256::digest(value.as_bytes()).to_vec()
+}
+fn is_unique_violation(error: &sqlx::Error) -> bool {
+    error
+        .as_database_error()
+        .and_then(|value| value.code())
+        .as_deref()
+        == Some("23505")
 }
 fn timestamp(ms: u64) -> Result<DateTime<Utc>, PgAccountError> {
     Utc.timestamp_millis_opt(i64::try_from(ms).map_err(|_| PgAccountError::Timestamp)?)

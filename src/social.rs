@@ -201,7 +201,7 @@ pub struct AppFeedPost {
     pub viewer_has_saved: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct AppAccount {
     pub id: Uuid,
     pub kind: IdentityKind,

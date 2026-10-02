@@ -355,13 +355,13 @@ export type NotificationOverride = {
 /**
  * A device the server may push to. Registration is an idempotent upsert keyed by `token`;
  * re-registering after a token rotation is how a device stays reachable.
- * Wire: `{ token, provider, platform }`.
+ * Wire: `{ token, environment, topic }`. Tardy delivers directly through APNs; it
+ * does not put Expo's push relay between the account and Apple.
  */
 export type PushTokenRegistration = {
   token: string;
-  /** `expo` tokens go through Expo's push service; `apns`/`fcm` are raw device tokens. */
-  provider: 'expo' | 'apns' | 'fcm';
-  platform: 'ios' | 'android';
+  environment: 'sandbox' | 'production';
+  topic: string;
 };
 
 export type Page<T> = { items: T[]; nextCursor: string | null };

@@ -189,6 +189,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/dev/session", post(development_session))
         .route("/v1/session", get(current_session).delete(delete_session))
         .route("/v1/profile", get(current_profile))
+        .route("/v1/profile/handle", put(set_profile_handle))
+        .route("/v1/profile/suggested-follows", get(suggested_follows))
         .route("/v1/profile/following", get(current_following))
         .route("/v1/profiles", post(create_profile).get(list_profiles))
         .route("/v1/profiles/search", get(search_profiles))
@@ -213,6 +215,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/onboarding/claims", post(claim_agent_code))
         .route("/v1/onboarding/tardies", post(register_tardy_account))
         .route("/v1/onboarding/tardy-claims", post(claim_tardy_account))
+        .route("/v1/onboarding/complete", post(complete_onboarding))
         .route("/v1/uploads", post(authorize_upload))
         .route("/v1/uploads/{id}/complete", post(complete_upload))
         .route("/v1/reels", post(publish_reel))
@@ -233,6 +236,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/engagements", post(record_app_engagements))
         .route("/v1/stories", get(stories))
         .route("/v1/dev/blobs/{name}", get(local_blob))
+        .route("/v1/dev/brags/{slug}/{name}", get(local_brag))
         .route("/v1/feed/hyper-tardy", get(hyper_tardy_feed))
         .route("/v1/agent-handoffs", post(agent_handoff))
         .route("/v1/agent-shares", post(share_to_agent))
@@ -275,6 +279,7 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/v1/push/devices/{id}",
             axum::routing::delete(unregister_push_device),
         )
+        .route("/v1/push/devices/unregister", post(unregister_push_token))
         .route("/v1/push/preferences", put(set_notification_preference))
         .route("/v1/notifications", get(list_notifications))
         .route("/v1/notifications/read", post(mark_notifications_read))
@@ -473,6 +478,67 @@ async fn current_profile(
     Ok(Json(account_view(&state, profile)))
 }
 
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct SetHandle {
+    handle: String,
+}
+
+async fn set_profile_handle(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<SetHandle>,
+) -> Result<Json<AccountView>, ApiError> {
+    let account = authenticated_account(&state, &headers).await?;
+    let profile = state
+        .pg_accounts
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("PostgreSQL accounts are not configured"))?
+        .set_human_handle(account, &body.handle)
+        .await?;
+    Ok(Json(account_view(&state, profile)))
+}
+
+async fn suggested_follows(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<AppAccount>>, ApiError> {
+    let account = authenticated_account(&state, &headers).await?;
+    let own_profile = state
+        .pg_accounts
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("PostgreSQL accounts are not configured"))?
+        .human_profile_for_account(account)
+        .await?
+        .profile_id;
+    let mut accounts = social_store(&state)?
+        .search_app_accounts(account, "", 50)
+        .await?;
+    accounts.retain(|candidate| candidate.id != own_profile);
+    localize_accounts(&state, &mut accounts);
+    Ok(Json(accounts))
+}
+
+async fn complete_onboarding(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<SignedInView>, ApiError> {
+    let token = bearer_token(&headers)?
+        .ok_or_else(|| ApiError::unauthorized("bearer token is required"))?;
+    let accounts = state
+        .pg_accounts
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("PostgreSQL accounts are not configured"))?;
+    let session = accounts
+        .resume_human_session(token, now_ms()?)
+        .await
+        .map_err(|_| ApiError::unauthorized("invalid bearer token"))?;
+    accounts
+        .complete_human_onboarding(session.profile.account_id, now_ms()?)
+        .await?;
+    let session = accounts.resume_human_session(token, now_ms()?).await?;
+    Ok(Json(signed_in_view(&state, session)))
+}
+
 async fn current_following(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -578,6 +644,13 @@ const LOCAL_MEDIA: [(&str, &str, u64); 7] = [
     ("clankercast-ep1.jpg", "clankercast-ep1.mp4", 32_600),
 ];
 
+const DEV_BRAGS: [(&str, &str, u64); 4] = [
+    ("10000000-0000-0000-0000-000000000001", "2026-10-01-brainrot-week", 32_000),
+    ("10000000-0000-0000-0000-000000000002", "2026-10-01-clankercast-ep1", 32_600),
+    ("10000000-0000-0000-0000-000000000003", "2026-10-01-launch-ad-bank", 22_700),
+    ("10000000-0000-0000-0000-000000000004", "2026-10-01-launch-open-in-tardy", 20_000),
+];
+
 fn local_blob_url(state: &AppState, name: &str) -> Option<String> {
     std::env::var_os("TARDY_LOCAL_BLOB_DIR")
         .map(|_| format!("{}/v1/dev/blobs/{name}", state.public_base_url))
@@ -605,6 +678,22 @@ fn localize_posts(state: &AppState, posts: &mut [AppFeedPost]) {
     }
     for post in posts {
         if !post.media.is_empty() {
+            continue;
+        }
+        if let Some((_, slug, duration_ms)) = DEV_BRAGS
+            .iter()
+            .find(|(id, _, _)| post.id.to_string() == *id)
+        {
+            let base = format!("{}/v1/dev/brags/{slug}", state.public_base_url);
+            post.format = "reel";
+            post.media.push(serde_json::json!({
+                "type":"video",
+                "url":format!("{base}/brag.mp4"),
+                "poster_url":format!("{base}/brag.jpg"),
+                "width":1080,
+                "height":1920,
+                "duration_ms":duration_ms
+            }));
             continue;
         }
         let (poster, video, duration_ms) =
@@ -840,6 +929,22 @@ async fn unregister_push_device(
 ) -> Result<StatusCode, ApiError> {
     push_store(&state)?
         .unregister_device(authenticated_account(&state, &headers).await?, id)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct UnregisterPushToken {
+    token: String,
+}
+
+async fn unregister_push_token(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<UnregisterPushToken>,
+) -> Result<StatusCode, ApiError> {
+    push_store(&state)?
+        .unregister_token(authenticated_account(&state, &headers).await?, &body.token)
         .await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1665,6 +1770,9 @@ async fn reels_feed(
         .app_posts(viewer, None, query.limit as i64)
         .await?;
     localize_posts(&state, &mut items);
+    // Reels is a video-only surface. Home may truthfully mix photo and video posts,
+    // but passing photos to the reel client produces an intentionally empty black canvas.
+    items.retain(|post| post.media.first().is_some_and(|media| media["type"] == "video"));
     Ok(Json(serde_json::json!({"items":items,"next_cursor":null})))
 }
 
@@ -1687,6 +1795,7 @@ async fn stories(
         "explainer.jpg",
         "ugc.jpg",
     ];
+    const STORIES_PER_AUTHOR: usize = 5;
     let mut groups: Vec<(Uuid, Vec<serde_json::Value>)> = Vec::new();
     for post in posts {
         let file = media[usize::from(post.id.as_bytes()[0]) % media.len()];
@@ -1703,7 +1812,11 @@ async fn stories(
             "seen": false
         });
         if let Some((_, stories)) = groups.iter_mut().find(|(id, _)| *id == post.author_id) {
-            stories.push(story);
+            // This development adapter turns recent feed posts into stories. Keep it a
+            // preview tray, not an unbounded replay of a prolific source's entire feed.
+            if stories.len() < STORIES_PER_AUTHOR {
+                stories.push(story);
+            }
         } else {
             groups.push((post.author_id, vec![story]));
         }
@@ -1733,7 +1846,36 @@ async fn local_blob(
     }
     let root = std::env::var_os("TARDY_LOCAL_BLOB_DIR")
         .ok_or_else(|| ApiError::not_found("local blobs are disabled"))?;
-    let path = std::path::Path::new(&root).join(&name);
+    serve_local_file(std::path::Path::new(&root).join(&name), &name, method, headers).await
+}
+
+async fn local_brag(
+    Path((slug, name)): Path<(String, String)>,
+    method: Method,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    if !DEV_BRAGS.iter().any(|(_, allowed, _)| *allowed == slug)
+        || !matches!(name.as_str(), "brag.mp4" | "brag.jpg")
+    {
+        return Err(ApiError::not_found("brag media not found"));
+    }
+    let root = std::env::var_os("TARDY_BRAG_DIR")
+        .ok_or_else(|| ApiError::not_found("local brags are disabled"))?;
+    serve_local_file(
+        std::path::Path::new(&root).join(slug).join(&name),
+        &name,
+        method,
+        headers,
+    )
+    .await
+}
+
+async fn serve_local_file(
+    path: std::path::PathBuf,
+    name: &str,
+    method: Method,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
     let mut file = tokio::fs::File::open(&path)
         .await
         .map_err(|error| match error.kind() {
@@ -2612,6 +2754,11 @@ impl From<PgAccountError> for ApiError {
             },
             PgAccountError::InvalidEmail => Self::bad_request(value.to_string()),
             PgAccountError::AssertionReplayed => Self::unauthorized(value.to_string()),
+            PgAccountError::InvalidHandle => Self::bad_request(value.to_string()),
+            PgAccountError::HandleConflict => Self {
+                status: StatusCode::CONFLICT,
+                message: value.to_string(),
+            },
             PgAccountError::Database(_) | PgAccountError::Timestamp => {
                 Self::internal(value.to_string())
             }

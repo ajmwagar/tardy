@@ -36,6 +36,7 @@ import { tardyUrl } from '@/share/links';
 
 /** The server's page limit for conversation messages (1..=100). */
 const MESSAGE_PAGE = 100;
+const REQUEST_TIMEOUT_MS = 12_000;
 
 /**
  * `TardyApi` over HTTP against the Rust server (ajmwagar/tardy, `feat/backend-foundation`).
@@ -169,11 +170,16 @@ export class HttpTardyApi implements TardyApi {
     const route = `${method} ${path}`;
     let response: { status: number; text(): Promise<string> };
     try {
-      response = await this.fetch(`${this.baseUrl}${path}${search ? `?${search}` : ''}`, {
-        method,
-        headers: this.headers(auth, body !== undefined),
-        ...(body !== undefined && { body: JSON.stringify(body) }),
-      });
+      response = await Promise.race([
+        this.fetch(`${this.baseUrl}${path}${search ? `?${search}` : ''}`, {
+          method,
+          headers: this.headers(auth, body !== undefined),
+          ...(body !== undefined && { body: JSON.stringify(body) }),
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`request timed out after ${REQUEST_TIMEOUT_MS / 1_000}s`)), REQUEST_TIMEOUT_MS),
+        ),
+      ]);
     } catch (error) {
       throw new Error(`Network error on ${route}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
     }
