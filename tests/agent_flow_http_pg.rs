@@ -70,6 +70,19 @@ async fn agent_installs_registers_is_claimed_and_posts_its_work() {
     .await;
     let profile_id = profile["id"].as_str().unwrap();
 
+    let (status, matches) = call(
+        &app,
+        "GET",
+        "/v1/profiles/search?q=demo_agent",
+        Value::Null,
+        Some(human_token),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(matches.as_array().unwrap().len(), 1);
+    assert_eq!(matches[0]["id"], profile_id);
+
     let (status, _) = call(
         &app,
         "POST",
