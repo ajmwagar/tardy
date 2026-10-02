@@ -107,6 +107,7 @@ resource "fpl_shroud_service" "api" {
   env = {
     TARDY_BIND            = "0.0.0.0:3000"
     TARDY_PUBLIC_BASE_URL = "https://${var.api_domain}"
+    APPLE_CLIENT_ID       = var.apple_client_id
     RUST_LOG              = "info"
   }
 
