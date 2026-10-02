@@ -102,6 +102,7 @@ export default function RootLayout() {
                 contentStyle: { backgroundColor: colors.surface },
               }}
             />
+            <Stack.Screen name="compose" options={{ presentation: 'modal' }} />
             <Stack.Screen name="review" options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }} />
             <Stack.Screen name="stories/[authorId]" options={{ presentation: 'fullScreenModal', animation: 'fade' }} />
             <Stack.Screen name="post/[postId]" />

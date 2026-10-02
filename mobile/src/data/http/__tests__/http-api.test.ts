@@ -232,6 +232,18 @@ describe('HttpTardyApi: decoding', () => {
     viewer_has_saved: false,
   };
 
+  it('creates a text post, then reads it back as the feed shows it', async () => {
+    const stored = { id: 'p9', author_profile_id: 'acct-1', caption: 'Shipped', shared_link_id: null, visibility: 'public', created_at: '2026-10-01T00:00:00Z' };
+    const textPost = { ...wirePost, id: 'p9', format: 'text', media: [], caption: 'Shipped' };
+    const { api, calls } = await signedInClient({ status: 201, body: stored }, { status: 200, body: textPost });
+    const post = await api.createPost({ clientRequestId: 'req-1', text: 'Shipped', audience: 'public' });
+    expect(calls.map((c) => [c.method, c.url, c.body])).toEqual([
+      ['POST', `${BASE}v1/social/posts`, { client_request_id: 'req-1', caption: 'Shipped', shared_link_id: null, visibility: 'public' }],
+      ['GET', `${BASE}v1/posts/p9`, undefined],
+    ]);
+    expect(post).toMatchObject({ id: 'p9', format: 'text', media: [], caption: 'Shipped' });
+  });
+
   it('decodes a feed page with ms times as ISO and the cursor', async () => {
     const { api } = await signedInClient({ status: 200, body: { items: [wirePost], next_cursor: 'c2' } });
     const page = await api.homeFeed(null);

@@ -25,6 +25,9 @@ import { Avatar, Icon, IconButton, NameLine, PressableScale, Reaction, StatusPil
 /** Cards float with a gutter so the feed reads as a stack of updates, not a photo wall. */
 export const CARD_GUTTER = layout.cardGutter;
 
+/** 200 characters fit in about six lines; older, longer posts clamp and expand on tap. */
+const TEXT_POST_LINES = 8;
+
 const LINK_ICONS = {
   pull_request: 'arrow.triangle.pull',
   commit: 'smallcircle.filled.circle',
@@ -61,6 +64,7 @@ export const PostCard = memo(function PostCard({
   const reposted = state?.reposted ?? post.viewerHasReposted;
   const repostCount = state?.repostCount ?? post.repostCount;
   const mediaWidth = width - CARD_GUTTER * 2;
+  const isText = post.format === 'text';
 
   const openProfile = () => {
     if (!author) return;
@@ -118,10 +122,19 @@ export const PostCard = memo(function PostCard({
         <IconButton icon="ellipsis" size={18} label="More options" onPress={more} style={styles.moreButton} />
       </View>
 
-      <View style={styles.media}>
-        <MediaCarousel postId={post.id} media={post.media} width={mediaWidth} active={active} onIndexChange={setIndex} />
-      </View>
-      <CarouselDots count={post.media.length} index={index} />
+      {isText ? (
+        // A text post is its words: set large where the media would be, no caption repeat.
+        <Text style={styles.textPost} numberOfLines={expanded ? undefined : TEXT_POST_LINES} onPress={() => setExpanded(true)}>
+          {post.caption}
+        </Text>
+      ) : (
+        <>
+          <View style={styles.media}>
+            <MediaCarousel postId={post.id} media={post.media} width={mediaWidth} active={active} onIndexChange={setIndex} />
+          </View>
+          <CarouselDots count={post.media.length} index={index} />
+        </>
+      )}
 
       <View style={styles.actions}>
         <View style={styles.actionGroup}>
@@ -159,12 +172,14 @@ export const PostCard = memo(function PostCard({
       </View>
 
       <View style={styles.body}>
-        <Text style={styles.caption} numberOfLines={expanded ? undefined : 2} onPress={() => setExpanded(true)}>
-          <Text style={styles.captionHandle} onPress={openProfile}>
-            {author?.handle}{' '}
+        {!isText && (
+          <Text style={styles.caption} numberOfLines={expanded ? undefined : 2} onPress={() => setExpanded(true)}>
+            <Text style={styles.captionHandle} onPress={openProfile}>
+              {author?.handle}{' '}
+            </Text>
+            {post.caption}
           </Text>
-          {post.caption}
-        </Text>
+        )}
 
         {(post.status || post.style || post.links.length > 0) && (
           <View style={styles.meta}>
@@ -213,6 +228,7 @@ const styles = StyleSheet.create({
   actionGroup: { flexDirection: 'row', alignItems: 'center', gap: 18 },
   body: { paddingHorizontal: 12, paddingTop: 8, gap: 5 },
   caption: { color: colors.text, fontSize: 14, lineHeight: 19 },
+  textPost: { color: colors.text, fontSize: 17, lineHeight: 23, paddingHorizontal: 12, paddingTop: 2, paddingBottom: 2 },
   captionHandle: { fontWeight: '600' },
   meta: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 2 },
   linkChip: {

@@ -12,9 +12,10 @@ import { EmptyState, ErrorState, FeedSkeleton, InlineRetry, PostSkeleton } from 
 import { ActivityButton } from '@/components/activity-button';
 import { StoriesRow } from '@/components/stories-row';
 import { SuggestionsButton } from '@/components/suggestions-button';
+import { IconButton } from '@/components/ui';
 import { Wordmark } from '@/components/wordmark';
 import type { Post, StoryGroup } from '@/data/types';
-import { api, ensureAccounts, loadFeedPage, loadTrending, logEngagement, reportError, useStore } from '@/state/store';
+import { api, ensureAccounts, loadFeedPage, loadTrending, logEngagement, onPostPublished, reportError, useStore } from '@/state/store';
 import { colors } from '@/theme';
 
 const keyOf = (p: Post) => p.id;
@@ -35,6 +36,12 @@ export default function HomeScreen() {
   /** A failed first page (nothing to show) or next page (inline retry under what's loaded). */
   const [error, setError] = useState<{ page: 'first' | 'next'; message: string } | null>(null);
   const trending = useStore((s) => s.trending);
+
+  // Your own new post goes on top right away, as on X; the next refresh ranks it normally.
+  useEffect(
+    () => onPostPublished((post) => setPosts((current) => [post, ...current.filter((p) => p.id !== post.id)])),
+    [],
+  );
 
   const loadingRef = useRef(false);
   const loadedOnce = useRef(false);
@@ -132,6 +139,7 @@ export default function HomeScreen() {
         {/* Breaking sits beside the wordmark, not under it: one header row, more feed. */}
         <BreakingTicker posts={trending} inline />
         <SuggestionsButton />
+        <IconButton icon="square.and.pencil" size={22} label="New post" onPress={() => router.push('/compose')} />
         <ActivityButton />
       </View>
 

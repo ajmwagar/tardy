@@ -109,8 +109,12 @@ describe('wire types', () => {
     });
   });
 
+  it('decodes a text post with no media', () => {
+    expect(W.post({ ...wirePost, format: 'text', media: [], style: undefined }, 'r')).toMatchObject({ format: 'text', media: [] });
+  });
+
   it('rejects an unknown closed-set value', () => {
-    expect(() => W.post({ ...wirePost, format: 'hologram' }, 'r')).toThrow('r.format: expected one of photo | carousel | video | reel, got "hologram"');
+    expect(() => W.post({ ...wirePost, format: 'hologram' }, 'r')).toThrow('r.format: expected one of photo | carousel | video | reel | text, got "hologram"');
   });
 
   it('maps the social ConversationMessage names onto Message', () => {
