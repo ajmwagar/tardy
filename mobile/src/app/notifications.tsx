@@ -24,6 +24,8 @@ const KIND_BADGE: Record<NotificationKind, { symbol: SFSymbol; color: string }> 
   comment: { symbol: 'bubble.left.fill', color: colors.text },
   mention: { symbol: 'at', color: colors.text },
   follow: { symbol: 'person.fill.badge.plus', color: colors.text },
+  message: { symbol: 'message.fill', color: colors.primary },
+  conversation_invite: { symbol: 'person.2.fill', color: colors.primary },
 };
 
 const FILTERS: { key: TrayFilter; label: string }[] = [

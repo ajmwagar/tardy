@@ -5,6 +5,7 @@ import type { Account, NotificationKind, NotificationPreferences } from '@/data/
 import {
   decidePush,
   DEFAULT_PREFERENCES,
+  DEFAULT_ON_KINDS,
   eventProjectId,
   NOTIFICATION_KINDS,
   WORK_KINDS,
@@ -23,12 +24,12 @@ describe('defaults', () => {
   it('cover every kind: work on, social off', () => {
     expect(Object.keys(DEFAULT_PREFERENCES.defaults).sort()).toEqual([...NOTIFICATION_KINDS].sort());
     for (const kind of NOTIFICATION_KINDS) {
-      expect(DEFAULT_PREFERENCES.defaults[kind]).toBe(WORK_KINDS.includes(kind));
+      expect(DEFAULT_PREFERENCES.defaults[kind]).toBe(DEFAULT_ON_KINDS.includes(kind));
     }
   });
 
   it.each(NOTIFICATION_KINDS)('%s with no project or alarm follows the default', (kind) => {
-    expect(decidePush(DEFAULT_PREFERENCES, { kind, alarmed: false }).push).toBe(WORK_KINDS.includes(kind));
+    expect(decidePush(DEFAULT_PREFERENCES, { kind, alarmed: false }).push).toBe(DEFAULT_ON_KINDS.includes(kind));
   });
 });
 

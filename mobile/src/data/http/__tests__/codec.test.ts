@@ -131,7 +131,18 @@ describe('wire types', () => {
     const n = { id: 'n', actor_id: 'a', text: 't', created_at_ms: 0, read: false };
     expect(W.notifications([{ ...n, kind: 'like' }, { ...n, kind: 'poke' }], 'r').map((x) => x.kind)).toEqual(['like']);
 
-    const defaults = { like: true, comment: true, follow: true, mention: true, shipped: true, blocked: true, review_requested: true, poke: false };
+    const defaults = {
+      like: true,
+      comment: true,
+      follow: true,
+      mention: true,
+      message: true,
+      conversation_invite: true,
+      shipped: true,
+      blocked: true,
+      review_requested: true,
+      poke: false,
+    };
     const prefs = W.notificationPreferences(
       {
         defaults,

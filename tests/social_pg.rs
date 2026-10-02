@@ -1,4 +1,4 @@
-use tardy::push::PgPushStore;
+use tardy::push::{ApnsEnvironment, PgPushStore, RegisterPushDevice};
 use tardy::social::{IdentityKind, PgSocialStore, PostMedia, PostVisibility};
 use tardy::subscriptions::{DeliveryMode, NewSubscription, PgSubscriptionStore, SubscriptionKind};
 use uuid::Uuid;
@@ -306,13 +306,23 @@ async fn human_group_notifies_members_then_becomes_work_when_an_agent_is_summone
             .unwrap();
     }
 
+    let push = PgPushStore::new(pool.clone());
+    push.register_device(
+        james_account,
+        RegisterPushDevice {
+            token: "11".repeat(32),
+            environment: ApnsEnvironment::Sandbox,
+            topic: "dev.fpl.tardy".into(),
+        },
+    )
+    .await
+    .unwrap();
     let conversation = store
         .create_group_conversation(avery, &[james, friend])
         .await
         .unwrap();
     assert_eq!(conversation.mode, tardy::social::ConversationMode::Dm);
     assert_eq!(conversation.participants.len(), 3);
-    let push = PgPushStore::new(pool.clone());
     assert_eq!(
         push.notifications(james_account, 10).await.unwrap().len(),
         1
@@ -331,6 +341,13 @@ async fn human_group_notifies_members_then_becomes_work_when_an_agent_is_summone
     assert_eq!(notifications[0].kind, "message");
     assert_eq!(notifications[0].actor_id, avery);
     assert_eq!(notifications[0].text, message.body);
+    assert_eq!(notifications[0].conversation_id, Some(conversation.id));
+    let queued: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM push_deliveries WHERE status='queued'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(queued, 2, "invites and messages are on by default");
 
     let promoted = store
         .summon_agent(owner_account, avery, conversation.id, agent, true)
@@ -338,6 +355,91 @@ async fn human_group_notifies_members_then_becomes_work_when_an_agent_is_summone
         .unwrap();
     assert_eq!(promoted.mode, tardy::social::ConversationMode::Work);
     assert_eq!(promoted.participants.len(), 4);
+}
+
+#[tokio::test]
+async fn social_actions_create_deduplicated_durable_notifications() {
+    let _guard = DATABASE_TEST_LOCK.lock().unwrap();
+    let Some((pool, store)) = setup().await else {
+        return;
+    };
+    let author_account = Uuid::new_v4();
+    let actor_account = Uuid::new_v4();
+    let mentioned_account = Uuid::new_v4();
+    let author = Uuid::new_v4();
+    let actor = Uuid::new_v4();
+    let mentioned = Uuid::new_v4();
+    for (account, profile, handle) in [
+        (author_account, author, "author-notify"),
+        (actor_account, actor, "actor-notify"),
+        (mentioned_account, mentioned, "mentioned-notify"),
+    ] {
+        store
+            .register_identity(account, profile, handle, IdentityKind::Human)
+            .await
+            .unwrap();
+    }
+    let post = store
+        .publish_post(
+            author,
+            Uuid::new_v4(),
+            "notification target",
+            None,
+            PostVisibility::Public,
+        )
+        .await
+        .unwrap();
+
+    let push = PgPushStore::new(pool.clone());
+    push.register_device(
+        author_account,
+        RegisterPushDevice {
+            token: "22".repeat(32),
+            environment: ApnsEnvironment::Sandbox,
+            topic: "dev.fpl.tardy".into(),
+        },
+    )
+    .await
+    .unwrap();
+
+    store.follow(actor, author).await.unwrap();
+    store.follow(actor, author).await.unwrap();
+    store.set_post_liked(actor, post.id, true).await.unwrap();
+    store.set_post_liked(actor, post.id, true).await.unwrap();
+    store
+        .comment(
+            actor,
+            post.id,
+            "@mentioned-notify take a look",
+            &[mentioned],
+        )
+        .await
+        .unwrap();
+
+    let author_notifications = push.notifications(author_account, 10).await.unwrap();
+    assert_eq!(
+        author_notifications
+            .iter()
+            .map(|notification| notification.kind.as_str())
+            .collect::<Vec<_>>(),
+        vec!["comment", "like", "follow"]
+    );
+    assert_eq!(
+        author_notifications
+            .iter()
+            .filter(|notification| notification.post_id == Some(post.id))
+            .count(),
+        2
+    );
+    let mentioned_notifications = push.notifications(mentioned_account, 10).await.unwrap();
+    assert_eq!(mentioned_notifications.len(), 1);
+    assert_eq!(mentioned_notifications[0].kind, "mention");
+    assert_eq!(mentioned_notifications[0].post_id, Some(post.id));
+    let deliveries: i64 = sqlx::query_scalar("SELECT count(*) FROM push_deliveries")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(deliveries, 0, "social pushes are opt-in by default");
 }
 
 async fn setup() -> Option<(sqlx::PgPool, PgSocialStore)> {

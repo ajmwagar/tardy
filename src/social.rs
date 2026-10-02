@@ -354,6 +354,7 @@ impl PgSocialStore {
         post_id: Uuid,
         liked: bool,
     ) -> Result<(), SocialError> {
+        let mut tx = self.pool.begin().await?;
         let visible: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM tardy_posts p WHERE p.id=$1 AND
              (p.visibility='public' OR p.author_profile_id=$2 OR
@@ -366,26 +367,48 @@ impl PgSocialStore {
         )
         .bind(post_id)
         .bind(viewer)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await?;
         if !visible {
             return Err(SocialError::NotFound);
         }
         if liked {
-            sqlx::query(
+            let inserted = sqlx::query(
                 "INSERT INTO post_likes (post_id,profile_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
             )
             .bind(post_id)
             .bind(viewer)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
+            if inserted.rows_affected() == 1 {
+                let author: Uuid =
+                    sqlx::query_scalar("SELECT author_profile_id FROM tardy_posts WHERE id=$1")
+                        .bind(post_id)
+                        .fetch_one(&mut *tx)
+                        .await?;
+                if author != viewer {
+                    let handle = identity_handle(&mut tx, viewer).await?;
+                    notify_human(
+                        &mut tx,
+                        author,
+                        viewer,
+                        "like",
+                        &format!("@{handle}"),
+                        "liked your tardy",
+                        Some(post_id),
+                        None,
+                    )
+                    .await?;
+                }
+            }
         } else {
             sqlx::query("DELETE FROM post_likes WHERE post_id=$1 AND profile_id=$2")
                 .bind(post_id)
                 .bind(viewer)
-                .execute(&self.pool)
+                .execute(&mut *tx)
                 .await?;
         }
+        tx.commit().await?;
         Ok(())
     }
 
@@ -689,9 +712,25 @@ impl PgSocialStore {
         if actor == target {
             return Err(SocialError::Invalid("cannot follow yourself"));
         }
+        let mut tx = self.pool.begin().await?;
         let result = sqlx::query("INSERT INTO profile_follows (follower_profile_id,followed_profile_id) VALUES ($1,$2) ON CONFLICT DO NOTHING")
-            .bind(actor).bind(target).execute(&self.pool).await;
-        map_foreign_key(result)?;
+            .bind(actor).bind(target).execute(&mut *tx).await;
+        let inserted = map_foreign_key(result)?.rows_affected() == 1;
+        if inserted {
+            let handle = identity_handle(&mut tx, actor).await?;
+            notify_human(
+                &mut tx,
+                target,
+                actor,
+                "follow",
+                &format!("@{handle}"),
+                "started following you",
+                None,
+                None,
+            )
+            .await?;
+        }
+        tx.commit().await?;
         Ok(())
     }
 
@@ -799,8 +838,8 @@ impl PgSocialStore {
                     source_event_id: Uuid::new_v4(),
                     account_id: account,
                     category: "conversation_invite".into(),
-                    title: "New Tardy conversation".into(),
-                    body: format!("@{inviter} added you to a conversation"),
+                    title: format!("@{inviter}"),
+                    body: "added you to a conversation".into(),
                     deep_link: Some(format!("tardy://messages/{id}")),
                     data: serde_json::Map::from_iter([
                         ("actor_id".into(), serde_json::json!(actor)),
@@ -1245,14 +1284,13 @@ impl PgSocialStore {
             return Err(SocialError::Invalid("too many mentions"));
         }
         let mut tx = self.pool.begin().await?;
-        let exists: bool =
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM tardy_posts WHERE id=$1)")
+        let post_author: Uuid =
+            sqlx::query_scalar("SELECT author_profile_id FROM tardy_posts WHERE id=$1")
                 .bind(post_id)
-                .fetch_one(&mut *tx)
-                .await?;
-        if !exists {
-            return Err(SocialError::NotFound);
-        }
+                .fetch_optional(&mut *tx)
+                .await?
+                .ok_or(SocialError::NotFound)?;
+        let actor_handle = identity_handle(&mut tx, actor).await?;
         let id = Uuid::new_v4();
         let created_at: DateTime<Utc> = sqlx::query_scalar("INSERT INTO post_comments (id,post_id,author_profile_id,body) VALUES ($1,$2,$3,$4) RETURNING created_at")
             .bind(id).bind(post_id).bind(actor).bind(body).fetch_one(&mut *tx).await?;
@@ -1266,6 +1304,32 @@ impl PgSocialStore {
                 "comment_mention"
             };
             emit_agent_event(&mut tx, event_kind, id, *mentioned, serde_json::json!({"post_id": post_id, "comment_id": id, "body": body, "reply_requested": reply_requested})).await?;
+            if !reply_requested && *mentioned != actor {
+                notify_human(
+                    &mut tx,
+                    *mentioned,
+                    actor,
+                    "mention",
+                    &format!("@{actor_handle}"),
+                    "mentioned you in a comment",
+                    Some(post_id),
+                    None,
+                )
+                .await?;
+            }
+        }
+        if post_author != actor && !unique.contains(&post_author) {
+            notify_human(
+                &mut tx,
+                post_author,
+                actor,
+                "comment",
+                &format!("@{actor_handle}"),
+                "commented on your tardy",
+                Some(post_id),
+                None,
+            )
+            .await?;
         }
         tx.commit().await?;
         Ok(Comment {
@@ -1341,6 +1405,63 @@ async fn require_identity(
     kind.map(|value| parse_kind(&value))
         .transpose()?
         .ok_or(SocialError::NotFound)
+}
+
+async fn identity_handle(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    profile: Uuid,
+) -> Result<String, SocialError> {
+    sqlx::query_scalar("SELECT handle FROM social_identities WHERE profile_id=$1")
+        .bind(profile)
+        .fetch_optional(&mut **tx)
+        .await?
+        .ok_or(SocialError::NotFound)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn notify_human(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    recipient_profile: Uuid,
+    actor: Uuid,
+    category: &str,
+    title: &str,
+    body: &str,
+    post_id: Option<Uuid>,
+    conversation_id: Option<Uuid>,
+) -> Result<(), SocialError> {
+    let account_id: Option<Uuid> = sqlx::query_scalar(
+        "SELECT account_id FROM social_identities WHERE profile_id=$1 AND kind='human'",
+    )
+    .bind(recipient_profile)
+    .fetch_optional(&mut **tx)
+    .await?;
+    let Some(account_id) = account_id else {
+        return Ok(());
+    };
+    let mut data = serde_json::Map::from_iter([("actor_id".into(), serde_json::json!(actor))]);
+    let deep_link = if let Some(post_id) = post_id {
+        data.insert("post_id".into(), serde_json::json!(post_id));
+        Some(format!("tardy://posts/{post_id}"))
+    } else if let Some(conversation_id) = conversation_id {
+        data.insert("conversation_id".into(), serde_json::json!(conversation_id));
+        Some(format!("tardy://messages/{conversation_id}"))
+    } else {
+        Some(format!("tardy://profiles/{actor}"))
+    };
+    PgPushStore::enqueue_in(
+        tx,
+        &NewNotification {
+            source_event_id: Uuid::new_v4(),
+            account_id,
+            category: category.into(),
+            title: title.into(),
+            body: body.into(),
+            deep_link,
+            data,
+        },
+    )
+    .await?;
+    Ok(())
 }
 
 async fn require_participant(

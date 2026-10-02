@@ -15,7 +15,7 @@ export type NotificationRoute = { href: Href; notice?: string };
 /** Where taps fall back to: the list of everything, which never 404s. */
 export const NOTIFICATIONS_HREF: Href = '/notifications';
 
-type Destination = 'post' | 'comments' | 'profile';
+type Destination = 'post' | 'comments' | 'profile' | 'conversation';
 
 /** Every kind's destination. A `Record` so adding a kind fails typecheck until it's routed. */
 export const DESTINATION: Record<NotificationKind, Destination> = {
@@ -23,6 +23,8 @@ export const DESTINATION: Record<NotificationKind, Destination> = {
   comment: 'comments',
   mention: 'comments',
   follow: 'profile',
+  message: 'conversation',
+  conversation_invite: 'conversation',
   // Work kinds open the post itself: its status pill and PR/issue links are the point.
   shipped: 'post',
   blocked: 'post',
@@ -57,6 +59,12 @@ export async function routeForPayload(payload: PushPayload, api: Pick<TardyApi, 
     } catch (error) {
       return fallback(explain(error, 'profile'));
     }
+  }
+
+  if (destination === 'conversation') {
+    return payload.conversationId
+      ? { href: { pathname: '/messages/[threadId]', params: { threadId: payload.conversationId } } }
+      : fallback(`That ${payload.kind.replace('_', ' ')} notification has no conversation.`);
   }
 
   if (payload.postId === undefined) return fallback(`That ${payload.kind.replace('_', ' ')} notification has no post.`);

@@ -16,7 +16,8 @@ use crate::metrics::Metrics;
 use crate::onboarding::{AccountRegistry, OnboardingError, TemporaryTardyAccount};
 use crate::pg_accounts::{HumanProfile, HumanSession, PgAccountError, PgAccountStore};
 use crate::push::{
-    AppNotification, NotificationPreference, PgPushStore, PushDevice, PushError, RegisterPushDevice,
+    AppNotification, NotificationPreference, NotificationPreferences, PgPushStore, PushDevice,
+    PushError, RegisterPushDevice,
 };
 use crate::ranking::FeedRanker;
 use crate::search::{SearchDocument, SearchError, SearchService};
@@ -291,7 +292,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             axum::routing::delete(unregister_push_device),
         )
         .route("/v1/push/devices/unregister", post(unregister_push_token))
-        .route("/v1/push/preferences", put(set_notification_preference))
+        .route(
+            "/v1/push/preferences",
+            get(get_notification_preferences).put(set_notification_preference),
+        )
         .route("/v1/notifications", get(list_notifications))
         .route("/v1/notifications/read", post(mark_notifications_read))
         .route("/v1/ad-campaigns", post(create_ad_campaign))
@@ -1079,11 +1083,19 @@ async fn set_notification_preference(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(body): Json<NotificationPreference>,
-) -> Result<Json<NotificationPreference>, ApiError> {
+) -> Result<Json<NotificationPreferences>, ApiError> {
     let account_id = authenticated_account(&state, &headers).await?;
-    Ok(Json(
-        push_store(&state)?.set_preference(account_id, body).await?,
-    ))
+    let push = push_store(&state)?;
+    push.set_preference(account_id, body).await?;
+    Ok(Json(push.preferences(account_id).await?))
+}
+
+async fn get_notification_preferences(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<NotificationPreferences>, ApiError> {
+    let account_id = authenticated_account(&state, &headers).await?;
+    Ok(Json(push_store(&state)?.preferences(account_id).await?))
 }
 
 async fn list_notifications(

@@ -320,13 +320,23 @@ export type SharedPostRef = { status: 'available'; postId: string } | { status: 
  * changing status; the rest are social. Clients must ignore kinds they do not know: the
  * server may add kinds before every client ships them.
  */
-export type NotificationKind = 'like' | 'comment' | 'follow' | 'mention' | 'shipped' | 'blocked' | 'review_requested';
+export type NotificationKind =
+  | 'like'
+  | 'comment'
+  | 'follow'
+  | 'mention'
+  | 'message'
+  | 'conversation_invite'
+  | 'shipped'
+  | 'blocked'
+  | 'review_requested';
 
 export type Notification = {
   id: string;
   kind: NotificationKind;
   actorId: string;
   postId?: string;
+  conversationId?: string;
   text: string;
   createdAt: string;
   read: boolean;

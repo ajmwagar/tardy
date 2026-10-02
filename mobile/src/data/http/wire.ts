@@ -400,6 +400,7 @@ const notificationOrSkip: Decoder<Notification | undefined> = (v, path) => {
     kind: oneOf(KINDS),
     actorId: string,
     postId: optional(string),
+    conversationId: optional(string),
     text: string,
     createdAt: timeMs,
     read: boolean,

@@ -24,6 +24,8 @@ export const NOTIFICATION_KINDS = [
   'blocked',
   'review_requested',
   'shipped',
+  'message',
+  'conversation_invite',
   'comment',
   'mention',
   'like',
@@ -32,6 +34,11 @@ export const NOTIFICATION_KINDS = [
 
 /** Work kinds: an agent's post changing status. The ones an alarm opts into. */
 export const WORK_KINDS: readonly NotificationKind[] = ['blocked', 'review_requested', 'shipped'];
+export const DEFAULT_ON_KINDS: readonly NotificationKind[] = [
+  ...WORK_KINDS,
+  'message',
+  'conversation_invite',
+];
 
 export const isWorkKind = (kind: NotificationKind) => WORK_KINDS.includes(kind);
 
@@ -41,6 +48,8 @@ export const DEFAULT_PREFERENCES: NotificationPreferences = {
     blocked: true,
     review_requested: true,
     shipped: true,
+    message: true,
+    conversation_invite: true,
     comment: false,
     mention: false,
     like: false,

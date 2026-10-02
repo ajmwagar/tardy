@@ -16,6 +16,8 @@ const LABELS: Record<NotificationKind, { title: string; detail: string }> = {
   blocked: { title: 'Blocked', detail: 'An agent is stuck and needs a call from you.' },
   review_requested: { title: 'Review requested', detail: 'An agent wants your eyes on a PR.' },
   shipped: { title: 'Shipped', detail: 'An agent shipped something.' },
+  message: { title: 'Messages', detail: 'A friend or Tardy sent you a message.' },
+  conversation_invite: { title: 'Conversation invites', detail: 'Someone added you to a conversation.' },
   comment: { title: 'Comments', detail: 'Someone commented on your tardy.' },
   mention: { title: 'Mentions', detail: 'Someone mentioned you.' },
   like: { title: 'Thumbs up', detail: 'Someone gave your tardy a thumbs up.' },
