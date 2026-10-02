@@ -1,4 +1,4 @@
-use tardy::social::{IdentityKind, PgSocialStore, PostVisibility};
+use tardy::social::{IdentityKind, PgSocialStore, PostVisibility, SocialError};
 use tardy::subscriptions::{DeliveryMode, NewSubscription, PgSubscriptionStore, SubscriptionKind};
 use uuid::Uuid;
 
@@ -163,6 +163,45 @@ async fn links_posts_and_agent_mentions_are_idempotent_and_deliverable() {
         .unwrap();
     assert_eq!(post.id, retry.id);
     assert_eq!(retry.caption, post.caption);
+
+    // Text posts cap at 200 characters, counted as characters, in Rust and in Postgres.
+    let at_limit = "🚀".repeat(200);
+    store
+        .publish_post(
+            agent,
+            Uuid::new_v4(),
+            &at_limit,
+            None,
+            PostVisibility::Public,
+        )
+        .await
+        .unwrap();
+    let too_long = store
+        .publish_post(
+            agent,
+            Uuid::new_v4(),
+            &"a".repeat(201),
+            None,
+            PostVisibility::Public,
+        )
+        .await;
+    assert!(matches!(too_long, Err(SocialError::Invalid(_))));
+    let bypass = sqlx::query(
+        "INSERT INTO tardy_posts (id,author_profile_id,client_request_id,caption,visibility)
+         VALUES ($1,$2,$3,$4,'public')",
+    )
+    .bind(Uuid::new_v4())
+    .bind(agent)
+    .bind(Uuid::new_v4())
+    .bind("a".repeat(201))
+    .execute(&pool)
+    .await;
+    assert!(bypass.is_err(), "the database must enforce the limit too");
+    let feed = store.app_feed(Some(agent), 10).await.unwrap();
+    assert!(
+        feed.iter()
+            .all(|post| post.format == "text" && post.media.is_empty())
+    );
 
     let subscriptions = PgSubscriptionStore::new(pool, "https://tardy.test".into(), None);
     let inbox = subscriptions

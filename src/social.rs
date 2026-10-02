@@ -5,6 +5,11 @@ use std::collections::HashSet;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
+/// Most characters (Unicode scalar values, matching Postgres `char_length`) a Tardy post may
+/// carry. Posts are text-only, like X; reels carry the long-form and visual work. One-way
+/// door: clients, agents and the `tardy_posts_text_limit` constraint all enforce this value.
+pub const TEXT_POST_MAX_CHARS: usize = 200;
+
 /// Who a profile follows and who follows it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FollowGraph {
@@ -333,35 +338,7 @@ impl PgSocialStore {
         .bind(limit)
         .fetch_all(&self.pool)
         .await?;
-        rows.into_iter()
-            .map(|row| {
-                let link: Option<String> = row.try_get("canonical_url")?;
-                Ok(AppFeedPost {
-                    id: row.try_get("id")?,
-                    author_id: row.try_get("author_profile_id")?,
-                    format: "photo",
-                    media: Vec::new(),
-                    caption: row.try_get("caption")?,
-                    links: link
-                        .map(|url| {
-                            vec![serde_json::json!({"kind":"other","label":"Open link","url":url})]
-                        })
-                        .unwrap_or_default(),
-                    created_at_ms: row
-                        .try_get::<DateTime<Utc>, _>("created_at")?
-                        .timestamp_millis(),
-                    like_count: 0,
-                    comment_count: row.try_get("comment_count")?,
-                    share_count: 0,
-                    alarm_count: 0,
-                    repost_count: 0,
-                    viewer_has_liked: false,
-                    viewer_has_alarm: false,
-                    viewer_has_reposted: false,
-                    viewer_has_saved: false,
-                })
-            })
-            .collect()
+        rows.into_iter().map(app_post_from_row).collect()
     }
 
     /// Posts visible to `viewer`, optionally restricted to one author. The app's first
@@ -759,7 +736,8 @@ impl PgSocialStore {
         shared_link_id: Option<Uuid>,
         visibility: PostVisibility,
     ) -> Result<TardyPost, SocialError> {
-        let caption = validated_text(caption, 5_000)?;
+        let caption = validated_text(caption, TEXT_POST_MAX_CHARS)
+            .map_err(|_| SocialError::Invalid("post text must be 1-200 characters"))?;
         let row = sqlx::query("INSERT INTO tardy_posts (id,author_profile_id,client_request_id,caption,shared_link_id,visibility) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (author_profile_id,client_request_id) DO UPDATE SET client_request_id=excluded.client_request_id RETURNING id,author_profile_id,caption,shared_link_id,visibility,created_at")
             .bind(Uuid::new_v4()).bind(actor).bind(client_request_id).bind(caption).bind(shared_link_id).bind(visibility_name(visibility)).fetch_one(&self.pool).await?;
         Ok(post_from_row(&row)?)
@@ -907,9 +885,28 @@ fn normalize_handle(value: &str) -> Result<String, SocialError> {
     }
     Ok(value)
 }
+/// A text post made from `body` plus a `footer` that is always kept whole (an attribution,
+/// say), with `body` cut on a character boundary and ellipsized so the result fits in
+/// [`TEXT_POST_MAX_CHARS`]. The caller's footer must itself fit.
+pub fn fit_text_post(body: &str, footer: &str) -> String {
+    let body = body.trim();
+    let footer = footer.trim();
+    let separator = if footer.is_empty() { "" } else { "\n\n" };
+    let room =
+        TEXT_POST_MAX_CHARS.saturating_sub(footer.chars().count() + separator.chars().count());
+    let body = if body.chars().count() <= room {
+        body.to_owned()
+    } else {
+        let mut cut: String = body.chars().take(room.saturating_sub(1)).collect();
+        cut.truncate(cut.trim_end().len());
+        cut.push('…');
+        cut
+    };
+    format!("{body}{separator}{footer}")
+}
 fn validated_text(value: &str, max: usize) -> Result<&str, SocialError> {
     let value = value.trim();
-    if value.is_empty() || value.len() > max {
+    if value.is_empty() || value.chars().count() > max {
         Err(SocialError::Invalid("text is empty or too long"))
     } else {
         Ok(value)
@@ -979,7 +976,7 @@ fn app_post_from_row(row: sqlx::postgres::PgRow) -> Result<AppFeedPost, SocialEr
     Ok(AppFeedPost {
         id: row.try_get("id")?,
         author_id: row.try_get("author_profile_id")?,
-        format: "photo",
+        format: "text",
         media: Vec::new(),
         caption: row.try_get("caption")?,
         links: link
@@ -1030,4 +1027,33 @@ fn map_foreign_key(
             SocialError::Database(error)
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn text_limit_counts_characters_not_bytes() {
+        let emoji = "🚀".repeat(TEXT_POST_MAX_CHARS);
+        assert!(emoji.len() > TEXT_POST_MAX_CHARS);
+        assert_eq!(validated_text(&emoji, TEXT_POST_MAX_CHARS).unwrap(), emoji);
+        let over = "a".repeat(TEXT_POST_MAX_CHARS + 1);
+        assert!(validated_text(&over, TEXT_POST_MAX_CHARS).is_err());
+        assert!(validated_text("   ", TEXT_POST_MAX_CHARS).is_err());
+    }
+
+    #[test]
+    fn fit_text_post_keeps_short_posts_and_the_footer() {
+        assert_eq!(
+            fit_text_post(" Jev 2 ships ", "Source: HN"),
+            "Jev 2 ships\n\nSource: HN"
+        );
+        let fitted = fit_text_post(&"word ".repeat(80), "Source: Hacker News");
+        assert_eq!(fitted.chars().count(), TEXT_POST_MAX_CHARS);
+        assert!(fitted.ends_with("…\n\nSource: Hacker News"));
+        assert!(!fitted.contains(" …"));
+        let multibyte = fit_text_post(&"é".repeat(300), "");
+        assert_eq!(multibyte.chars().count(), TEXT_POST_MAX_CHARS);
+    }
 }
