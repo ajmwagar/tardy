@@ -19,6 +19,10 @@ provider "fpl" {
   default_project = var.project
 }
 
+locals {
+  stripe_binding_ref = coalesce(var.stripe_binding_ref, "binding://${var.project}/secrets/stripe")
+}
+
 resource "fpl_fab_project" "tardy" {
   slug                = var.project
   display_name        = "Tardy"
@@ -102,12 +106,16 @@ resource "fpl_shroud_service" "api" {
   bindings = {
     media    = fpl_storage_bucket.media.binding_ref
     postgres = fpl_postgres_database.primary.binding_ref
+    stripe   = local.stripe_binding_ref
   }
 
   env = {
-    TARDY_BIND            = "0.0.0.0:3000"
-    TARDY_PUBLIC_BASE_URL = "https://${var.api_domain}"
-    RUST_LOG              = "info"
+    TARDY_BIND                  = "0.0.0.0:3000"
+    TARDY_PUBLIC_BASE_URL       = "https://${var.api_domain}"
+    TARDY_WEB_BASE_URL          = "https://tardy.news"
+    STRIPE_REAL_TARDY_PRICE_ID  = var.stripe_real_tardy_price_id
+    STRIPE_SUPER_TARDY_PRICE_ID = var.stripe_super_tardy_price_id
+    RUST_LOG                    = "info"
   }
 
   port {
@@ -129,6 +137,7 @@ output "runtime_bindings" {
   value = {
     media    = fpl_storage_bucket.media.binding_ref
     postgres = fpl_postgres_database.primary.binding_ref
+    stripe   = local.stripe_binding_ref
   }
 }
 
