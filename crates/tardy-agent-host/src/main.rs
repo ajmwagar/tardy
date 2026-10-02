@@ -13,8 +13,8 @@ use std::{
 };
 use tardy_agent_host::{
     AgentCredential, BoxError, CodexRunner, ConversationMessage, HostData, InboxEvent,
-    PendingReply, QueuedEvent, WorkActivation, activation_prompt, load_json, store_json,
-    verify_signature,
+    PendingReply, QueuedEvent, TapbackDecider, WorkActivation, activation_prompt, load_json,
+    store_json, verify_signature,
 };
 use tokio::sync::{Mutex, Notify};
 
@@ -26,6 +26,7 @@ struct App {
     client: reqwest::Client,
     runner: Arc<CodexRunner>,
     notify: Arc<Notify>,
+    tapbacks: Option<Arc<TapbackDecider>>,
 }
 
 #[tokio::main]
@@ -77,6 +78,11 @@ async fn main() -> Result<(), BoxError> {
             .build()?,
         runner: Arc::new(runner),
         notify: Arc::new(Notify::new()),
+        tapbacks: if std::env::var("TARDY_TAPBACK_RLCD").as_deref() == Ok("yes") {
+            Some(Arc::new(TapbackDecider::from_env()?))
+        } else {
+            None
+        },
     };
     let worker = tokio::spawn(work_loop(app.clone()));
     let mode = env_or("TARDY_AGENT_DELIVERY", "poll");
@@ -386,6 +392,24 @@ async fn fetch_context(
 }
 
 async fn acknowledge(app: &App, activation: &WorkActivation) -> Result<(), BoxError> {
+    let kind = if let Some(decider) = app.tapbacks.as_ref() {
+        let decider = Arc::clone(decider);
+        let handle = app.credential.handle.clone();
+        let body = activation.body.clone();
+        match tokio::task::spawn_blocking(move || decider.decide(&handle, &body)).await {
+            Ok(Ok(tapback)) => tapback.as_api_kind(),
+            Ok(Err(error)) => {
+                tracing::warn!(%error, "RLCD tapback failed; using seen");
+                "seen"
+            }
+            Err(error) => {
+                tracing::warn!(%error, "RLCD tapback task failed; using seen");
+                "seen"
+            }
+        }
+    } else {
+        "seen"
+    };
     request_ok(
         app.client
             .put(format!(
@@ -396,7 +420,7 @@ async fn acknowledge(app: &App, activation: &WorkActivation) -> Result<(), BoxEr
             ))
             .bearer_auth(&app.credential.api_token)
             .header("x-tardy-profile-id", &app.credential.profile_id)
-            .json(&json!({"kind":"seen"})),
+            .json(&json!({"kind":kind})),
     )
     .await
 }

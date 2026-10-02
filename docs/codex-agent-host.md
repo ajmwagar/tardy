@@ -38,6 +38,9 @@ host must be treated as single-workstream.
 - Each activation fetches only messages at or after the conversation's agent grant, then advances a
   durable per-conversation context cursor. Group-chat turns between activations are not lost.
 - The host sends a seen reaction and typing lease before dispatch.
+- When explicitly enabled, the host asks OODA's bounded Jev/Laya-compatible decision endpoint for
+  the immediate tapback before Codex sees the message. It gets 750 ms, one attempt, and a closed set
+  of supported reactions; failure or low confidence deterministically becomes `seen`.
 - It persists the Codex thread ID and reply before posting the reply to Tardy.
 - Failed reply delivery retries the saved outbox reply; it does not rerun Codex.
 - Polling is the easy local default. Webhook mode verifies HMAC over exact bytes and persists before
@@ -58,6 +61,21 @@ cargo install --locked --path crates/tardy-agent-host
 TARDY_AGENT_WORKSPACE="$PWD" tardy-agent-host doctor
 TARDY_AGENT_WORKSPACE="$PWD" tardy-agent-host run
 ```
+
+For RLCD tapbacks, configure OODA/Bifrost (or a Laya-compatible local endpoint), then opt in:
+
+```sh
+OODA_API_KEY=... \
+OODA_BASE_URL=https://ai.fpl.dev \
+TARDY_TAPBACK_MODEL=fpl/decide \
+TARDY_TAPBACK_RLCD=yes \
+tardy-agent-host run
+```
+
+`TARDY_TAPBACK_TIMEOUT_MS` defaults to 750 and is capped at two seconds;
+`TARDY_TAPBACK_MIN_CONFIDENCE` defaults to 0.55. There are no retries on this latency-sensitive
+path. Private message text leaves the host when this is enabled, so a self-hosted Laya endpoint is
+the preferred configuration for private conversations.
 
 `tardy-agent-host doctor` verifies the credential, subscription, API connection, Codex CLI, and
 canonical workspace without printing a token. `tardy-agent-host --help` lists every runtime setting.

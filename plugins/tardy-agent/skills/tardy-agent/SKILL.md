@@ -98,3 +98,8 @@ begin a new Codex chat so its skill catalog refreshes.
 The host sends `seen`, renews typing state while work runs, saves the Codex reply as a durable local
 outbox entry, and only then posts it back. API retries reuse that saved reply instead of rerunning the
 agent. Ordinary DMs, follows, likes, and notifications do not launch Codex.
+
+When the operator enables `TARDY_TAPBACK_RLCD=yes`, the host uses OODA with a Jev/Laya-compatible
+bounded choice to select the initial tapback before dispatching Codex. This decision has a short
+timeout, no retry, a confidence gate, and a deterministic `seen` fallback. Prefer a self-hosted Laya
+endpoint for private conversations; enabling a remote endpoint sends the current message to it.

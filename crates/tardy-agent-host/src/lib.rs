@@ -1,5 +1,6 @@
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use hmac::{Hmac, Mac};
+use ooda::{Client as OodaClient, HttpClient as OodaHttpClient, decide_choice};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::Sha256;
@@ -187,6 +188,90 @@ pub struct CodexResult {
     pub reply: String,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, ooda::Choice, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Tapback {
+    /// Neutral acknowledgement: the agent received the message and will handle it.
+    Seen,
+    /// Positive acknowledgement or agreement.
+    Like,
+    /// Strong appreciation, support, or excitement.
+    Love,
+    /// The message is intentionally funny.
+    Laugh,
+    /// The message is especially important or urgent.
+    Emphasize,
+    /// The agent is genuinely confused and needs clarification.
+    Question,
+}
+
+impl Tapback {
+    pub fn as_api_kind(self) -> &'static str {
+        match self {
+            Self::Seen => "seen",
+            Self::Like => "like",
+            Self::Love => "love",
+            Self::Laugh => "laugh",
+            Self::Emphasize => "emphasize",
+            Self::Question => "question",
+        }
+    }
+}
+
+pub struct TapbackDecider {
+    client: OodaHttpClient,
+    minimum_confidence: f64,
+}
+
+impl TapbackDecider {
+    pub fn from_env() -> Result<Self, BoxError> {
+        let timeout_ms = std::env::var("TARDY_TAPBACK_TIMEOUT_MS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(750)
+            .clamp(100, 2_000);
+        let minimum_confidence = std::env::var("TARDY_TAPBACK_MIN_CONFIDENCE")
+            .ok()
+            .and_then(|value| value.parse::<f64>().ok())
+            .unwrap_or(0.55)
+            .clamp(0.0, 1.0);
+        let mut client = OodaHttpClient::from_env()?
+            .with_timeout(std::time::Duration::from_millis(timeout_ms))?
+            .with_max_attempts(1);
+        if let Ok(model) = std::env::var("TARDY_TAPBACK_MODEL")
+            && !model.trim().is_empty()
+        {
+            client = client.with_model(model);
+        }
+        Ok(Self {
+            client,
+            minimum_confidence,
+        })
+    }
+
+    pub fn decide(&self, handle: &str, body: &str) -> Result<Tapback, BoxError> {
+        decide_tapback(&self.client, handle, body, self.minimum_confidence)
+    }
+}
+
+pub fn decide_tapback(
+    client: &impl OodaClient,
+    handle: &str,
+    body: &str,
+    minimum_confidence: f64,
+) -> Result<Tapback, BoxError> {
+    let decision = decide_choice::<Tapback>(
+        client,
+        serde_json::json!({"agent_handle": handle, "message": body}),
+        "tapback",
+        "Choose the single immediate social tapback this agent should apply before doing the work. Prefer seen for ordinary requests and acknowledgements. Use expressive reactions only when the supplied message clearly warrants one. Question means the agent is confused, not merely that the message asks a question.",
+    )?;
+    if decision.confidence < minimum_confidence {
+        return Ok(Tapback::Seen);
+    }
+    Ok(decision.answer)
+}
+
 impl CodexRunner {
     pub fn new(workspace: PathBuf, sandbox: String, run_dir: PathBuf) -> Self {
         Self {
@@ -312,6 +397,7 @@ pub fn activation_prompt(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ooda::ScriptedClient;
 
     #[test]
     fn parses_codex_thread_started_event() {
@@ -390,5 +476,24 @@ mod tests {
         assert!(prompt.contains("Context begins at sequence 4"));
         assert!(prompt.contains("the granted idea [shared_link_id=link]"));
         assert!(prompt.contains("Activation message:\nship it"));
+    }
+
+    #[test]
+    fn rlcd_tapback_is_typed_and_confidence_gated() {
+        let love = ScriptedClient::new([
+            r#"{"answers":{"tapback":{"type":"choice","choice":"love","confidence":0.91}}}"#,
+        ]);
+        assert_eq!(
+            decide_tapback(&love, "buildbot", "This is incredible", 0.55).unwrap(),
+            Tapback::Love
+        );
+
+        let uncertain = ScriptedClient::new([
+            r#"{"answers":{"tapback":{"type":"choice","choice":"laugh","confidence":0.4}}}"#,
+        ]);
+        assert_eq!(
+            decide_tapback(&uncertain, "buildbot", "maybe a joke", 0.55).unwrap(),
+            Tapback::Seen
+        );
     }
 }
