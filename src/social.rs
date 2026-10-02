@@ -443,6 +443,54 @@ impl PgSocialStore {
         Ok(())
     }
 
+    /// Sets an alarm or repost marker. Both operations are idempotent and use the same
+    /// visibility boundary as likes; engagement events remain the separate ranking ledger.
+    pub async fn set_post_marker(
+        &self,
+        viewer: Uuid,
+        post_id: Uuid,
+        marker: &str,
+        enabled: bool,
+    ) -> Result<(), SocialError> {
+        let table = match marker {
+            "alarm" => "post_alarms",
+            "repost" => "post_reposts",
+            _ => return Err(SocialError::Invalid("invalid post marker")),
+        };
+        let mut tx = self.pool.begin().await?;
+        let visible: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM tardy_posts p WHERE p.id=$1 AND
+             (p.visibility='public' OR p.author_profile_id=$2 OR
+              EXISTS(SELECT 1 FROM social_identities viewer_owner
+                     JOIN social_identities author_owner USING (account_id)
+                     WHERE viewer_owner.profile_id=$2
+                       AND author_owner.profile_id=p.author_profile_id) OR
+              (p.visibility='followers' AND EXISTS(SELECT 1 FROM profile_follows f
+               WHERE f.follower_profile_id=$2 AND f.followed_profile_id=p.author_profile_id))))",
+        )
+        .bind(post_id)
+        .bind(viewer)
+        .fetch_one(&mut *tx)
+        .await?;
+        if !visible {
+            return Err(SocialError::NotFound);
+        }
+        let statement = if enabled {
+            format!(
+                "INSERT INTO {table} (post_id,profile_id) VALUES ($1,$2) ON CONFLICT DO NOTHING"
+            )
+        } else {
+            format!("DELETE FROM {table} WHERE post_id=$1 AND profile_id=$2")
+        };
+        sqlx::query(&statement)
+            .bind(post_id)
+            .bind(viewer)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
     pub async fn app_feed(
         &self,
         viewer: Option<Uuid>,
@@ -452,7 +500,11 @@ impl PgSocialStore {
             "SELECT p.id,p.author_profile_id,p.caption,p.media,p.created_at,l.canonical_url,
                     (SELECT count(*) FROM post_comments c WHERE c.post_id=p.id)::bigint AS comment_count,
                     (SELECT count(*) FROM post_likes x WHERE x.post_id=p.id)::bigint AS like_count,
-                    EXISTS(SELECT 1 FROM post_likes x WHERE x.post_id=p.id AND x.profile_id=$1) AS viewer_has_liked
+                    (SELECT count(*) FROM post_alarms x WHERE x.post_id=p.id)::bigint AS alarm_count,
+                    (SELECT count(*) FROM post_reposts x WHERE x.post_id=p.id)::bigint AS repost_count,
+                    EXISTS(SELECT 1 FROM post_likes x WHERE x.post_id=p.id AND x.profile_id=$1) AS viewer_has_liked,
+                    EXISTS(SELECT 1 FROM post_alarms x WHERE x.post_id=p.id AND x.profile_id=$1) AS viewer_has_alarm,
+                    EXISTS(SELECT 1 FROM post_reposts x WHERE x.post_id=p.id AND x.profile_id=$1) AS viewer_has_reposted
              FROM tardy_posts p
              LEFT JOIN shared_links l ON l.id=p.shared_link_id
              WHERE p.visibility='public'
@@ -490,11 +542,11 @@ impl PgSocialStore {
                     like_count: row.try_get("like_count")?,
                     comment_count: row.try_get("comment_count")?,
                     share_count: 0,
-                    alarm_count: 0,
-                    repost_count: 0,
+                    alarm_count: row.try_get("alarm_count")?,
+                    repost_count: row.try_get("repost_count")?,
                     viewer_has_liked: row.try_get("viewer_has_liked")?,
-                    viewer_has_alarm: false,
-                    viewer_has_reposted: false,
+                    viewer_has_alarm: row.try_get("viewer_has_alarm")?,
+                    viewer_has_reposted: row.try_get("viewer_has_reposted")?,
                     viewer_has_saved: false,
                 })
             })
@@ -514,7 +566,11 @@ impl PgSocialStore {
             "SELECT p.id,p.author_profile_id,p.caption,p.media,p.created_at,l.canonical_url,
                     (SELECT count(*) FROM post_comments c WHERE c.post_id=p.id)::bigint AS comment_count,
                     (SELECT count(*) FROM post_likes x WHERE x.post_id=p.id)::bigint AS like_count,
-                    EXISTS(SELECT 1 FROM post_likes x WHERE x.post_id=p.id AND x.profile_id=$1) AS viewer_has_liked
+                    (SELECT count(*) FROM post_alarms x WHERE x.post_id=p.id)::bigint AS alarm_count,
+                    (SELECT count(*) FROM post_reposts x WHERE x.post_id=p.id)::bigint AS repost_count,
+                    EXISTS(SELECT 1 FROM post_likes x WHERE x.post_id=p.id AND x.profile_id=$1) AS viewer_has_liked,
+                    EXISTS(SELECT 1 FROM post_alarms x WHERE x.post_id=p.id AND x.profile_id=$1) AS viewer_has_alarm,
+                    EXISTS(SELECT 1 FROM post_reposts x WHERE x.post_id=p.id AND x.profile_id=$1) AS viewer_has_reposted
              FROM tardy_posts p
              LEFT JOIN shared_links l ON l.id=p.shared_link_id
              WHERE ($2::uuid IS NULL OR p.author_profile_id=$2)
@@ -546,7 +602,11 @@ impl PgSocialStore {
             "SELECT p.id,p.author_profile_id,p.caption,p.media,p.created_at,l.canonical_url,
                     (SELECT count(*) FROM post_comments c WHERE c.post_id=p.id)::bigint AS comment_count,
                     (SELECT count(*) FROM post_likes x WHERE x.post_id=p.id)::bigint AS like_count,
-                    EXISTS(SELECT 1 FROM post_likes x WHERE x.post_id=p.id AND x.profile_id=$1) AS viewer_has_liked
+                    (SELECT count(*) FROM post_alarms x WHERE x.post_id=p.id)::bigint AS alarm_count,
+                    (SELECT count(*) FROM post_reposts x WHERE x.post_id=p.id)::bigint AS repost_count,
+                    EXISTS(SELECT 1 FROM post_likes x WHERE x.post_id=p.id AND x.profile_id=$1) AS viewer_has_liked,
+                    EXISTS(SELECT 1 FROM post_alarms x WHERE x.post_id=p.id AND x.profile_id=$1) AS viewer_has_alarm,
+                    EXISTS(SELECT 1 FROM post_reposts x WHERE x.post_id=p.id AND x.profile_id=$1) AS viewer_has_reposted
              FROM tardy_posts p
              LEFT JOIN shared_links l ON l.id=p.shared_link_id
              WHERE p.id=$2 AND (p.visibility='public'
@@ -584,7 +644,11 @@ impl PgSocialStore {
              SELECT p.id,p.author_profile_id,p.caption,p.media,p.created_at,l.canonical_url,
                     (SELECT count(*) FROM post_comments c WHERE c.post_id=p.id)::bigint AS comment_count,
                     (SELECT count(*) FROM post_likes x WHERE x.post_id=p.id)::bigint AS like_count,
+                    (SELECT count(*) FROM post_alarms x WHERE x.post_id=p.id)::bigint AS alarm_count,
+                    (SELECT count(*) FROM post_reposts x WHERE x.post_id=p.id)::bigint AS repost_count,
                     EXISTS(SELECT 1 FROM post_likes x WHERE x.post_id=p.id AND x.profile_id=$1) AS viewer_has_liked,
+                    EXISTS(SELECT 1 FROM post_alarms x WHERE x.post_id=p.id AND x.profile_id=$1) AS viewer_has_alarm,
+                    EXISTS(SELECT 1 FROM post_reposts x WHERE x.post_id=p.id AND x.profile_id=$1) AS viewer_has_reposted,
                     ts_rank_cd(to_tsvector('english',p.caption||' '||i.handle||' '||COALESCE(h.display_name,s.display_name,'')),q.value)::float8 AS relevance_score
              FROM tardy_posts p
              JOIN social_identities i ON i.profile_id=p.author_profile_id
@@ -656,6 +720,29 @@ impl PgSocialStore {
             .await?
             .ok_or(SocialError::NotFound)?;
         self.app_account_by_id(id).await
+    }
+
+    pub async fn mark_owned_accounts(
+        &self,
+        viewer_account: Uuid,
+        accounts: &mut [AppAccount],
+    ) -> Result<(), SocialError> {
+        let ids = accounts
+            .iter()
+            .map(|account| account.id)
+            .collect::<Vec<_>>();
+        let owned: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT profile_id FROM social_identities WHERE account_id=$1 AND profile_id=ANY($2)",
+        )
+        .bind(viewer_account)
+        .bind(&ids)
+        .fetch_all(&self.pool)
+        .await?;
+        let owned = owned.into_iter().collect::<std::collections::HashSet<_>>();
+        for account in accounts {
+            account.owned_by_viewer = Some(owned.contains(&account.id));
+        }
+        Ok(())
     }
 
     pub async fn set_brand_affiliate(
@@ -1814,11 +1901,11 @@ fn app_post_from_row(row: sqlx::postgres::PgRow) -> Result<AppFeedPost, SocialEr
         like_count: row.try_get("like_count")?,
         comment_count: row.try_get("comment_count")?,
         share_count: 0,
-        alarm_count: 0,
-        repost_count: 0,
+        alarm_count: row.try_get("alarm_count")?,
+        repost_count: row.try_get("repost_count")?,
         viewer_has_liked: row.try_get("viewer_has_liked")?,
-        viewer_has_alarm: false,
-        viewer_has_reposted: false,
+        viewer_has_alarm: row.try_get("viewer_has_alarm")?,
+        viewer_has_reposted: row.try_get("viewer_has_reposted")?,
         viewer_has_saved: false,
     })
 }

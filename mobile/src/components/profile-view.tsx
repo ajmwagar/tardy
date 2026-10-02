@@ -75,6 +75,10 @@ function Header({ account: initialAccount, isMe }: { account: Account; isMe: boo
           <PressableScale style={[styles.button, styles.secondaryButton]} scaleTo={0.97} onPress={() => router.push('/edit-profile')}>
             <Text style={styles.secondaryText}>Edit profile</Text>
           </PressableScale>
+        ) : account.ownedByViewer ? (
+          <View style={[styles.button, styles.secondaryButton]} accessibilityLabel={`${account.handle} is claimed by you`}>
+            <Text style={styles.secondaryText}>Claimed</Text>
+          </View>
         ) : (
           <PressableScale
             style={[styles.button, following ? styles.secondaryButton : styles.primaryButton]}

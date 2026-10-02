@@ -264,6 +264,11 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/saved-posts/{id}", put(save_post).delete(unsave_post))
         .route("/v1/posts/{id}", get(get_app_post))
         .route("/v1/posts/{id}/like", put(like_post).delete(unlike_post))
+        .route("/v1/posts/{id}/alarm", put(alarm_post).delete(unalarm_post))
+        .route(
+            "/v1/posts/{id}/repost",
+            put(repost_post).delete(unrepost_post),
+        )
         .route(
             "/v1/ai-consents/search",
             post(grant_search_consent).delete(revoke_search_consent),
@@ -554,6 +559,70 @@ async fn unlike_post(
 ) -> Result<StatusCode, ApiError> {
     social_store(&state)?
         .set_post_liked(authenticated_actor(&state, &headers).await?, id, false)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn alarm_post(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    social_store(&state)?
+        .set_post_marker(
+            authenticated_actor(&state, &headers).await?,
+            id,
+            "alarm",
+            true,
+        )
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn unalarm_post(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    social_store(&state)?
+        .set_post_marker(
+            authenticated_actor(&state, &headers).await?,
+            id,
+            "alarm",
+            false,
+        )
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn repost_post(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    social_store(&state)?
+        .set_post_marker(
+            authenticated_actor(&state, &headers).await?,
+            id,
+            "repost",
+            true,
+        )
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn unrepost_post(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    social_store(&state)?
+        .set_post_marker(
+            authenticated_actor(&state, &headers).await?,
+            id,
+            "repost",
+            false,
+        )
         .await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -891,7 +960,7 @@ async fn list_profiles(
     headers: HeaderMap,
     Query(query): Query<ProfilesQuery>,
 ) -> Result<Json<Vec<AppAccount>>, ApiError> {
-    let _ = authenticated_account(&state, &headers).await?;
+    let viewer_account = authenticated_account(&state, &headers).await?;
     let ids = query
         .ids
         .split(',')
@@ -904,6 +973,9 @@ async fn list_profiles(
         return Err(ApiError::bad_request("at most 100 profile ids are allowed"));
     }
     let mut accounts = social_store(&state)?.app_accounts(&ids).await?;
+    social_store(&state)?
+        .mark_owned_accounts(viewer_account, &mut accounts)
+        .await?;
     localize_accounts(&mut accounts);
     Ok(Json(accounts))
 }
@@ -2618,8 +2690,11 @@ async fn get_profile(
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, ApiError> {
     if let Some(social) = &state.social {
-        let _ = authenticated_account(&state, &headers).await?;
+        let viewer_account = authenticated_account(&state, &headers).await?;
         let mut account = social.app_account_by_handle(&handle).await?;
+        social
+            .mark_owned_accounts(viewer_account, std::slice::from_mut(&mut account))
+            .await?;
         localize_accounts(std::slice::from_mut(&mut account));
         return Ok(Json(account).into_response());
     }
@@ -2635,8 +2710,11 @@ async fn get_profile_by_id(
     Path(id): Path<Uuid>,
     headers: HeaderMap,
 ) -> Result<Json<AppAccount>, ApiError> {
-    let _ = authenticated_account(&state, &headers).await?;
+    let viewer_account = authenticated_account(&state, &headers).await?;
     let mut account = social_store(&state)?.app_account_by_id(id).await?;
+    social_store(&state)?
+        .mark_owned_accounts(viewer_account, std::slice::from_mut(&mut account))
+        .await?;
     localize_accounts(std::slice::from_mut(&mut account));
     Ok(Json(account))
 }

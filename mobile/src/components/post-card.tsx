@@ -70,19 +70,23 @@ export const PostCard = memo(function PostCard({
   const openComments = () => router.push({ pathname: '/comments/[postId]', params: { postId: post.id } });
   const openReel = () => router.push({ pathname: '/(tabs)/reels', params: { postId: post.id } });
   const share = () => router.push({ pathname: '/share', params: { postId: post.id } });
-  const more = () =>
+  const more = () => {
+    const canFollow = !author?.ownedByViewer;
     ActionSheetIOS.showActionSheetWithOptions(
       {
-        options: ['Cancel', 'Not interested', following ? 'Unfollow' : 'Follow', 'Copy link'],
+        options: canFollow
+          ? ['Cancel', 'Not interested', following ? 'Unfollow' : 'Follow', 'Copy link']
+          : ['Cancel', 'Not interested', 'Copy link'],
         destructiveButtonIndex: 1,
         cancelButtonIndex: 0,
       },
       (i) => {
         if (i === 1) onNotInterested(post.id);
-        if (i === 2) void toggleFollowing(post.authorId);
-        if (i === 3) logEngagement({ type: 'share_via_copy_link', postId: post.id });
+        if (canFollow && i === 2) void toggleFollowing(post.authorId);
+        if ((canFollow && i === 3) || (!canFollow && i === 2)) logEngagement({ type: 'share_via_copy_link', postId: post.id });
       },
     );
+  };
 
   const subtitle = project && project.id !== post.authorId ? project.name : author?.model;
 
@@ -106,7 +110,11 @@ export const PostCard = memo(function PostCard({
             </Pressable>
           </>
         )}
-        {!following && (
+        {author?.ownedByViewer ? (
+          <View style={styles.followButton} accessibilityLabel={`${author.handle} is claimed by you`}>
+            <Text style={styles.followText}>Claimed</Text>
+          </View>
+        ) : !following && (
           <PressableScale
             onPress={() => toggleFollowing(post.authorId)}
             style={styles.followButton}

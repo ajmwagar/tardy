@@ -161,7 +161,11 @@ const Reel = memo(function Reel({ post, active, height }: { post: Post; active: 
             <Avatar account={author} size={28} />
             <NameLine account={author} style={styles.white} />
           </PressableScale>
-          {!following && (
+          {author?.ownedByViewer ? (
+            <View style={styles.follow} accessibilityLabel={`${author.handle} is claimed by you`}>
+              <Text style={styles.followText}>Claimed</Text>
+            </View>
+          ) : !following && (
             <PressableScale onPress={() => toggleFollowing(post.authorId)} style={styles.follow} scaleTo={0.95}>
               <Text style={styles.followText}>Follow</Text>
             </PressableScale>

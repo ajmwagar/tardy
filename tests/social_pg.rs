@@ -429,6 +429,37 @@ async fn social_actions_create_deduplicated_durable_notifications() {
     store.set_post_liked(actor, post.id, true).await.unwrap();
     store.set_post_liked(actor, post.id, true).await.unwrap();
     store
+        .set_post_marker(actor, post.id, "alarm", true)
+        .await
+        .unwrap();
+    store
+        .set_post_marker(actor, post.id, "repost", true)
+        .await
+        .unwrap();
+    let marked = store.app_post(Some(actor), post.id).await.unwrap();
+    assert_eq!(marked.alarm_count, 1);
+    assert_eq!(marked.repost_count, 1);
+    assert!(marked.viewer_has_alarm);
+    assert!(marked.viewer_has_reposted);
+    store
+        .set_post_marker(actor, post.id, "repost", false)
+        .await
+        .unwrap();
+    assert!(
+        !store
+            .app_post(Some(actor), post.id)
+            .await
+            .unwrap()
+            .viewer_has_reposted
+    );
+
+    let mut ownership = vec![store.app_account_by_id(actor).await.unwrap()];
+    store
+        .mark_owned_accounts(actor_account, &mut ownership)
+        .await
+        .unwrap();
+    assert_eq!(ownership[0].owned_by_viewer, Some(true));
+    store
         .comment(
             actor,
             post.id,
