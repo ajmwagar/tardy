@@ -22,6 +22,11 @@ export const STORY_SETTLE_MS = 750;
 /** Each story fades in over this long instead of snapping in. */
 export const STORY_FADE_MS = 180;
 
+/** Wall-clock delay before advancing, including the initial settle beat exactly once. */
+export function storyDeadlineMs(remainingMs: number, fresh: boolean): number {
+  return remainingMs + (fresh ? STORY_SETTLE_MS : 0);
+}
+
 /** How long a story plays. Throws on a video without a positive duration (a contract violation). */
 export function storyDurationMs(media: MediaItem): number {
   if (media.type === 'image') return IMAGE_STORY_MS;

@@ -1,5 +1,5 @@
 import { Image } from 'expo-image';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
@@ -20,7 +20,7 @@ import { openWebCheckout } from '@/config';
 import type { Story, StoryGroup } from '@/data/types';
 import { markStoriesSeen, useAccount } from '@/state/store';
 import { BOOSTED_LABEL, isGroupBoosted } from '@/stories/boost';
-import { nextPosition, previousPosition, STORY_FADE_MS, STORY_SETTLE_MS, storyDurationMs, tapAction, type StoryPosition } from '@/stories/playback';
+import { nextPosition, previousPosition, STORY_FADE_MS, STORY_SETTLE_MS, storyDeadlineMs, storyDurationMs, tapAction, type StoryPosition } from '@/stories/playback';
 import { colors, IMAGE_TRANSITION_MS, radius, timeAgo } from '@/theme';
 
 import { MediaError } from './states';
@@ -115,27 +115,34 @@ function StoryPage({
   const [ready, setReady] = useState(false);
   const [held, setHeld] = useState(false);
   const progress = useSharedValue(0);
+  const remainingMs = useRef(duration);
   const playing = ready && !held && !paused;
 
   useEffect(() => {
     markStoriesSeen([story.id]);
   }, [story.id]);
 
-  // The timer: runs while playing, resumes from where it stopped, advances when it fills.
-  // A fresh story waits a beat after it's visible before the timer starts draining.
+  // JS owns the deadline; Reanimated only draws it. This keeps auto-advance stable even
+  // when native image/video events or animation callbacks are delivered more than once.
+  // Pausing subtracts only elapsed playback time and resumes from the same progress.
   useEffect(() => {
     if (!playing) return;
     const fresh = progress.get() === 0;
+    const delay = fresh ? STORY_SETTLE_MS : 0;
+    const startedAt = Date.now() + delay;
+    const timer = setTimeout(onNext, storyDeadlineMs(remainingMs.current, fresh));
     progress.set(
       withDelay(
-        fresh ? STORY_SETTLE_MS : 0,
-        withTiming(1, { duration: (1 - progress.get()) * duration, easing: Easing.linear }, (finished) => {
-          if (finished) scheduleOnRN(onNext);
-        }),
+        delay,
+        withTiming(1, { duration: remainingMs.current, easing: Easing.linear }),
       ),
     );
-    return () => cancelAnimation(progress);
-  }, [playing, duration, progress, onNext]);
+    return () => {
+      clearTimeout(timer);
+      cancelAnimation(progress);
+      remainingMs.current = Math.max(0, remainingMs.current - Math.max(0, Date.now() - startedAt));
+    };
+  }, [playing, progress, onNext]);
 
   const tap = Gesture.Tap()
     .maxDuration(250)

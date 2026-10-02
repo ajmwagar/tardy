@@ -1,6 +1,6 @@
 import type { MediaItem, Story, StoryGroup } from '@/data/types';
 
-import { IMAGE_STORY_MS, nextPosition, previousPosition, startPosition, storyDurationMs, tapAction } from '../playback';
+import { IMAGE_STORY_MS, nextPosition, previousPosition, startPosition, STORY_SETTLE_MS, storyDeadlineMs, storyDurationMs, tapAction } from '../playback';
 
 const image: MediaItem = { type: 'image', url: 'https://img/1', width: 1080, height: 1920 };
 const video = (durationMs: number): MediaItem => ({
@@ -40,6 +40,13 @@ describe('storyDurationMs', () => {
   it('throws for a video with no playable duration', () => {
     expect(() => storyDurationMs(video(0))).toThrow(/no playable duration/);
     expect(() => storyDurationMs(video(Number.NaN))).toThrow(/no playable duration/);
+  });
+});
+
+describe('storyDeadlineMs', () => {
+  it('keeps a fresh image visible for the full dwell plus its settle beat', () => {
+    expect(storyDeadlineMs(IMAGE_STORY_MS, true)).toBe(15_000 + STORY_SETTLE_MS);
+    expect(storyDeadlineMs(8_000, false)).toBe(8_000);
   });
 });
 
