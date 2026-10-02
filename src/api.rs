@@ -468,17 +468,31 @@ async fn create_session(
     ))
 }
 
+#[derive(Deserialize)]
+struct DevelopmentSessionRequest {
+    email: Option<String>,
+}
+
 async fn development_session(
     State(state): State<Arc<AppState>>,
+    Json(body): Json<DevelopmentSessionRequest>,
 ) -> Result<(StatusCode, Json<SignedInView>), ApiError> {
     if std::env::var("TARDY_ENABLE_DEV_AUTH").as_deref() != Ok("yes") {
         return Err(ApiError::not_found("not found"));
     }
+    let configured_email = std::env::var("TARDY_DEV_AUTH_EMAIL").ok();
+    let email = body
+        .email
+        .as_deref()
+        .filter(|email| !email.trim().is_empty())
+        .or(configured_email.as_deref())
+        .unwrap_or("orangej20@gmail.com")
+        .to_owned();
     let session = state
         .pg_accounts
         .as_ref()
         .ok_or_else(|| ApiError::internal("PostgreSQL accounts are not configured"))?
-        .development_session("orangej20@gmail.com", now_ms()?)
+        .development_session(&email, now_ms()?)
         .await?;
     Ok((
         StatusCode::CREATED,
@@ -2884,11 +2898,13 @@ fn build_agent_handoff(base: &str, target: String, subject: ShareSubject) -> Age
 
 fn validate_handle(value: &str) -> Result<(), ApiError> {
     let valid = (3..=32).contains(&value.len())
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
+        && value.bytes().all(|b| {
+            b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'_' | b'-' | b'.')
+        });
     valid.then_some(()).ok_or_else(|| {
-        ApiError::bad_request("handle must be 3-32 lowercase letters, digits, or underscores")
+        ApiError::bad_request(
+            "handle must be 3-32 lowercase letters, digits, dots, hyphens, or underscores",
+        )
     })
 }
 

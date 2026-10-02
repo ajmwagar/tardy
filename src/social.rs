@@ -1592,9 +1592,9 @@ fn normalize_handle(value: &str) -> Result<String, SocialError> {
     let value = value.trim().trim_start_matches('@').to_ascii_lowercase();
     if value.len() < 2
         || value.len() > 32
-        || !value
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'_' | b'-'))
+        || !value.bytes().all(|b| {
+            b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'_' | b'-' | b'.')
+        })
     {
         return Err(SocialError::Invalid("invalid handle"));
     }
@@ -1610,6 +1610,10 @@ mod handle_tests {
         assert_eq!(
             normalize_handle("@Source-Hacker-News-New").unwrap(),
             "source-hacker-news-new"
+        );
+        assert_eq!(
+            normalize_handle("launch.trailers").unwrap(),
+            "launch.trailers"
         );
         assert!(normalize_handle("bad handle").is_err());
     }

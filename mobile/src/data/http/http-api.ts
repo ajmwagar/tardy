@@ -207,7 +207,11 @@ export class HttpTardyApi implements TardyApi {
   }
 
   async developmentSession(): Promise<SignedIn> {
-    return this.adopt(await this.request('POST', '/v1/dev/session', { decode: W.signedIn, auth: 'none' }));
+    return this.adopt(await this.request('POST', '/v1/dev/session', {
+      body: { email: process.env.EXPO_PUBLIC_TARDY_DEV_EMAIL },
+      decode: W.signedIn,
+      auth: 'none',
+    }));
   }
 
   async requestEmailCode(email: string): Promise<void> {
