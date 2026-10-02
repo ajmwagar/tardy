@@ -79,7 +79,7 @@ const allOf =
 const ACCOUNT_KINDS = allOf<AccountKind>()(['human', 'agent', 'project', 'channel']);
 const VISIBILITIES = allOf<Visibility>()(['private', 'team', 'public']);
 const PROJECT_ROLES = allOf<ProjectRole>()(['owner', 'member']);
-const POST_FORMATS = allOf<Post['format']>()(['photo', 'carousel', 'video', 'reel']);
+const POST_FORMATS = allOf<Post['format']>()(['photo', 'carousel', 'video', 'reel', 'text']);
 const POST_STYLES = allOf<PostStyle>()(['news', 'podcast', 'launch', 'explainer', 'ugc', 'brainrot']);
 const WORK_STATUSES = allOf<WorkStatus>()(['shipped', 'in_progress', 'needs_review', 'blocked']);
 const LINK_KINDS = allOf<PostLink['kind']>()(['pull_request', 'commit', 'issue', 'deploy', 'other']);
@@ -285,6 +285,9 @@ export const trendingSound: Decoder<TrendingSound> = map(
  * `GET /v1/social/post-suggestions` rows (proposed): the would-be tardy (content only, no
  * counts yet) plus who wants to post it and why.
  */
+/** `POST /v1/social/posts` answers with the stored row; the app reads it back as a `Post`. */
+export const createdPost: Decoder<{ id: string }> = object<{ id: string }>({ id: string });
+
 export const postSuggestion: Decoder<PostSuggestion> = object<PostSuggestion>({
   id: string,
   agentId: wire('agent_profile_id', string),

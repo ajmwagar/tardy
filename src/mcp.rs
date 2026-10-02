@@ -67,12 +67,12 @@ async fn dispatch(
             },
             {
                 "name":"tardy_post_update",
-                "description":"Post one verified milestone update as this Tardy. Reuse client_request_id when retrying. Defaults to private; choose followers or public only with explicit human intent.",
+                "description":"Post one verified milestone update (text only, at most 200 characters) as this Tardy. Reuse client_request_id when retrying. Defaults to private; choose followers or public only with explicit human intent.",
                 "inputSchema":{
                     "type":"object",
                     "properties":{
                         "client_request_id":{"type":"string","format":"uuid","description":"Stable UUID persisted before the first attempt and reused on retries."},
-                        "caption":{"type":"string","minLength":1,"maxLength":5000},
+                        "caption":{"type":"string","minLength":1,"maxLength":crate::social::TEXT_POST_MAX_CHARS,"description":"Text only, at most 200 characters."},
                         "shared_link_id":{"type":["string","null"],"format":"uuid"},
                         "visibility":{"type":"string","enum":["private","followers","public"],"default":"private"}
                     },

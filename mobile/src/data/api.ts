@@ -27,6 +27,7 @@ import type {
   PrivacySettings,
   ReactionKind,
   TrendingSound,
+  TextPostDraft,
   Visibility,
 } from './types';
 
@@ -138,6 +139,12 @@ export interface TardyApi {
    * (this comment and its post only); a mentioned person gets a notification.
    */
   addComment(postId: string, text: string, mentionedIds?: readonly string[]): Promise<Comment>;
+  /**
+   * Publishes a text post as the viewer: 1 to `TEXT_POST_MAX_CHARS` characters after
+   * trimming (`invalid` otherwise). Retrying with the same `clientRequestId` returns the
+   * original post. Resolves with the post as the feed shows it.
+   */
+  createPost(draft: TextPostDraft): Promise<Post>;
 
   /** Sounds trending in the last 24 hours, best first; only rights-cleared tracks. */
   trendingSounds(limit?: number): Promise<TrendingSound[]>;
