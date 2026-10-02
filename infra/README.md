@@ -80,6 +80,11 @@ lock is an active writer, not permission to bypass locking.
 
 `fpl_storage_bucket.media` returns an opaque binding reference. At deployment, FPL resolves it into `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and `R2_BUCKET` without placing their values in customer state.
 
+Cloudflare R2 does not expose bucket object versioning. Tardy therefore requests
+`versioning = false` and preserves media history with immutable application-level
+object keys; replacing media always writes a new key rather than overwriting an
+existing object.
+
 `fpl_postgres_database.primary` returns an opaque binding reference. At deployment, FPL resolves it into `DATABASE_URL`; the URL and password never appear in customer state or outputs.
 
 `fpl_shroud_service.api` consumes both opaque bindings, exposes port 3000 as `api.tardy.news`, and promotes only after `/healthz` returns 200. `api_image` is required and must be pinned by OCI digest; image construction and publication are release-pipeline responsibilities, not OpenTofu side effects.
