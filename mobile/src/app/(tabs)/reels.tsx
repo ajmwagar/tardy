@@ -1,6 +1,6 @@
 import { FlashList, type FlashListRef, type ViewToken } from '@shopify/flash-list';
 import { LinearGradient } from 'expo-linear-gradient';
-import { router, useIsFocused } from 'expo-router';
+import { router, useIsFocused, useLocalSearchParams } from 'expo-router';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -16,7 +16,7 @@ import { StyleChip } from '@/components/style-chip';
 import { Avatar, Icon, NameLine, PressableScale, Reaction, StatusPill } from '@/components/ui';
 import { VideoSurface } from '@/components/video-surface';
 import type { Post } from '@/data/types';
-import { api, loadFeedPage, logEngagement, toggleAlarm, toggleFollowing, toggleLiked, toggleMuted, toggleRepost, toggleSaved, useAccount, useIsFollowing, usePostState, useStore } from '@/state/store';
+import { api, ensureAccounts, ingestPosts, loadFeedPage, logEngagement, toggleAlarm, toggleFollowing, toggleLiked, toggleMuted, toggleRepost, toggleSaved, useAccount, useIsFollowing, usePostState, useStore } from '@/state/store';
 import { colors } from '@/theme';
 import { useRefresh } from '@/components/use-refresh';
 import { freshReelOrder } from '@/reels/refresh';
@@ -43,11 +43,28 @@ const Reel = memo(function Reel({ post, active, height }: { post: Post; active: 
   const following = useIsFollowing(post.authorId);
   const muted = useStore((s) => s.muted);
   const [expanded, setExpanded] = useState(false);
+  const [speed, setSpeed] = useState<1 | 2 | 4>(1);
+  const speedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const media = post.media[0];
   useSoundPlays(post, active, muted);
 
   const openProfile = () => author && router.push({ pathname: '/profile/[handle]', params: { handle: author.handle } });
   const share = () => router.push({ pathname: '/share', params: { postId: post.id } });
+  const stopSpeed = useCallback(() => {
+    if (speedTimer.current) clearTimeout(speedTimer.current);
+    speedTimer.current = null;
+    setSpeed(1);
+  }, []);
+  const startSpeed = useCallback(() => {
+    if (!active) return;
+    setSpeed(2);
+    speedTimer.current = setTimeout(() => setSpeed(4), 1_000);
+  }, [active]);
+  useEffect(() => {
+    // Reset after the active reel changes without synchronously cascading another render.
+    const frame = requestAnimationFrame(stopSpeed);
+    return () => cancelAnimationFrame(frame);
+  }, [active, stopSpeed]);
 
   return (
     <View style={{ height, backgroundColor: '#000' }}>
@@ -55,15 +72,19 @@ const Reel = memo(function Reel({ post, active, height }: { post: Post; active: 
         postId={post.id}
         onSingleTap={toggleMuted}
         singleTapIcon={muted ? 'speaker.wave.2.fill' : 'speaker.slash.fill'}
+        onHoldStart={startSpeed}
+        onHoldEnd={stopSpeed}
         heartSize={148}>
         <View style={{ height }}>
           {media?.type === 'video' && (
             // Fill when the video's shape is close to the screen's, else show it whole over the blur
             // (landscape reels, iPads). The native player applies the same rule on its own.
-            <VideoSurface postId={post.id} media={media} active={active} fullBleed contentFit={fitFor(mediaRatio(media), width / height)} />
+            <VideoSurface postId={post.id} media={media} active={active} fullBleed playbackRate={speed} contentFit={fitFor(mediaRatio(media), width / height)} />
           )}
         </View>
       </DoubleTapLike>
+
+      {speed > 1 ? <View pointerEvents="none" style={styles.speedBadge}><Text style={styles.speedText}>{speed}×</Text></View> : null}
 
       <LinearGradient pointerEvents="none" colors={['transparent', 'rgba(0,0,0,0.55)']} style={[styles.scrim, { height: chrome + 150 }]} />
 
@@ -182,6 +203,7 @@ const Reel = memo(function Reel({ post, active, height }: { post: Post; active: 
 });
 
 export default function ReelsScreen() {
+  const { postId } = useLocalSearchParams<{ postId?: string }>();
   const listRef = useRef<FlashListRef<Item>>(null);
   const window = useWindowDimensions();
   // Size each reel to the list's real viewport (between the status bar and tab bar), not
@@ -217,8 +239,35 @@ export default function ReelsScreen() {
   }, []);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (!postId) {
+      void load();
+      return;
+    }
+    let live = true;
+    loading.current = true;
+    void Promise.all([api.post(postId), loadFeedPage(api.reelsFeed(null))])
+      .then(async ([requested, page]) => {
+        await ensureAccounts([requested.authorId, requested.projectId, ...(requested.collaboratorIds ?? [])]);
+        ingestPosts([requested]);
+        if (!live) return;
+        const ordered = [requested, ...page.items.filter((post) => post.id !== requested.id)];
+        cursor.current = page.nextCursor;
+        setItems(ordered.map((post, index) => ({ key: `opened:${postId}:${index}:${post.id}`, post })));
+        setActiveKey(null);
+        setExhausted(page.nextCursor === null);
+        setError(null);
+        listRef.current?.scrollToOffset({ offset: 0, animated: false });
+      })
+      .catch((error: unknown) => {
+        if (live) setError({ page: 'first', message: error instanceof Error ? error.message : String(error) });
+      })
+      .finally(() => {
+        loading.current = false;
+      });
+    return () => {
+      live = false;
+    };
+  }, [load, postId]);
 
   const reload = useCallback(() => {
     setExhausted(false);
@@ -328,6 +377,8 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: '#000' },
   fill: { flex: 1, justifyContent: 'center' },
   scrim: { position: 'absolute', left: 0, right: 0, bottom: 0 },
+  speedBadge: { position: 'absolute', top: '44%', alignSelf: 'center', minWidth: 72, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 22, alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.68)' },
+  speedText: { color: '#fff', fontSize: 19, fontWeight: '900', letterSpacing: 0.4 },
   topBar: { position: 'absolute', left: 0, right: 0, height: 44, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14 },
   rail: { position: 'absolute', right: 8, alignItems: 'center', gap: 18 },
   info: { position: 'absolute', left: 12, right: 70, gap: 6 },

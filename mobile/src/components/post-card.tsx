@@ -68,7 +68,7 @@ export const PostCard = memo(function PostCard({
     router.push({ pathname: '/profile/[handle]', params: { handle: author.handle } });
   };
   const openComments = () => router.push({ pathname: '/comments/[postId]', params: { postId: post.id } });
-  const openReel = () => router.push({ pathname: '/reel/[postId]', params: { postId: post.id } });
+  const openReel = () => router.push({ pathname: '/(tabs)/reels', params: { postId: post.id } });
   const share = () => router.push({ pathname: '/share', params: { postId: post.id } });
   const more = () =>
     ActionSheetIOS.showActionSheetWithOptions(

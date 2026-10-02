@@ -31,6 +31,7 @@ export function VideoSurface({
   active,
   contentFit = 'cover',
   fullBleed = false,
+  playbackRate = 1,
   onReady,
 }: {
   /** The post this video belongs to, for VQV logging. Omit for media that isn't a post (stories). */
@@ -44,6 +45,8 @@ export function VideoSurface({
    * blurred, scaled-up copy of the frame that fades into the video.
    */
   fullBleed?: boolean;
+  /** Temporary viewer speed while press-and-hold is active. */
+  playbackRate?: 1 | 2 | 4;
   /** Called when the first frame is ready to play, e.g. to start a story's timer. */
   onReady?: () => void;
 }) {
@@ -76,6 +79,12 @@ export function VideoSurface({
     if (playing) player.play();
     else player.pause();
   }, [player, playing]);
+
+  useEffect(() => {
+    // The player is an imperative native handle; writing to it is the API.
+    // eslint-disable-next-line react-hooks/immutability
+    player.playbackRate = playbackRate;
+  }, [player, playbackRate]);
 
   // VQV: accumulate played time while active; log once per mount.
   const watched = useRef(0);

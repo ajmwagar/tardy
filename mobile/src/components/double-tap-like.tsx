@@ -18,6 +18,8 @@ export function DoubleTapLike({
   postId,
   onSingleTap,
   singleTapIcon,
+  onHoldStart,
+  onHoldEnd,
   heartSize = 96,
   children,
 }: {
@@ -25,6 +27,8 @@ export function DoubleTapLike({
   onSingleTap?: () => void;
   /** Icon flashed after the single-tap action, e.g. the resulting audio state. */
   singleTapIcon?: SFSymbol;
+  onHoldStart?: () => void;
+  onHoldEnd?: () => void;
   heartSize?: number;
   children: ReactNode;
 }) {
@@ -60,7 +64,15 @@ export function DoubleTapLike({
     }
     scheduleOnRN(onSingleTap);
   });
-  const gesture = Gesture.Exclusive(doubleTap, singleTap);
+  const hold = Gesture.LongPress()
+    .minDuration(260)
+    .onStart(() => {
+      if (onHoldStart) scheduleOnRN(onHoldStart);
+    })
+    .onFinalize(() => {
+      if (onHoldEnd) scheduleOnRN(onHoldEnd);
+    });
+  const gesture = onHoldStart ? Gesture.Race(hold, Gesture.Exclusive(doubleTap, singleTap)) : Gesture.Exclusive(doubleTap, singleTap);
 
   const heartStyle = useAnimatedStyle(() => ({ opacity: opacity.value, transform: [{ scale: scale.value }] }));
   const feedbackStyle = useAnimatedStyle(() => ({ opacity: feedbackOpacity.value, transform: [{ scale: feedbackScale.value }] }));
