@@ -330,15 +330,18 @@ describe('HttpTardyApi: decoding', () => {
     expect(thread).toEqual({ id: 't9', kind: 'work', participantIds: ['acct-1', 'h2', 'a3'] });
     expect(calls.map((c) => [c.method, c.url.replace(BASE, '/'), c.body])).toEqual([
       ['GET', '/v1/social/conversations', undefined],
-      ['POST', '/v1/social/conversations', { recipient_profile_id: 'h2' }],
+      ['POST', '/v1/social/conversations', { participant_profile_ids: ['h2'] }],
       ['POST', '/v1/social/conversations/t9/agents', { agent_profile_id: 'a3', include_anchor_share: true }],
     ]);
   });
 
-  it('openThread refuses a group of people instead of dropping one', async () => {
-    const { api, calls } = await signedInClient();
-    await expect(api.openThread([{ id: 'h2', kind: 'human' }, { id: 'h3', kind: 'human' }])).rejects.toMatchObject({ code: 'invalid' });
-    expect(calls).toHaveLength(0);
+  it('openThread creates all people in one group request', async () => {
+    const { api, calls } = await signedInClient(
+      { status: 200, body: [] },
+      { status: 201, body: { id: 'tg', mode: 'dm', participants: ['acct-1', 'h2', 'h3'] } },
+    );
+    await expect(api.openThread([{ id: 'h2', kind: 'human' }, { id: 'h3', kind: 'human' }])).resolves.toMatchObject({ id: 'tg' });
+    expect(calls[1].body).toEqual({ participant_profile_ids: ['h2', 'h3'] });
   });
 });
 

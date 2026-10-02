@@ -385,12 +385,9 @@ export class HttpTardyApi implements TardyApi {
     if (!viewerId) throw new TardyApiError('unauthenticated', 'Sign in to message.');
     const plan = conversationPlan(participants, viewerId);
     if (!plan.ok) {
-      throw new TardyApiError(
-        'invalid',
-        plan.reason === 'nobody' ? 'A thread needs someone besides you.' : 'Group chats with more than one other person are not supported by the server yet.',
-      );
+      throw new TardyApiError('invalid', 'A thread needs someone besides you.');
     }
-    const others = [plan.recipientId, ...plan.addAgentIds];
+    const others = [...plan.recipientIds, ...plan.addAgentIds];
     // The server creates a new conversation on every call; find the existing one first.
     const existing = (await this.request('GET', '/v1/social/conversations', { decode: array(W.conversation) })).find((t) =>
       sameMembers(t.participantIds, viewerId, others),
@@ -400,7 +397,7 @@ export class HttpTardyApi implements TardyApi {
       return ref;
     }
     let thread = await this.request('POST', '/v1/social/conversations', {
-      body: { recipient_profile_id: plan.recipientId },
+      body: { participant_profile_ids: plan.recipientIds },
       decode: W.threadRef,
     });
     for (const agentId of plan.addAgentIds) thread = await this.addAgent(thread.id, agentId);
