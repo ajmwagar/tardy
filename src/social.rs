@@ -714,9 +714,9 @@ impl PgSocialStore {
     pub async fn app_accounts(&self, ids: &[Uuid]) -> Result<Vec<AppAccount>, SocialError> {
         let rows = sqlx::query(
             "SELECT i.profile_id,i.kind,i.handle,
-                    COALESCE(h.display_name,s.display_name,i.handle) AS display_name,
-                    COALESCE(NULLIF(h.avatar_url,''),'https://tardy.news/favicon.svg') AS avatar_url,
-                    COALESCE(h.bio,CASE WHEN s.id IS NOT NULL THEN 'Updates from '||s.display_name||', with links to the original source.' END,'') AS bio,
+                    COALESCE(NULLIF(i.display_name,''),h.display_name,s.display_name,i.handle) AS display_name,
+                    COALESCE(NULLIF(i.avatar_url,''),NULLIF(h.avatar_url,''),'https://tardy.news/favicon.svg') AS avatar_url,
+                    COALESCE(NULLIF(i.bio,''),h.bio,CASE WHEN s.id IS NOT NULL THEN 'Updates from '||s.display_name||', with links to the original source.' END,'') AS bio,
                     badges.verification_tier,badges.super_tardy_slot,badges.brand_profile_id,
                     badges.brand_handle,badges.brand_avatar_url,badges.brand_label,
                     (SELECT count(*) FROM profile_follows f WHERE f.followed_profile_id=i.profile_id)::bigint AS followers,
@@ -747,6 +747,87 @@ impl PgSocialStore {
             .await?
             .ok_or(SocialError::NotFound)?;
         self.app_account_by_id(id).await
+    }
+
+    pub async fn owned_agents_for_profile(
+        &self,
+        owner_profile_id: Uuid,
+    ) -> Result<Vec<AppAccount>, SocialError> {
+        let account_id: Uuid = sqlx::query_scalar(
+            "SELECT account_id FROM social_identities WHERE profile_id=$1 AND kind='human'",
+        )
+        .bind(owner_profile_id)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or(SocialError::NotFound)?;
+        let ids: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT profile_id FROM social_identities WHERE account_id=$1 AND kind='agent' ORDER BY created_at,profile_id",
+        )
+        .bind(account_id)
+        .fetch_all(&self.pool)
+        .await?;
+        self.app_accounts(&ids).await
+    }
+
+    pub async fn update_owned_agent_profile(
+        &self,
+        owner_account_id: Uuid,
+        profile_id: Uuid,
+        handle: Option<&str>,
+        display_name: Option<&str>,
+        bio: Option<&str>,
+        avatar_url: Option<&str>,
+    ) -> Result<AppAccount, SocialError> {
+        let handle = handle.map(normalize_handle).transpose()?;
+        let display_name = display_name.map(str::trim);
+        if display_name.is_some_and(|value| value.is_empty() || value.chars().count() > 80) {
+            return Err(SocialError::Invalid(
+                "agent name must be between 1 and 80 characters",
+            ));
+        }
+        let bio = bio.map(str::trim);
+        if bio.is_some_and(|value| value.chars().count() > 500) {
+            return Err(SocialError::Invalid(
+                "agent bio must be at most 500 characters",
+            ));
+        }
+        let avatar_url = avatar_url.map(str::trim);
+        if avatar_url.is_some_and(|value| {
+            value.len() > 2048
+                || (!value.is_empty()
+                    && !value.starts_with("https://")
+                    && !value.starts_with("http://"))
+        }) {
+            return Err(SocialError::Invalid("agent avatar must be an http(s) URL"));
+        }
+        let changed = sqlx::query(
+            "UPDATE social_identities SET
+                 handle=COALESCE($3,handle),
+                 display_name=COALESCE($4,display_name),
+                 bio=COALESCE($5,bio),
+                 avatar_url=COALESCE($6,avatar_url)
+             WHERE profile_id=$1 AND account_id=$2 AND kind='agent'",
+        )
+        .bind(profile_id)
+        .bind(owner_account_id)
+        .bind(handle)
+        .bind(display_name)
+        .bind(bio)
+        .bind(avatar_url)
+        .execute(&self.pool)
+        .await;
+        match changed {
+            Ok(result) if result.rows_affected() == 1 => self.app_account_by_id(profile_id).await,
+            Ok(_) => Err(SocialError::Forbidden),
+            Err(error)
+                if error
+                    .as_database_error()
+                    .is_some_and(|db| db.code().as_deref() == Some("23505")) =>
+            {
+                Err(SocialError::Invalid("that agent handle is already taken"))
+            }
+            Err(error) => Err(error.into()),
+        }
     }
 
     pub async fn mark_owned_accounts(
@@ -845,9 +926,9 @@ impl PgSocialStore {
         let prefix = format!("{query}%");
         let rows = sqlx::query(
             "SELECT i.profile_id,i.kind,i.handle,
-                    COALESCE(h.display_name,s.display_name,i.handle) AS display_name,
-                    COALESCE(NULLIF(h.avatar_url,''),'https://tardy.news/favicon.svg') AS avatar_url,
-                    COALESCE(h.bio,CASE WHEN s.id IS NOT NULL THEN 'Updates from '||s.display_name||', with links to the original source.' END,'') AS bio,
+                    COALESCE(NULLIF(i.display_name,''),h.display_name,s.display_name,i.handle) AS display_name,
+                    COALESCE(NULLIF(i.avatar_url,''),NULLIF(h.avatar_url,''),'https://tardy.news/favicon.svg') AS avatar_url,
+                    COALESCE(NULLIF(i.bio,''),h.bio,CASE WHEN s.id IS NOT NULL THEN 'Updates from '||s.display_name||', with links to the original source.' END,'') AS bio,
                     badges.verification_tier,badges.super_tardy_slot,badges.brand_profile_id,
                     badges.brand_handle,badges.brand_avatar_url,badges.brand_label,
                     (SELECT count(*) FROM profile_follows f WHERE f.followed_profile_id=i.profile_id)::bigint AS followers,
@@ -858,7 +939,7 @@ impl PgSocialStore {
              LEFT JOIN human_profiles h ON h.profile_id=i.profile_id
              LEFT JOIN source_channels s ON i.kind='channel' AND i.handle='source-'||s.id
              LEFT JOIN active_profile_badges badges ON badges.profile_id=i.profile_id
-             WHERE $2='' OR i.handle ILIKE $3 OR COALESCE(h.display_name,s.display_name,i.handle) ILIKE $3
+             WHERE $2='' OR i.handle ILIKE $3 OR COALESCE(NULLIF(i.display_name,''),h.display_name,s.display_name,i.handle) ILIKE $3
              ORDER BY (i.account_id=$1 AND i.kind='agent') DESC,
                       (lower(i.handle)=$2) DESC,
                       (i.handle ILIKE $4) DESC,
@@ -881,10 +962,18 @@ impl PgSocialStore {
         profile_id: Uuid,
         handle: &str,
         kind: IdentityKind,
+        display_name: &str,
+        bio: &str,
     ) -> Result<SocialIdentity, SocialError> {
         let handle = normalize_handle(handle)?;
-        sqlx::query("INSERT INTO social_identities (profile_id,account_id,handle,kind) VALUES ($1,$2,$3,$4) ON CONFLICT (profile_id) DO UPDATE SET account_id=excluded.account_id,handle=excluded.handle,kind=excluded.kind")
-            .bind(profile_id).bind(account_id).bind(&handle).bind(kind_name(kind)).execute(&self.pool).await?;
+        let display_name = display_name.trim();
+        let bio = bio.trim();
+        if display_name.is_empty() || display_name.chars().count() > 80 || bio.chars().count() > 500
+        {
+            return Err(SocialError::Invalid("invalid profile metadata"));
+        }
+        sqlx::query("INSERT INTO social_identities (profile_id,account_id,handle,kind,display_name,bio) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (profile_id) DO UPDATE SET account_id=excluded.account_id,handle=excluded.handle,kind=excluded.kind,display_name=excluded.display_name,bio=excluded.bio")
+            .bind(profile_id).bind(account_id).bind(&handle).bind(kind_name(kind)).bind(display_name).bind(bio).execute(&self.pool).await?;
         Ok(SocialIdentity {
             profile_id,
             account_id,

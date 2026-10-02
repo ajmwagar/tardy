@@ -9,7 +9,7 @@ use crate::api::{
     MarkConversationRead, MarkNotificationsRead, PublishReel, PublishSocialPost, RecordEngagement,
     RenameSocialConversation, SearchRequest, SendMessage, SendMessageMedia, SendSocialMessage,
     SessionCredential, SessionView, SetHandle, SetPostVisibility, SignedInView, StartLive,
-    SummonAgent, UpdateProfile, VerificationCheckout,
+    SummonAgent, UpdateAgentProfile, UpdateProfile, VerificationCheckout,
 };
 use crate::audio::{
     AttachPostAudio, AudioRelease, AudioTrack, AudioUsage, AudioUsageKind, NewAudioRelease,
@@ -55,7 +55,7 @@ use utoipa::OpenApi;
         AttachPostAudio, AudioRelease, AudioTrack, AudioUsage, AudioUsageKind, NewAudioRelease,
         NewOriginalTrack, ReleaseType, TrendingAudio, VerificationEntitlement, VerificationProduct, VerificationTier, BillingStatus, WebHandoff,
         AppAccount, AppFeedPost, AppSearchResult, AppNotification, Comment, Conversation, ConversationMessage, ConversationMode, ConversationSummary, IdentityKind, MessageMedia,
-        PostMedia, PostVisibility, SetBrandAffiliate, SharedLink, SocialIdentity, TardyPost, CreatePostComment, SessionCredential, SessionView, SetHandle, SetPostVisibility, SignedInView, UpdateProfile,
+        PostMedia, PostVisibility, SetBrandAffiliate, SharedLink, SocialIdentity, TardyPost, CreatePostComment, SessionCredential, SessionView, SetHandle, SetPostVisibility, SignedInView, UpdateAgentProfile, UpdateProfile,
         AddConversationParticipant, CreateSharedLink, CreateSocialConversation, MarkConversationRead, MarkNotificationsRead, PublishSocialPost, RenameSocialConversation, SendMessageMedia, SendSocialMessage, SummonAgent, CreateWebHandoff, ExchangeWebHandoff, VerificationCheckout
     )),
     tags(
@@ -86,6 +86,38 @@ pub fn document() -> Value {
         "bearerAuth": { "type": "http", "scheme": "bearer", "bearerFormat": "Tardy API token" }
     });
     let operations = [
+        array_op(
+            "get",
+            "/v1/profiles/by-id/{id}/agents",
+            "listProfileAgents",
+            "profiles",
+            "AppAccount",
+            200,
+            true,
+            false,
+        ),
+        op(
+            "patch",
+            "/v1/agents/{id}/profile",
+            "updateAgentProfile",
+            "profiles",
+            Some("UpdateAgentProfile"),
+            Some("AppAccount"),
+            200,
+            true,
+            false,
+        ),
+        op(
+            "post",
+            "/v1/agents/{id}/avatar/generate",
+            "generateAgentAvatar",
+            "profiles",
+            None,
+            Some("AppAccount"),
+            200,
+            true,
+            false,
+        ),
         array_op(
             "get",
             "/v1/verification/products",

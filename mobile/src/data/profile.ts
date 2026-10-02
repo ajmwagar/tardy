@@ -7,6 +7,7 @@ export const PROFILE_LIMITS = { name: 50, bio: 150 } as const;
 
 /** A partial update: omitted fields are left unchanged. */
 export type ProfilePatch = { name?: string; bio?: string };
+export type AgentProfilePatch = ProfilePatch & { handle?: string; avatarUrl?: string };
 
 /** Trims whitespace the way the server stores it. */
 export function normalizeProfilePatch(patch: ProfilePatch): ProfilePatch {

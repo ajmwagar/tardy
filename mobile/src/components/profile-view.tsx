@@ -1,11 +1,11 @@
 import { FlashList } from '@shopify/flash-list';
 import { router } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import { openWebCheckout } from '@/config';
 import type { Account, Post } from '@/data/types';
-import { api, loadFeedPage, toggleFollowing, useAccount, useIsFollowing } from '@/state/store';
+import { api, cacheAccounts, loadFeedPage, toggleFollowing, useAccount, useIsFollowing } from '@/state/store';
 import { colors, compact, layout, radius, type } from '@/theme';
 
 import { PostTile } from './post-tile';
@@ -45,7 +45,7 @@ function useThreadWith(accountId: string, enabled: boolean): string | null {
   return threadId;
 }
 
-function Header({ account: initialAccount, isMe }: { account: Account; isMe: boolean }) {
+function Header({ account: initialAccount, isMe, tab, onTab }: { account: Account; isMe: boolean; tab: 'tardies' | 'agents'; onTab: (tab: 'tardies' | 'agents') => void }) {
   const account = useAccount(initialAccount.id) ?? initialAccount;
   const following = useIsFollowing(account.id);
   const threadId = useThreadWith(account.id, !isMe);
@@ -76,9 +76,9 @@ function Header({ account: initialAccount, isMe }: { account: Account; isMe: boo
             <Text style={styles.secondaryText}>Edit profile</Text>
           </PressableScale>
         ) : account.ownedByViewer ? (
-          <View style={[styles.button, styles.secondaryButton]} accessibilityLabel={`${account.handle} is claimed by you`}>
-            <Text style={styles.secondaryText}>Claimed</Text>
-          </View>
+          <PressableScale style={[styles.button, styles.secondaryButton]} scaleTo={0.97} onPress={() => router.push(`/edit-agent/${account.id}` as never)}>
+            <Text style={styles.secondaryText}>Edit agent</Text>
+          </PressableScale>
         ) : (
           <PressableScale
             style={[styles.button, following ? styles.secondaryButton : styles.primaryButton]}
@@ -109,6 +109,16 @@ function Header({ account: initialAccount, isMe }: { account: Account; isMe: boo
           <Icon name="arrow.up.right" size={14} color={colors.onPrimary} weight="bold" />
         </PressableScale>
       )}
+      {account.kind === 'human' && (
+        <View style={styles.tabs}>
+          <PressableScale style={[styles.tab, tab === 'tardies' && styles.tabActive]} onPress={() => onTab('tardies')} accessibilityLabel="Tardies">
+            <Icon name="square.grid.3x3" size={20} color={tab === 'tardies' ? colors.text : colors.textTertiary} />
+          </PressableScale>
+          <PressableScale style={[styles.tab, tab === 'agents' && styles.tabActive]} onPress={() => onTab('agents')} accessibilityLabel="Agents">
+            <Icon name="cpu" size={20} color={tab === 'agents' ? colors.text : colors.textTertiary} />
+          </PressableScale>
+        </View>
+      )}
     </View>
   );
 }
@@ -125,6 +135,9 @@ export function ProfileView({ account, isMe }: { account: Account; isMe: boolean
   const [done, setDone] = useState(false);
   /** A failed first page (nothing to show) or next page (inline retry under the grid). */
   const [error, setError] = useState<{ page: 'first' | 'next'; message: string } | null>(null);
+  const [tab, setTab] = useState<'tardies' | 'agents'>('tardies');
+  const [agents, setAgents] = useState<Account[] | null>(null);
+  const [agentsError, setAgentsError] = useState<string | null>(null);
 
   const load = useCallback(
     async (from: string | null) => {
@@ -147,6 +160,21 @@ export function ProfileView({ account, isMe }: { account: Account; isMe: boolean
     void load(null);
   }, [load]);
 
+  const loadAgents = useCallback(async () => {
+    setAgentsError(null);
+    try {
+      const items = await api.profileAgents(account.id);
+      cacheAccounts(items);
+      setAgents(items);
+    } catch (reason) {
+      setAgentsError(reason instanceof Error ? reason.message : String(reason));
+    }
+  }, [account.id]);
+
+  useEffect(() => {
+    if (account.kind === 'human') void loadAgents();
+  }, [account.kind, loadAgents]);
+
   const renderItem = useCallback(
     ({ item, index }: { item: Post; index: number }) => (
       <View style={index % COLUMNS === COLUMNS - 1 ? styles.lastColumn : styles.column}>
@@ -156,13 +184,37 @@ export function ProfileView({ account, isMe }: { account: Account; isMe: boolean
     [size],
   );
 
+  if (tab === 'agents') return (
+    <ScrollView contentContainerStyle={styles.content}>
+      <Header account={account} isMe={isMe} tab={tab} onTab={setTab} />
+      <View style={styles.agentList}>
+        {agents?.map((agent) => (
+          <View key={agent.id} style={styles.agentCard}>
+            <PressableScale style={styles.agentMain} scaleTo={0.98} onPress={() => router.push(`/profile/${agent.handle}`)}>
+              <Avatar account={agent} size={56} />
+              <View style={styles.agentCopy}>
+                <View style={styles.nameRow}><Text style={styles.agentName}>{agent.name}</Text><AgentBadge /></View>
+                <Text style={styles.agentHandle}>@{agent.handle}</Text>
+                {!!agent.bio && <Text style={styles.agentBio} numberOfLines={2}>{agent.bio}</Text>}
+              </View>
+            </PressableScale>
+            {agent.ownedByViewer && <PressableScale style={styles.editAgent} onPress={() => router.push(`/edit-agent/${agent.id}` as never)}><Text style={styles.editAgentText}>Edit</Text></PressableScale>}
+          </View>
+        ))}
+        {agentsError && <InlineRetry message="Couldn't load these agents." detail={agentsError} onRetry={() => void loadAgents()} />}
+        {agents && agents.length === 0 && <EmptyState icon="cpu" title="No agents yet" message={isMe ? 'Claim or connect an agent and it will show up here.' : 'This person has no public agents yet.'} />}
+        {!agents && !agentsError && <GridSkeleton width={width} />}
+      </View>
+    </ScrollView>
+  );
+
   return (
     <FlashList
       data={posts}
       numColumns={COLUMNS}
       keyExtractor={keyOf}
       renderItem={renderItem}
-      ListHeaderComponent={<Header account={account} isMe={isMe} />}
+      ListHeaderComponent={<Header account={account} isMe={isMe} tab={tab} onTab={setTab} />}
       ListEmptyComponent={
         error?.page === 'first' ? (
           <ErrorState message="The grid didn't load. The tardies are fine; the fetch wasn't." detail={error.message} onRetry={() => void load(null)} />
@@ -218,6 +270,18 @@ const styles = StyleSheet.create({
   verifyText: { flex: 1, gap: 2 },
   verifyTitle: { color: colors.onPrimary, fontSize: 15, fontWeight: '900' },
   verifySub: { color: colors.onPrimary, fontSize: 12, opacity: 0.75 },
+  tabs: { flexDirection: 'row', marginHorizontal: -16, marginTop: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.separator },
+  tab: { flex: 1, height: 44, alignItems: 'center', justifyContent: 'center', borderBottomWidth: 2, borderBottomColor: 'transparent' },
+  tabActive: { borderBottomColor: colors.text },
+  agentList: { paddingHorizontal: 16, gap: 10 },
+  agentCard: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, backgroundColor: colors.surface, borderRadius: radius.card },
+  agentMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  agentCopy: { flex: 1, gap: 2 },
+  agentName: { color: colors.text, fontSize: 15, fontWeight: '800' },
+  agentHandle: { color: colors.textSecondary, fontSize: 13 },
+  agentBio: { color: colors.textSecondary, fontSize: 13, marginTop: 2 },
+  editAgent: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: radius.pill, backgroundColor: colors.elevated },
+  editAgentText: { color: colors.text, fontSize: 13, fontWeight: '700' },
   column: { marginRight: GAP, marginBottom: GAP },
   lastColumn: { marginBottom: GAP },
   content: { paddingBottom: 120 },

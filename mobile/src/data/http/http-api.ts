@@ -1,6 +1,6 @@
 import type { AgentActivity, AgentControls } from '@/agents/controls';
 import { TardyApiError, type TardyApi, type TardyApiErrorCode } from '../api';
-import type { ProfilePatch } from '../profile';
+import type { AgentProfilePatch, ProfilePatch } from '../profile';
 import type {
   Account,
   AuthCredential,
@@ -259,6 +259,21 @@ export class HttpTardyApi implements TardyApi {
   updateProfile(patch: ProfilePatch): Promise<Account> {
     // `name` is `display_name` on the wire (the Rust `Profile` field).
     return this.request('PATCH', '/v1/profile', { body: snakeKeys({ displayName: patch.name, bio: patch.bio }), decode: W.account });
+  }
+
+  profileAgents(profileId: string): Promise<Account[]> {
+    return this.request('GET', `/v1/profiles/by-id/${segment(profileId)}/agents`, { decode: array(W.account) });
+  }
+
+  updateAgentProfile(agentId: string, patch: AgentProfilePatch): Promise<Account> {
+    return this.request('PATCH', `/v1/agents/${segment(agentId)}/profile`, {
+      body: snakeKeys({ handle: patch.handle, displayName: patch.name, bio: patch.bio, avatarUrl: patch.avatarUrl }),
+      decode: W.account,
+    });
+  }
+
+  generateAgentAvatar(agentId: string): Promise<Account> {
+    return this.request('POST', `/v1/agents/${segment(agentId)}/avatar/generate`, { decode: W.account });
   }
 
   async completeOnboarding(): Promise<SignedIn> {

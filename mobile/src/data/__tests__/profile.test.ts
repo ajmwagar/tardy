@@ -50,3 +50,21 @@ describe('MockTardyApi.generateAvatar', () => {
     expect((await client.me()).avatarUrl).toBe(second.avatarUrl);
   });
 });
+
+describe('owned agent profiles', () => {
+  it('lists owned agents and preserves identity while renaming one', async () => {
+    const client = new MockTardyApi({ latencyMs: 0 });
+    const [agent] = await client.profileAgents((await client.me()).id);
+    expect(agent?.ownedByViewer).toBe(true);
+    const updated = await client.updateAgentProfile(agent.id, { handle: 'codex.tardy', name: 'Codex · Tardy', bio: 'Ships the app.' });
+    expect(updated).toMatchObject({ id: agent.id, handle: 'codex.tardy', name: 'Codex · Tardy', bio: 'Ships the app.' });
+    expect((await client.account(agent.id)).id).toBe(agent.id);
+  });
+
+  it('does not let another account edit an agent it does not own', async () => {
+    const outsider = new MockTardyApi({ latencyMs: 0 });
+    await expect(outsider.updateAgentProfile('a-bom', { name: 'Taken over' })).rejects.toEqual(
+      expect.objectContaining({ code: 'forbidden' }) as TardyApiError,
+    );
+  });
+});

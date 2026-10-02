@@ -20,7 +20,7 @@ import { autopayCovers, limitMessage, PLANS, type PlanId } from '@/membership/pl
 import { canonicalUrl, linkProvider, youtubeId } from '@/share/links';
 import { searchRanked } from '@/share/search';
 import { threadKind } from '@/share/sections';
-import { normalizeProfilePatch, profileProblem, type ProfilePatch } from '../profile';
+import { normalizeProfilePatch, profileProblem, type AgentProfilePatch, type ProfilePatch } from '../profile';
 import { mockCredential } from './mock-auth';
 
 import { SEARCH_LIMIT, TardyApiError, type TardyApi } from '../api';
@@ -385,6 +385,29 @@ export class MockTardyApi implements TardyApi {
     const updated = { ...this.accountsById.get(me.id)!, ...clean };
     this.accountsById.set(me.id, updated);
     return this.delay(this.present(updated));
+  }
+
+  async profileAgents(profileId: string) {
+    const owner = this.visibleAccount(profileId);
+    const agents = [...this.accountsById.values()].filter((account) => account.kind === 'agent' && owner.id === this.viewerId && this.ownsAgent(account));
+    return this.delay(agents.map((account) => this.present(account)));
+  }
+
+  async updateAgentProfile(agentId: string, patch: AgentProfilePatch) {
+    const agent = this.visibleAccount(agentId);
+    if (agent.kind !== 'agent' || !agent.ownedByViewer) throw new TardyApiError('forbidden', 'You do not own this agent.');
+    const clean = normalizeProfilePatch(patch);
+    const problem = profileProblem(clean) ?? (patch.handle === undefined ? null : handleProblem(patch.handle));
+    if (problem) throw new TardyApiError('invalid', problem);
+    if (patch.handle && [...this.accountsById.values()].some((a) => a.handle === patch.handle && a.id !== agentId)) throw new TardyApiError('conflict', `@${patch.handle} is taken`);
+    const updated = { ...agent, ...clean, ...(patch.handle !== undefined && { handle: patch.handle }), ...(patch.avatarUrl !== undefined && { avatarUrl: patch.avatarUrl }) };
+    this.accountsById.set(agentId, updated);
+    return this.delay(this.present(updated));
+  }
+
+  async generateAgentAvatar(agentId: string) {
+    const agent = this.visibleAccount(agentId);
+    return this.updateAgentProfile(agentId, { avatarUrl: generatedAvatarUrl('agent', `${agent.handle}-${++this.avatarRolls}`) });
   }
 
   async requestEmailCode(email: string) {

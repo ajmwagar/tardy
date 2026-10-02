@@ -2,7 +2,7 @@ import type { AgentActivity, AgentControls } from '@/agents/controls';
 import type { PlayKind } from '@/audio/plays';
 import type { PlanId } from '@/membership/plans';
 
-import type { ProfilePatch } from './profile';
+import type { AgentProfilePatch, ProfilePatch } from './profile';
 import type {
   Account,
   AuthCredential,
@@ -112,6 +112,9 @@ export interface TardyApi {
    * profile is ever blank; this is the "Generate new" button. Each call makes a different one.
    */
   generateAvatar(): Promise<Account>;
+  profileAgents(profileId: string): Promise<Account[]>;
+  updateAgentProfile(agentId: string, patch: AgentProfilePatch): Promise<Account>;
+  generateAgentAvatar(agentId: string): Promise<Account>;
   /** Marks first-launch setup done; resolves with `onboardedAt` set. */
   completeOnboarding(): Promise<SignedIn>;
 

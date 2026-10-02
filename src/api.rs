@@ -35,7 +35,7 @@ use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post, put};
+use axum::routing::{get, patch, post, put};
 use axum::{Json, Router, middleware};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -238,7 +238,13 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/profiles/search", get(search_profiles))
         .route("/v1/profiles/by-id/{id}", get(get_profile_by_id))
         .route("/v1/profiles/by-id/{id}/posts", get(get_profile_posts))
+        .route("/v1/profiles/by-id/{id}/agents", get(get_profile_agents))
         .route("/v1/profiles/{handle}", get(get_profile))
+        .route("/v1/agents/{id}/profile", patch(update_agent_profile))
+        .route(
+            "/v1/agents/{id}/avatar/generate",
+            post(generate_agent_avatar),
+        )
         .route(
             "/v1/brands/{brand_id}/affiliates/{profile_id}",
             put(set_brand_affiliate).delete(clear_brand_affiliate),
@@ -834,6 +840,72 @@ async fn current_profile(
 pub(crate) struct UpdateProfile {
     display_name: Option<String>,
     bio: Option<String>,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct UpdateAgentProfile {
+    handle: Option<String>,
+    display_name: Option<String>,
+    bio: Option<String>,
+    avatar_url: Option<String>,
+}
+
+async fn get_profile_agents(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<AppAccount>>, ApiError> {
+    let viewer = authenticated_account(&state, &headers).await?;
+    let mut agents = social_store(&state)?.owned_agents_for_profile(id).await?;
+    social_store(&state)?
+        .mark_owned_accounts(viewer, &mut agents)
+        .await?;
+    localize_accounts(&mut agents);
+    Ok(Json(agents))
+}
+
+async fn update_agent_profile(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(body): Json<UpdateAgentProfile>,
+) -> Result<Json<AppAccount>, ApiError> {
+    if body.handle.is_none()
+        && body.display_name.is_none()
+        && body.bio.is_none()
+        && body.avatar_url.is_none()
+    {
+        return Err(ApiError::bad_request("agent profile update is empty"));
+    }
+    let owner = authenticated_account(&state, &headers).await?;
+    let mut account = social_store(&state)?
+        .update_owned_agent_profile(
+            owner,
+            id,
+            body.handle.as_deref(),
+            body.display_name.as_deref(),
+            body.bio.as_deref(),
+            body.avatar_url.as_deref(),
+        )
+        .await?;
+    account.owned_by_viewer = Some(true);
+    localize_accounts(std::slice::from_mut(&mut account));
+    Ok(Json(account))
+}
+
+async fn generate_agent_avatar(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<Json<AppAccount>, ApiError> {
+    let owner = authenticated_account(&state, &headers).await?;
+    let avatar_url = dicebear_avatar_url(IdentityKind::Agent, &Uuid::new_v4().to_string());
+    let mut account = social_store(&state)?
+        .update_owned_agent_profile(owner, id, None, None, None, Some(&avatar_url))
+        .await?;
+    account.owned_by_viewer = Some(true);
+    localize_accounts(std::slice::from_mut(&mut account));
+    Ok(Json(account))
 }
 
 async fn update_profile(
@@ -1530,7 +1602,14 @@ async fn create_profile(
     bind_account_profile(&state, account_id, value.id).await?;
     if let Some(social) = &state.social {
         social
-            .register_identity(account_id, value.id, &value.handle, body.kind)
+            .register_identity(
+                account_id,
+                value.id,
+                &value.handle,
+                body.kind,
+                &value.display_name,
+                &value.bio,
+            )
             .await?;
     }
     Ok((StatusCode::CREATED, Json(value)))

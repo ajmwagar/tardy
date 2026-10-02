@@ -115,6 +115,16 @@ export default function AgentControlsScreen() {
         </View>
       </View>
 
+      <SettingsSection>
+        <SettingsRow
+          icon="person.crop.circle"
+          title="Edit agent profile"
+          subtitle="Name, handle, bio, and picture"
+          onPress={() => router.push(`/edit-agent/${agentId}` as never)}
+          last
+        />
+      </SettingsSection>
+
       <SettingsSection footer={off ? `${name} is paused. Nothing it tries goes through.` : 'Stops everything it does on Tardy until you turn it back on.'}>
         <SettingsToggle icon="pause.circle" iconColor={colors.alarm} title={`Pause ${name}`} value={controls.paused} onChange={setPaused} last />
       </SettingsSection>

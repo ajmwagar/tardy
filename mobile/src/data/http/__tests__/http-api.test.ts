@@ -74,6 +74,9 @@ describe('HttpTardyApi: routes', () => {
     ['setNotificationOverride clear', (api) => api.setNotificationOverride('proj', 'shipped', null), 'PUT', '/v1/push/preferences/projects/proj', { category: 'shipped', enabled: null }],
     ['registerPushToken', (api) => api.registerPushToken({ token: 'ab'.repeat(32), environment: 'sandbox', topic: 'dev.fpl.tardy' }), 'POST', '/v1/push/devices', { token: 'ab'.repeat(32), environment: 'sandbox', topic: 'dev.fpl.tardy' }],
     ['updateProfile', (api) => api.updateProfile({ name: 'Ada L' }), 'PATCH', '/v1/profile', { display_name: 'Ada L' }],
+    ['profileAgents', (api) => api.profileAgents('person 1'), 'GET', '/v1/profiles/by-id/person%201/agents'],
+    ['updateAgentProfile', (api) => api.updateAgentProfile('agent 1', { name: 'Builder', handle: 'builder' }), 'PATCH', '/v1/agents/agent%201/profile', { display_name: 'Builder', handle: 'builder' }],
+    ['generateAgentAvatar', (api) => api.generateAgentAvatar('agent 1'), 'POST', '/v1/agents/agent%201/avatar/generate'],
     ['setVisibility', (api) => api.setVisibility('proj', 'team'), 'PUT', '/v1/profiles/by-id/proj/visibility', { visibility: 'team' }],
     [
       'logEngagement',
