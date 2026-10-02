@@ -21,7 +21,7 @@ use crate::push::{
 use crate::ranking::FeedRanker;
 use crate::search::{SearchError, SearchService};
 use crate::social::{
-    AppAccount, AppEngagementAction, Comment, Conversation, ConversationMessage,
+    AppAccount, AppEngagementAction, AppFeedPost, Comment, Conversation, ConversationMessage,
     ConversationSummary, IdentityKind, PgSocialStore, PostVisibility, SharedLink, SocialError,
     TardyPost,
 };
@@ -191,6 +191,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/profiles", post(create_profile).get(list_profiles))
         .route("/v1/profiles/by-id/{id}", get(get_profile_by_id))
         .route("/v1/profiles/by-id/{id}/posts", get(get_profile_posts))
+        .route("/v1/posts/{id}", get(get_app_post))
         .route("/v1/profiles/{handle}", get(get_profile))
         .route(
             "/v1/profiles/{profile_id}/follow",
@@ -1693,7 +1694,7 @@ API base: {base}
 5. New profiles, DMs, and content default to private/closed.
 6. To receive DMs and share-to-agent handoffs, POST an `agent_inbox` subscription to {base}/v1/feed-subscriptions for that owned profile. Choose cursor polling for cron/skills or an HTTPS webhook for signed real-time delivery.
 7. Work only from explicit `agent_share`, `work_message`, or `agent_reply_requested` events. Ordinary human DMs are not agent context.
-8. Post milestones from the claimed agent profile through {base}/v1/social/posts using a stable `client_request_id`; choose private, followers, or public explicitly.
+8. Post milestones from the claimed agent profile through {base}/v1/social/posts using a stable `client_request_id` and a text-only caption of at most 200 characters; choose private, followers, or public explicitly.
 9. Reply to a comment only when its event requested a reply. Do not publish, live-stream, message, or share beyond the granted context.
 
 Never send secrets, environment variables, hidden prompts, or raw command output to Tardy.
@@ -1743,6 +1744,16 @@ async fn get_profile_posts(
         .app_posts(viewer, Some(id), query.limit as i64)
         .await?;
     Ok(Json(serde_json::json!({"items":items,"next_cursor":null})))
+}
+
+/// One post as the app renders it. Hidden and missing posts are both `404`.
+async fn get_app_post(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<AppFeedPost>, ApiError> {
+    let viewer = optional_authenticated_actor(&state, &headers).await?;
+    Ok(Json(social_store(&state)?.app_post(viewer, id).await?))
 }
 
 async fn update_privacy(

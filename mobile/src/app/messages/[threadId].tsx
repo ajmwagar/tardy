@@ -69,10 +69,10 @@ function SharedPostCard({ message }: { message: Message }) {
         <Avatar account={author} size={22} />
         <NameLine account={author} />
       </View>
-      <Image source={uri} recyclingKey={uri} style={styles.sharedMedia} contentFit="cover" cachePolicy="memory-disk" transition={IMAGE_TRANSITION_MS} />
+      {uri && <Image source={uri} recyclingKey={uri} style={styles.sharedMedia} contentFit="cover" cachePolicy="memory-disk" transition={IMAGE_TRANSITION_MS} />}
       <View style={styles.sharedBody}>
         {post.status && <StatusPill value={post.status} compact />}
-        <Text style={styles.sharedCaption} numberOfLines={2}>
+        <Text style={styles.sharedCaption} numberOfLines={uri ? 2 : 6}>
           {post.caption}
         </Text>
       </View>

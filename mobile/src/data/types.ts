@@ -96,6 +96,24 @@ export type PostLink = {
   url: string;
 };
 
+/**
+ * The server's limit on a text post (`social::TEXT_POST_MAX_CHARS`), counted in characters
+ * the way Postgres counts them, not UTF-16 units: an emoji is one.
+ */
+export const TEXT_POST_MAX_CHARS = 200;
+
+/** A caption's length as the server counts it: trimmed, in Unicode code points. */
+export const textPostLength = (text: string) => [...text.trim()].length;
+
+/** Who can see a post the viewer writes. Wire values match the server's `PostVisibility`. */
+export type PostAudience = 'private' | 'followers' | 'public';
+
+/**
+ * A text post the viewer is writing. `clientRequestId` is made once per draft and reused on
+ * every retry, so an ambiguous failure never posts twice.
+ */
+export type TextPostDraft = { clientRequestId: string; text: string; audience: PostAudience };
+
 export type Post = {
   id: string;
   authorId: string;
@@ -113,8 +131,11 @@ export type Post = {
    * tracks can be attached or trend). Wire: `sound` (proposed on `PostView`).
    */
   sound?: PostSound;
-  /** `reel` posts are vertical video and also appear in the Reels tab. */
-  format: 'photo' | 'carousel' | 'video' | 'reel';
+  /**
+   * `reel` posts are vertical video and also appear in the Reels tab. `text` posts have no
+   * media: the caption is the post, at most `TEXT_POST_MAX_CHARS` long.
+   */
+  format: 'photo' | 'carousel' | 'video' | 'reel' | 'text';
   /**
    * The content format the server's renderer used to make this post's video, which a
    * client may label ("News", "Podcast"). Absent for plain status posts. Independent of

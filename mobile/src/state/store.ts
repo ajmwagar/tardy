@@ -6,7 +6,7 @@ import { MockTardyApi } from '@/data/mock/mock-api';
 import { HttpTardyApi } from '@/data/http/http-api';
 import { config } from '@/config';
 import { keychainSlot } from '@/auth/keychain';
-import type { Account, EngagementAction, Post } from '@/data/types';
+import type { Account, EngagementAction, Post, TextPostDraft } from '@/data/types';
 
 /**
  * Client-side state shared across screens: the account cache, optimistic post
@@ -227,6 +227,25 @@ export function useIsFollowing(accountId: string) {
 
 export function seedFollowing(ids: Iterable<string>) {
   set(() => ({ following: new Set(ids) }));
+}
+
+const publishListeners = new Set<(post: Post) => void>();
+
+/** Called with each post the viewer publishes, so Home can show it without a refresh. */
+export function onPostPublished(listener: (post: Post) => void) {
+  publishListeners.add(listener);
+  return () => void publishListeners.delete(listener);
+}
+
+/**
+ * Publishes the viewer's text post. Rejections reach the caller (the composer keeps the
+ * draft and its request id so a retry cannot double-post).
+ */
+export async function publishTextPost(draft: TextPostDraft): Promise<Post> {
+  const post = await api.createPost(draft);
+  ingestPosts([post]);
+  publishListeners.forEach((l) => l(post));
+  return post;
 }
 
 const followListeners = new Set<(accountId: string) => void>();

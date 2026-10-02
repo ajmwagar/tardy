@@ -1,14 +1,17 @@
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { memo } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
 import type { Post } from '@/data/types';
-import { IMAGE_TRANSITION_MS, layout } from '@/theme';
+import { colors, IMAGE_TRANSITION_MS, layout } from '@/theme';
 
 import { Icon, PressableScale } from './ui';
 
-/** A tardy as a grid tile (profiles, Search): its first frame, a badge for carousels and video. */
+/**
+ * A tardy as a grid tile (profiles, Search): its first frame, a badge for carousels and
+ * video, or the words themselves for a text post.
+ */
 export const PostTile = memo(function PostTile({ post, size }: { post: Post; size: number }) {
   const media = post.media[0];
   const uri = media?.type === 'video' ? media.posterUrl : media?.url;
@@ -19,8 +22,16 @@ export const PostTile = memo(function PostTile({ post, size }: { post: Post; siz
       onPress={() => router.push({ pathname: '/post/[postId]', params: { postId: post.id } })}
       accessibilityRole="button"
       accessibilityLabel={post.caption}>
-      <Image source={uri} recyclingKey={uri} style={StyleSheet.absoluteFill} contentFit="cover" cachePolicy="memory-disk" transition={IMAGE_TRANSITION_MS} />
-      {post.format !== 'photo' && (
+      {post.format === 'text' ? (
+        <View style={styles.text}>
+          <Text style={styles.textBody} numberOfLines={7}>
+            {post.caption}
+          </Text>
+        </View>
+      ) : (
+        <Image source={uri} recyclingKey={uri} style={StyleSheet.absoluteFill} contentFit="cover" cachePolicy="memory-disk" transition={IMAGE_TRANSITION_MS} />
+      )}
+      {post.format !== 'photo' && post.format !== 'text' && (
         <View style={styles.badge}>
           <Icon name={post.format === 'carousel' ? 'square.on.square' : 'play.fill'} size={13} color="#fff" />
         </View>
@@ -29,4 +40,8 @@ export const PostTile = memo(function PostTile({ post, size }: { post: Post; siz
   );
 });
 
-const styles = StyleSheet.create({ badge: { position: 'absolute', top: 6, right: 6 } });
+const styles = StyleSheet.create({
+  badge: { position: 'absolute', top: 6, right: 6 },
+  text: { ...StyleSheet.absoluteFill, padding: 8, backgroundColor: colors.surface },
+  textBody: { color: colors.text, fontSize: 12, lineHeight: 16 },
+});

@@ -26,6 +26,7 @@ import type {
   TrendingSound,
   ThreadRef,
   Visibility,
+  TextPostDraft,
 } from '../types';
 import { array, arraySkipping, isoToMs, snakeKeys, TardyWireError, type Decoder } from './codec';
 import * as W from './wire';
@@ -299,6 +300,14 @@ export class HttpTardyApi implements TardyApi {
       body: { body: text, mentioned_profile_ids: mentionedIds },
       decode: W.comment,
     });
+  }
+
+  async createPost(draft: TextPostDraft): Promise<Post> {
+    const created = await this.request('POST', '/v1/social/posts', {
+      body: { client_request_id: draft.clientRequestId, caption: draft.text, shared_link_id: null, visibility: draft.audience },
+      decode: W.createdPost,
+    });
+    return this.post(created.id);
   }
 
   stories(): Promise<StoryGroup[]> {

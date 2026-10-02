@@ -184,10 +184,9 @@ impl SourceDispatcher {
                 .bind(&canonical_url)
                 .fetch_one(&mut *tx)
                 .await?;
-        let caption = format!(
-            "{}\n\nSource: {}",
-            plan.headline.trim(),
-            plan.attribution.trim()
+        let caption = crate::social::fit_text_post(
+            &plan.headline,
+            &format!("Source: {}", plan.attribution.trim()),
         );
         sqlx::query(
             "INSERT INTO tardy_posts

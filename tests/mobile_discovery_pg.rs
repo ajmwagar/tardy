@@ -40,7 +40,7 @@ async fn mobile_profile_and_discovery_routes_match_the_wire_contract() {
         )
         .await
         .unwrap();
-    social
+    let private = social
         .publish_post(
             author_id,
             Uuid::new_v4(),
@@ -99,6 +99,25 @@ async fn mobile_profile_and_discovery_routes_match_the_wire_contract() {
         );
     }
 
+    let one = get(
+        &app,
+        &format!("/v1/posts/{}", public.id),
+        &viewer_token,
+        viewer_id,
+    )
+    .await;
+    assert_eq!(one["id"], public.id.to_string());
+    assert_eq!(one["format"], "text");
+    assert_eq!(one["media"], json!([]));
+    let hidden = status_of(
+        &app,
+        &format!("/v1/posts/{}", private.id),
+        &viewer_token,
+        viewer_id,
+    )
+    .await;
+    assert_eq!(hidden, 404, "a hidden post looks missing");
+
     let own = get(
         &app,
         &format!("/v1/profiles/by-id/{author_id}/posts"),
@@ -130,6 +149,21 @@ async fn register_agent(app: &axum::Router, handle: &str) -> (String, Uuid) {
         token,
         Uuid::parse_str(profile["id"].as_str().unwrap()).unwrap(),
     )
+}
+
+async fn status_of(app: &axum::Router, uri: &str, token: &str, profile: Uuid) -> u16 {
+    let request = Request::builder()
+        .uri(uri)
+        .header("authorization", format!("Bearer {token}"))
+        .header("x-tardy-profile-id", profile.to_string())
+        .body(Body::empty())
+        .unwrap();
+    app.clone()
+        .oneshot(request)
+        .await
+        .unwrap()
+        .status()
+        .as_u16()
 }
 
 async fn get(app: &axum::Router, uri: &str, token: &str, profile: Uuid) -> Value {

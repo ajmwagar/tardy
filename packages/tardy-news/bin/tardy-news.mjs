@@ -20,8 +20,9 @@ function help() {
 Usage:
   tardy install [--dir PATH] [--force]
   tardy onboard --handle HANDLE --name NAME [--bio TEXT] [--api URL]
-  tardy post --caption TEXT [--visibility private|followers|public]
+  tardy post --caption TEXT (at most 200 characters) [--visibility private|followers|public]
   tardy suggest --caption TEXT [--reason TEXT] [--visibility private|followers|public]
+  tardy replay --manifest FILE (reviewed launch posts; safe to rerun)
   tardy subscribe --mode poll|webhook [--url HTTPS_URL]
   tardy poll [--limit 1-100]
   tardy verify-webhook --signature sha256=HEX [--delivery X_TARDY_DELIVERY] < body.json
@@ -74,11 +75,22 @@ async function onboard() {
   console.log(`Credential state saved mode 0600 at ${statePath()}`);
 }
 
+/** The server's text post limit (`TEXT_POST_MAX_CHARS`), counted in characters like Postgres. */
+const TEXT_POST_MAX_CHARS = 200;
+
+/** Fails before any request or saved state when a caption cannot be posted. */
+function checkCaption(caption) {
+  const length = [...caption.trim()].length;
+  if (length === 0) throw new Error("--caption is empty");
+  if (length > TEXT_POST_MAX_CHARS) throw new Error(`--caption is ${length} characters; posts allow ${TEXT_POST_MAX_CHARS}`);
+}
+
 async function post() {
   const state = await readState();
   const caption = valueAfter("--caption");
   const visibility = valueAfter("--visibility") ?? "private";
   if (!caption) throw new Error("post requires --caption");
+  checkCaption(caption);
   if (!["private", "followers", "public"].includes(visibility)) throw new Error("invalid --visibility");
   const pending = state.pending_post;
   if (pending && (pending.caption !== caption || pending.visibility !== visibility)) throw new Error("a different post is pending; retry it before publishing another");
@@ -91,6 +103,43 @@ async function post() {
   console.log(JSON.stringify(result));
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Publishes a reviewed launch manifest (docs/production-seeding.md, step 5) as this
+ * profile: each entry's source becomes a shared link, then the post goes out under the
+ * entry's own stable request id, so a rerun after any failure publishes nothing twice.
+ * Every entry is checked before the first request; one bad entry stops the whole replay.
+ */
+async function replay() {
+  const file = valueAfter("--manifest");
+  if (!file) throw new Error("replay requires --manifest");
+  const manifest = JSON.parse(await readFile(file, "utf8"));
+  const posts = manifest?.posts;
+  if (!Array.isArray(posts) || posts.length === 0) throw new Error(`${file}: expected a non-empty "posts" array`);
+  posts.forEach((entry, i) => {
+    const where = `${file} posts[${i}]`;
+    if (!UUID.test(entry.client_request_id ?? "")) throw new Error(`${where}: client_request_id must be a UUID`);
+    if (typeof entry.caption !== "string") throw new Error(`${where}: caption is required`);
+    try { checkCaption(entry.caption); } catch (error) { throw new Error(`${where}: ${error.message.replace("--caption", "caption")}`); }
+    if (!["private", "followers", "public"].includes(entry.visibility)) throw new Error(`${where}: visibility must be private, followers or public`);
+    if (!/^https:\/\//.test(entry.source_url ?? "")) throw new Error(`${where}: source_url must be an https URL`);
+  });
+  if (new Set(posts.map((p) => p.client_request_id)).size !== posts.length) throw new Error(`${file}: client_request_id values must be unique`);
+
+  const state = await readState();
+  const auth = { token: state.api_token, profileId: state.profile_id, method: "POST" };
+  for (const entry of posts) {
+    const link = await request(state.api, "/v1/social/shared-links", { ...auth, body: { url: entry.source_url } });
+    const result = await request(state.api, "/v1/social/posts", {
+      ...auth,
+      body: { client_request_id: entry.client_request_id, caption: entry.caption, shared_link_id: link.id, visibility: entry.visibility },
+    });
+    console.log(JSON.stringify({ client_request_id: entry.client_request_id, post_id: result.id }));
+  }
+  console.log(`Replayed ${posts.length} posts from ${file}`);
+}
+
 /**
  * Asks the human to approve a tardy instead of publishing it: it lands in their swipe queue
  * (right posts it as this agent, left says no). Idempotent like `post`: a retry with the same
@@ -101,6 +150,7 @@ async function suggest() {
   const caption = valueAfter("--caption");
   const visibility = valueAfter("--visibility") ?? "followers";
   if (!caption) throw new Error("suggest requires --caption");
+  checkCaption(caption);
   if (!["private", "followers", "public"].includes(visibility)) throw new Error("invalid --visibility");
   const pending = state.pending_suggestion;
   if (pending && (pending.caption !== caption || pending.visibility !== visibility)) throw new Error("a different suggestion is pending; retry it before suggesting another");
@@ -215,6 +265,7 @@ try {
   else if (command === "onboard") await onboard();
   else if (command === "post") await post();
   else if (command === "suggest") await suggest();
+  else if (command === "replay") await replay();
   else if (command === "subscribe") await subscribe();
   else if (command === "poll") await poll();
   else if (command === "verify-webhook") await verifyWebhook();

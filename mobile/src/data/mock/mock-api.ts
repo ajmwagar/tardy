@@ -47,7 +47,9 @@ import type {
   ThreadParticipant,
   ThreadRef,
   Visibility,
+  TextPostDraft,
 } from '../types';
+import { TEXT_POST_MAX_CHARS, textPostLength } from '../types';
 import {
   ACCOUNTS,
   AGENT_ACTIVITY,
@@ -467,6 +469,37 @@ export class MockTardyApi implements TardyApi {
     this.posts.set(postId, { ...post, commentCount: post.commentCount + 1 });
     this.scheduleAgentCommentReplies(postId, mentions);
     return this.delay(comment);
+  }
+
+  async createPost(draft: TextPostDraft) {
+    const text = draft.text.trim();
+    const length = textPostLength(text);
+    if (length === 0 || length > TEXT_POST_MAX_CHARS) {
+      throw new TardyApiError('invalid', `Posts are 1 to ${TEXT_POST_MAX_CHARS} characters.`);
+    }
+    const id = `text-${draft.clientRequestId}`;
+    const existing = this.posts.get(id);
+    if (existing) return this.delay(this.presentPost(existing));
+    const post: Post = {
+      id,
+      authorId: this.viewerId,
+      format: 'text',
+      media: [],
+      caption: text,
+      links: [],
+      createdAt: new Date().toISOString(),
+      likeCount: 0,
+      commentCount: 0,
+      shareCount: 0,
+      alarmCount: 0,
+      repostCount: 0,
+      viewerHasLiked: false,
+      viewerHasReposted: false,
+      viewerHasAlarm: false,
+      viewerHasSaved: false,
+    };
+    this.posts.set(id, post);
+    return this.delay(this.presentPost(post));
   }
 
   /**
