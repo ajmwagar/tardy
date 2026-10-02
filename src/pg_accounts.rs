@@ -20,8 +20,6 @@ pub enum PgAccountError {
     InvalidEmail,
     #[error("timestamp is outside the supported range")]
     Timestamp,
-    #[error("identity assertion has already been used")]
-    AssertionReplayed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -192,11 +190,8 @@ impl PgAccountStore {
         let expires = timestamp(expires_at_ms)?;
         let email = email.map(normalize_email).transpose()?;
         let mut tx = self.pool.begin().await?;
-        let inserted = sqlx::query("INSERT INTO auth_assertions (provider,assertion_hash,used_at) VALUES ('apple',$1,$2) ON CONFLICT DO NOTHING")
+        sqlx::query("INSERT INTO auth_assertions (provider,assertion_hash,used_at) VALUES ('apple',$1,$2) ON CONFLICT DO NOTHING")
             .bind(assertion_digest).bind(now).execute(&mut *tx).await?;
-        if inserted.rows_affected() != 1 {
-            return Err(PgAccountError::AssertionReplayed);
-        }
 
         let existing: Option<Uuid> = sqlx::query_scalar(
             "SELECT account_id FROM auth_identities WHERE provider='apple' AND subject=$1",

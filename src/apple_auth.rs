@@ -105,6 +105,11 @@ impl AppleAuthenticator {
         })
     }
 
+    /// Warms Apple's public signing keys without accepting a credential.
+    pub async fn prewarm(&self) -> Result<(), AppleAuthError> {
+        self.keys().await.map(|_| ())
+    }
+
     async fn keys(&self) -> Result<JwkSet, AppleAuthError> {
         if let Some(keys) = self.cached_keys()? {
             return Ok(keys);

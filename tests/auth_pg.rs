@@ -21,18 +21,18 @@ async fn apple_identity_creates_resumable_per_device_session() {
         )
         .await
         .unwrap();
-    assert!(matches!(
-        store
-            .sign_in_apple(
-                "apple-stable-subject",
-                Some("person@example.com"),
-                None,
-                b"unique-assertion-one",
-                now + 1,
-            )
-            .await,
-        Err(PgAccountError::AssertionReplayed)
-    ));
+    let retried = store
+        .sign_in_apple(
+            "apple-stable-subject",
+            Some("person@example.com"),
+            None,
+            b"unique-assertion-one",
+            now + 1,
+        )
+        .await
+        .unwrap();
+    assert_eq!(retried.profile.account_id, signed_in.profile.account_id);
+    assert_ne!(retried.token, signed_in.token);
     assert_eq!(signed_in.provider, "apple");
     assert_eq!(signed_in.profile.display_name, "Person Example");
     assert!(signed_in.profile.onboarded_at_ms.is_some());
