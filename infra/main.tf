@@ -67,10 +67,12 @@ resource "fpl_fab_site" "landing" {
 }
 
 resource "fpl_storage_bucket" "media" {
-  project             = var.project
-  name                = "media"
-  jurisdiction        = "us"
-  versioning          = true
+  project      = var.project
+  name         = "media"
+  jurisdiction = "us"
+  # R2 has no bucket object-versioning primitive. Tardy writes immutable media
+  # keys and treats replacement as a new object, so history is application-owned.
+  versioning          = false
   public_delivery     = false
   deletion_protection = true
 
