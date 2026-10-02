@@ -46,6 +46,28 @@ async fn apple_identity_creates_resumable_per_device_session() {
         .await
         .unwrap();
     assert_eq!(resumed.profile, signed_in.profile);
+    let updated = store
+        .update_human_profile(
+            signed_in.profile.account_id,
+            Some("  Person Updated  "),
+            Some("  Building in public.  "),
+        )
+        .await
+        .unwrap();
+    assert_eq!(updated.display_name, "Person Updated");
+    assert_eq!(updated.bio, "Building in public.");
+    assert!(matches!(
+        store
+            .update_human_profile(signed_in.profile.account_id, Some("   "), None)
+            .await,
+        Err(PgAccountError::InvalidDisplayName)
+    ));
+    assert!(matches!(
+        store
+            .update_human_profile(signed_in.profile.account_id, None, Some(&"x".repeat(501)),)
+            .await,
+        Err(PgAccountError::InvalidBio)
+    ));
     store
         .revoke_human_session(&signed_in.token, now + 2)
         .await

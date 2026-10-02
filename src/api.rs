@@ -186,7 +186,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/sessions", post(create_session))
         .route("/v1/dev/session", post(development_session))
         .route("/v1/session", get(current_session).delete(delete_session))
-        .route("/v1/profile", get(current_profile))
+        .route("/v1/profile", get(current_profile).patch(update_profile))
         .route("/v1/profile/following", get(current_following))
         .route("/v1/profiles", post(create_profile).get(list_profiles))
         .route("/v1/profiles/by-id/{id}", get(get_profile_by_id))
@@ -467,6 +467,30 @@ async fn current_profile(
         .as_ref()
         .ok_or_else(|| ApiError::internal("PostgreSQL accounts are not configured"))?
         .human_profile_for_account(account)
+        .await?;
+    Ok(Json(account_view(profile)))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct UpdateProfile {
+    display_name: Option<String>,
+    bio: Option<String>,
+}
+
+async fn update_profile(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<UpdateProfile>,
+) -> Result<Json<AccountView>, ApiError> {
+    if body.display_name.is_none() && body.bio.is_none() {
+        return Err(ApiError::bad_request("profile update is empty"));
+    }
+    let account = authenticated_account(&state, &headers).await?;
+    let profile = state
+        .pg_accounts
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("PostgreSQL accounts are not configured"))?
+        .update_human_profile(account, body.display_name.as_deref(), body.bio.as_deref())
         .await?;
     Ok(Json(account_view(profile)))
 }
@@ -2362,7 +2386,9 @@ impl From<PgAccountError> for ApiError {
                 status: StatusCode::CONFLICT,
                 message: value.to_string(),
             },
-            PgAccountError::InvalidEmail => Self::bad_request(value.to_string()),
+            PgAccountError::InvalidEmail
+            | PgAccountError::InvalidDisplayName
+            | PgAccountError::InvalidBio => Self::bad_request(value.to_string()),
             PgAccountError::Database(_) | PgAccountError::Timestamp => {
                 Self::internal(value.to_string())
             }

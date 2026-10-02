@@ -7,7 +7,7 @@ use crate::api::{
     CreateProfile, CreateShare, CreateSharedLink, CreateSocialConversation, CreateThread,
     ErrorBody, HandoffRequest, MarkConversationRead, MarkNotificationsRead, PublishReel,
     PublishSocialPost, RecordEngagement, SearchRequest, SendMessage, SendSocialMessage,
-    SessionCredential, SessionView, SignedInView, StartLive, SummonAgent,
+    SessionCredential, SessionView, SignedInView, StartLive, SummonAgent, UpdateProfile,
 };
 use crate::audio::{
     AttachPostAudio, AudioRelease, AudioTrack, AudioUsage, AudioUsageKind, NewAudioRelease,
@@ -52,7 +52,7 @@ use utoipa::OpenApi;
         NewOriginalTrack, ReleaseType, TrendingAudio,
         AppNotification, Comment, Conversation, ConversationMessage, ConversationMode, ConversationSummary, IdentityKind,
         PostVisibility, SharedLink, SocialIdentity, TardyPost, CreatePostComment, SessionCredential, SessionView, SignedInView,
-        CreateSharedLink, CreateSocialConversation, MarkConversationRead, MarkNotificationsRead, PublishSocialPost, SendSocialMessage, SummonAgent
+        CreateSharedLink, CreateSocialConversation, MarkConversationRead, MarkNotificationsRead, PublishSocialPost, SendSocialMessage, SummonAgent, UpdateProfile
     )),
     tags(
         (name = "onboarding"), (name = "profiles"), (name = "messaging"),
@@ -121,6 +121,17 @@ pub fn document() -> Value {
             "getCurrentProfile",
             "profiles",
             None,
+            Some("AccountView"),
+            200,
+            true,
+            false,
+        ),
+        op(
+            "patch",
+            "/v1/profile",
+            "updateCurrentProfile",
+            "profiles",
+            Some("UpdateProfile"),
             Some("AccountView"),
             200,
             true,
@@ -959,6 +970,7 @@ mod tests {
         assert_eq!(document["openapi"], "3.1.0");
         for (path, method) in [
             ("/v1/onboarding/claims", "post"),
+            ("/v1/profile", "patch"),
             ("/v1/profiles/{handle}", "get"),
             ("/v1/dm-threads/{id}/messages", "get"),
             ("/v1/shares", "post"),
