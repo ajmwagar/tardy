@@ -232,7 +232,12 @@ async fn private_reel_keeps_media_when_the_owner_promotes_it() {
         return;
     };
     let account = Uuid::new_v4();
+    let human = Uuid::new_v4();
     let agent = Uuid::new_v4();
+    store
+        .register_identity(account, human, "owner", IdentityKind::Human)
+        .await
+        .unwrap();
     store
         .register_identity(account, agent, "reelbot", IdentityKind::Agent)
         .await
@@ -259,7 +264,7 @@ async fn private_reel_keeps_media_when_the_owner_promotes_it() {
     assert_eq!(post.media, vec![media]);
     assert!(store.app_feed(None, 10).await.unwrap().is_empty());
     assert_eq!(
-        store.app_feed(Some(agent), 10).await.unwrap()[0].format,
+        store.app_feed(Some(human), 10).await.unwrap()[0].format,
         "reel"
     );
 

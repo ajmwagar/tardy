@@ -294,6 +294,10 @@ impl PgSocialStore {
                 let visible: bool = sqlx::query_scalar(
                     "SELECT EXISTS(SELECT 1 FROM tardy_posts p WHERE p.id=$1 AND
                      (p.visibility='public' OR p.author_profile_id=$2 OR
+                      EXISTS(SELECT 1 FROM social_identities viewer_owner
+                             JOIN social_identities author_owner USING (account_id)
+                             WHERE viewer_owner.profile_id=$2
+                               AND author_owner.profile_id=p.author_profile_id) OR
                       (p.visibility='followers' AND EXISTS(SELECT 1 FROM profile_follows f
                        WHERE f.follower_profile_id=$2 AND f.followed_profile_id=p.author_profile_id))))",
                 )
@@ -350,6 +354,10 @@ impl PgSocialStore {
         let visible: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM tardy_posts p WHERE p.id=$1 AND
              (p.visibility='public' OR p.author_profile_id=$2 OR
+              EXISTS(SELECT 1 FROM social_identities viewer_owner
+                     JOIN social_identities author_owner USING (account_id)
+                     WHERE viewer_owner.profile_id=$2
+                       AND author_owner.profile_id=p.author_profile_id) OR
               (p.visibility='followers' AND EXISTS(SELECT 1 FROM profile_follows f
                WHERE f.follower_profile_id=$2 AND f.followed_profile_id=p.author_profile_id))))",
         )
@@ -392,6 +400,10 @@ impl PgSocialStore {
              LEFT JOIN shared_links l ON l.id=p.shared_link_id
              WHERE p.visibility='public'
                 OR p.author_profile_id=$1
+                OR EXISTS(SELECT 1 FROM social_identities viewer_owner
+                          JOIN social_identities author_owner USING (account_id)
+                          WHERE viewer_owner.profile_id=$1
+                            AND author_owner.profile_id=p.author_profile_id)
                 OR (p.visibility='followers' AND EXISTS (
                     SELECT 1 FROM profile_follows f
                     WHERE f.follower_profile_id=$1 AND f.followed_profile_id=p.author_profile_id))
@@ -451,6 +463,10 @@ impl PgSocialStore {
              WHERE ($2::uuid IS NULL OR p.author_profile_id=$2)
                AND (p.visibility='public'
                     OR p.author_profile_id=$1
+                    OR EXISTS(SELECT 1 FROM social_identities viewer_owner
+                              JOIN social_identities author_owner USING (account_id)
+                              WHERE viewer_owner.profile_id=$1
+                                AND author_owner.profile_id=p.author_profile_id)
                     OR (p.visibility='followers' AND EXISTS (
                         SELECT 1 FROM profile_follows f
                         WHERE f.follower_profile_id=$1 AND f.followed_profile_id=p.author_profile_id)))
@@ -478,6 +494,10 @@ impl PgSocialStore {
              LEFT JOIN shared_links l ON l.id=p.shared_link_id
              WHERE p.id=$2 AND (p.visibility='public'
                     OR p.author_profile_id=$1
+                    OR EXISTS(SELECT 1 FROM social_identities viewer_owner
+                              JOIN social_identities author_owner USING (account_id)
+                              WHERE viewer_owner.profile_id=$1
+                                AND author_owner.profile_id=p.author_profile_id)
                     OR (p.visibility='followers' AND EXISTS (
                         SELECT 1 FROM profile_follows f
                         WHERE f.follower_profile_id=$1 AND f.followed_profile_id=p.author_profile_id)))",
@@ -517,6 +537,10 @@ impl PgSocialStore {
              CROSS JOIN q
              WHERE (p.visibility='public'
                     OR p.author_profile_id=$1
+                    OR EXISTS(SELECT 1 FROM social_identities viewer_owner
+                              JOIN social_identities author_owner USING (account_id)
+                              WHERE viewer_owner.profile_id=$1
+                                AND author_owner.profile_id=p.author_profile_id)
                     OR (p.visibility='followers' AND EXISTS (
                         SELECT 1 FROM profile_follows f
                         WHERE f.follower_profile_id=$1 AND f.followed_profile_id=p.author_profile_id)))
