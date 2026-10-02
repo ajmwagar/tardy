@@ -1,4 +1,18 @@
 export type MessageSpan = { kind: 'text' | 'code'; text: string };
+export type MessageImage = { alt: string; url: string };
+
+/** Compatibility bridge for agents that emit Markdown images before native attachments land. */
+export function messageImages(source: string): { text: string; images: MessageImage[] } {
+  const images: MessageImage[] = [];
+  const text = source
+    .replace(/!\[([^\]\n]{0,300})\]\((https?:\/\/[^\s)]+)\)/g, (_all, alt: string, url: string) => {
+      images.push({ alt: alt.trim() || 'Shared image', url });
+      return '';
+    })
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  return { text, images };
+}
 
 /**
  * The DM wire format is still plain text. Render the one Markdown primitive agents use most

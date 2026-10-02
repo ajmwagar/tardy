@@ -1,7 +1,7 @@
 import { Image } from 'expo-image';
 import { router, Stack, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActionSheetIOS, Alert, Animated, AppState, Easing, FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActionSheetIOS, Alert, Animated, AppState, Easing, FlatList, KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ErrorState, Pulse, SkeletonBlock } from '@/components/states';
@@ -13,7 +13,7 @@ import { ReactionChips, ReactionPicker, type ReactionAnchor } from '@/components
 import { ThreadAvatar } from '@/components/thread-avatar';
 import { applyReaction, nextReaction, reactionOf, type ReactionKind } from '@/reactions/reactions';
 import { lastSequence, LIVE_FULL_EVERY, mergeMessages, nextCheckMs, quickCheckCursor } from '@/messages/live';
-import { messageSpans } from '@/messages/format';
+import { messageImages, messageSpans, type MessageImage as InlineMessageImage } from '@/messages/format';
 import { isWork, promotionNotice } from '@/share/sections';
 import { useSharedLink } from '@/share/use-shared-link';
 import { isGroup, othersIn, threadLabel } from '@/share/thread-label';
@@ -95,6 +95,24 @@ function MessageText({ text, mine }: { text: string; mine: boolean }) {
   );
 }
 
+function MessageImageCard({ image }: { image: InlineMessageImage }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <Pressable onPress={() => setOpen(true)} accessibilityRole="imagebutton" accessibilityLabel={`${image.alt}, open full screen`}>
+        <Image source={image.url} recyclingKey={image.url} style={styles.messageImage} contentFit="cover" cachePolicy="memory-disk" transition={IMAGE_TRANSITION_MS} />
+      </Pressable>
+      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+        <Pressable style={styles.imageModal} onPress={() => setOpen(false)} accessibilityRole="button" accessibilityLabel="Close image">
+          <Image source={image.url} style={styles.imageFull} contentFit="contain" cachePolicy="memory-disk" />
+          <View style={styles.imageClose}><Icon name="xmark" size={18} color="#fff" weight="bold" /></View>
+          <Text style={styles.imageAlt}>{image.alt}</Text>
+        </Pressable>
+      </Modal>
+    </>
+  );
+}
+
 /** A shared link as its preview card, filling in as enrichment finishes. */
 function LinkCard({ id, url }: { id: string; url: string }) {
   // A failed preview read leaves the plain card: the link itself still opens.
@@ -127,6 +145,7 @@ const Bubble = memo(function Bubble({
   receipt?: string;
 }) {
   const sender = useAccount(row.senderId);
+  const formatted = useMemo(() => messageImages(row.text), [row.text]);
   const bubbleRef = useRef<View>(null);
   // Only delivered messages can be reacted to (a pending or failed one has no server id yet).
   const reactable = !row.pending && !row.failed && !row.id.startsWith('local-');
@@ -142,7 +161,8 @@ const Bubble = memo(function Bubble({
         {showName && !mine && sender && <Text style={styles.senderName}>{sender.handle}</Text>}
         {row.sharedPost && <SharedPostCard message={row} />}
         {row.sharedLinkId && !row.sharedPost ? <LinkCard id={row.sharedLinkId} url={isUrl(row.text) ? row.text : ''} /> : null}
-        {row.text && !(row.sharedLinkId && isUrl(row.text)) ? (
+        {formatted.images.map((image) => <MessageImageCard key={image.url} image={image} />)}
+        {formatted.text && !(row.sharedLinkId && isUrl(row.text)) ? (
           <Pressable
             ref={bubbleRef}
             onPress={row.failed ? () => onRetry(row) : undefined}
@@ -151,7 +171,7 @@ const Bubble = memo(function Bubble({
             accessibilityActions={reactable ? [{ name: 'longpress', label: 'React' }] : undefined}
             onAccessibilityAction={(e) => e.nativeEvent.actionName === 'longpress' && longPress()}
             style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs, row.pending && styles.bubblePending]}>
-            <MessageText text={row.text} mine={mine} />
+            <MessageText text={formatted.text} mine={mine} />
           </Pressable>
         ) : null}
         <ReactionChips
@@ -588,6 +608,11 @@ const styles = StyleSheet.create({
   sharedCaption: { color: colors.text, fontSize: 13 },
   sharedHidden: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 12 },
   sharedHiddenText: { color: colors.textTertiary, fontSize: 13, flexShrink: 1 },
+  messageImage: { width: 260, height: 260, borderRadius: radius.media, backgroundColor: colors.elevated },
+  imageModal: { flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' },
+  imageFull: { width: '100%', height: '100%' },
+  imageClose: { position: 'absolute', top: 56, right: 20, width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.55)' },
+  imageAlt: { position: 'absolute', left: 20, right: 70, bottom: 42, color: '#fff', fontSize: 14 },
   composer: {
     flexDirection: 'row',
     alignItems: 'flex-end',
