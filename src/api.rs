@@ -19,11 +19,11 @@ use crate::push::{
     AppNotification, NotificationPreference, PgPushStore, PushDevice, PushError, RegisterPushDevice,
 };
 use crate::ranking::FeedRanker;
-use crate::search::{SearchError, SearchService};
+use crate::search::{SearchDocument, SearchError, SearchService};
 use crate::social::{
-    AppAccount, AppEngagementAction, AppFeedPost, Comment, Conversation, ConversationMessage,
-    ConversationSummary, IdentityKind, PgSocialStore, PostVisibility, SharedLink, SocialError,
-    TardyPost,
+    AppAccount, AppEngagementAction, AppFeedPost, AppSearchResult, Comment, Conversation,
+    ConversationMessage, ConversationSummary, IdentityKind, PgSocialStore, PostVisibility,
+    SharedLink, SocialError, TardyPost,
 };
 use crate::store::{MemoryStore, NewLive, NewProfile, NewReel, Store, StoreError};
 use crate::subscriptions::{
@@ -224,6 +224,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/reels/{id}/engagements", post(record_engagement))
         .route("/v1/saved-posts", get(list_saved_posts))
         .route("/v1/saved-posts/{id}", put(save_post).delete(unsave_post))
+        .route("/v1/posts/{id}", get(get_app_post))
         .route("/v1/posts/{id}/like", put(like_post).delete(unlike_post))
         .route(
             "/v1/ai-consents/search",
@@ -360,6 +361,17 @@ async fn unlike_post(
         .set_post_liked(authenticated_actor(&state, &headers).await?, id, false)
         .await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn get_app_post(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<AppFeedPost>, ApiError> {
+    let viewer = Some(authenticated_actor(&state, &headers).await?);
+    let mut post = social_store(&state)?.app_post(viewer, id).await?;
+    localize_posts(&state, std::slice::from_mut(&mut post));
+    Ok(Json(post))
 }
 
 /// Session restoration is an explicit route even before the provider exchange lands.
@@ -1734,27 +1746,66 @@ async fn run_search(
     headers: &HeaderMap,
     query: &str,
     limit: usize,
-) -> Result<Json<Vec<crate::search::SearchResult>>, ApiError> {
+) -> Result<Json<Vec<AppSearchResult>>, ApiError> {
     if !(1..=50).contains(&limit) {
         return Err(ApiError::bad_request("limit must be between 1 and 50"));
     }
+    if query.trim().is_empty() {
+        return Err(SearchError::EmptyQuery.into());
+    }
     let account_id = authenticated_account(state, headers).await?;
-    let provider = state.search.provider().ok_or(SearchError::Unavailable)?;
-    if !has_account_consent(
-        state,
-        account_id,
-        provider,
-        SEARCH_CONSENT_PURPOSE,
-        SEARCH_CONSENT_POLICY,
-    )
-    .await?
+    let viewer = authenticated_actor(state, headers).await?;
+    let provider = state.search.provider();
+    if let Some(provider) = provider
+        && !has_account_consent(
+            state,
+            account_id,
+            provider,
+            SEARCH_CONSENT_PURPOSE,
+            SEARCH_CONSENT_POLICY,
+        )
+        .await?
     {
         return Err(ApiError::forbidden(
             "explicit search AI consent is required",
         ));
     }
-    let candidates = state.store.feed_candidates(None)?;
-    Ok(Json(state.search.search(query, candidates, limit).await?))
+
+    // Never send private text to an external provider. Local PostgreSQL search may
+    // include private posts the selected profile can already see.
+    let candidate_viewer = provider.is_none().then_some(viewer);
+    let candidate_limit = if provider.is_some() { 100 } else { limit };
+    let mut candidates = social_store(state)?
+        .search_app_posts(candidate_viewer, query, candidate_limit as i64)
+        .await?;
+    if provider.is_some() && !candidates.is_empty() {
+        let documents = candidates
+            .iter()
+            .map(|result| SearchDocument {
+                id: result.post.id,
+                text: result.post.caption.clone(),
+            })
+            .collect::<Vec<_>>();
+        let ranked = state
+            .search
+            .rerank_documents(query, &documents, limit)
+            .await?;
+        candidates = ranked
+            .into_iter()
+            .map(|ranked| {
+                let mut result = candidates
+                    .get(ranked.index)
+                    .cloned()
+                    .ok_or(SearchError::InvalidResult)?;
+                result.relevance_score = ranked.score;
+                Ok(result)
+            })
+            .collect::<Result<Vec<_>, SearchError>>()?;
+    }
+    for result in &mut candidates {
+        localize_posts(state, std::slice::from_mut(&mut result.post));
+    }
+    Ok(Json(candidates))
 }
 
 #[derive(Deserialize, ToSchema)]

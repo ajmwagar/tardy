@@ -23,10 +23,10 @@ use crate::media::{MediaAsset, MediaKind, MediaStatus, UploadAuthorization, Uplo
 use crate::onboarding::{Account, AiConsent, ClaimCode, ClaimedAccount, TemporaryTardyAccount};
 use crate::push::AppNotification;
 use crate::push::{ApnsEnvironment, NotificationPreference, PushDevice, RegisterPushDevice};
-use crate::search::SearchResult;
 use crate::social::{
-    AppAccount, Comment, Conversation, ConversationMessage, ConversationMode, ConversationSummary,
-    IdentityKind, PostVisibility, SharedLink, SocialIdentity, TardyPost,
+    AppAccount, AppFeedPost, AppSearchResult, Comment, Conversation, ConversationMessage,
+    ConversationMode, ConversationSummary, IdentityKind, PostVisibility, SharedLink,
+    SocialIdentity, TardyPost,
 };
 use crate::subscriptions::{
     DeliveryMode, FeedEvent, NewSubscription, Subscription, SubscriptionKind,
@@ -43,14 +43,14 @@ use utoipa::OpenApi;
         EngagementKind, EngagementReceipt, ErrorBody, FeedItem, HandoffRequest, HyperTardyItem,
         LiveEvent, LiveEventPayload, LiveSession, LiveStatus, MediaAsset, MediaKind, MediaStatus,
         Profile, ProfilePrivacy, ProfileVisibility, PublicProfile, PublishReel, RecordEngagement,
-        Reel, ResharePolicy, SavedPost, SearchRequest, SearchResult, SendMessage, ShareGrant, ShareSubject, StartLive,
+        Reel, ResharePolicy, SavedPost, SearchRequest, SendMessage, ShareGrant, ShareSubject, StartLive,
         UploadAuthorization, UploadIntent, Visibility, ApnsEnvironment, NotificationPreference,
         PushDevice, RegisterPushDevice, AttributionModel, CampaignReport, FundingIntent,
         NewCampaign, PaymentRequired, PaymentRequirements, ResourceInfo, Settlement,
         DeliveryMode, FeedEvent, NewSubscription, Subscription, SubscriptionKind,
         AttachPostAudio, AudioRelease, AudioTrack, AudioUsage, AudioUsageKind, NewAudioRelease,
         NewOriginalTrack, ReleaseType, TrendingAudio,
-        AppAccount, AppNotification, Comment, Conversation, ConversationMessage, ConversationMode, ConversationSummary, IdentityKind,
+        AppAccount, AppFeedPost, AppSearchResult, AppNotification, Comment, Conversation, ConversationMessage, ConversationMode, ConversationSummary, IdentityKind,
         PostVisibility, SharedLink, SocialIdentity, TardyPost, CreatePostComment, SessionCredential, SessionView, SetHandle, SignedInView, UpdateProfile,
         CreateSharedLink, CreateSocialConversation, MarkConversationRead, MarkNotificationsRead, PublishSocialPost, SendSocialMessage, SummonAgent
     )),
@@ -627,6 +627,17 @@ pub fn document() -> Value {
             false,
         ),
         op(
+            "get",
+            "/v1/posts/{id}",
+            "getPost",
+            "feed",
+            None,
+            Some("AppFeedPost"),
+            200,
+            true,
+            false,
+        ),
+        op(
             "put",
             "/v1/posts/{id}/like",
             "likePost",
@@ -741,7 +752,7 @@ pub fn document() -> Value {
             "searchPosts",
             "feed",
             "SearchRequest",
-            "SearchResult",
+            "AppSearchResult",
             200,
             true,
         ),
@@ -751,7 +762,7 @@ pub fn document() -> Value {
             "explorePosts",
             "feed",
             "SearchRequest",
-            "SearchResult",
+            "AppSearchResult",
             200,
             true,
         ),

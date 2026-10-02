@@ -78,6 +78,27 @@ async fn mobile_profile_and_discovery_routes_match_the_wire_contract() {
     .await;
     assert_eq!(by_handle["id"], author_id.to_string());
 
+    let single = get(
+        &app,
+        &format!("/v1/posts/{}", public.id),
+        &viewer_token,
+        viewer_id,
+    )
+    .await;
+    assert_eq!(single["id"], public.id.to_string());
+    assert_eq!(single["author_id"], author_id.to_string());
+
+    let search = post(
+        &app,
+        "/v1/search",
+        json!({"query":"launch update","limit":10}),
+        Some(&viewer_token),
+        Some(viewer_id),
+    )
+    .await;
+    assert_eq!(search[0]["post"]["id"], public.id.to_string());
+    assert!(search[0]["relevance_score"].is_number());
+
     for route in [
         "/v1/feed",
         "/v1/explore",

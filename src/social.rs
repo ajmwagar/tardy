@@ -181,7 +181,7 @@ pub struct TardyPost {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct AppFeedPost {
     pub id: Uuid,
     pub author_id: Uuid,
@@ -199,6 +199,12 @@ pub struct AppFeedPost {
     pub viewer_has_alarm: bool,
     pub viewer_has_reposted: bool,
     pub viewer_has_saved: bool,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct AppSearchResult {
+    pub post: AppFeedPost,
+    pub relevance_score: f64,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -444,6 +450,81 @@ impl PgSocialStore {
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(app_post_from_row).collect()
+    }
+
+    pub async fn app_post(
+        &self,
+        viewer: Option<Uuid>,
+        id: Uuid,
+    ) -> Result<AppFeedPost, SocialError> {
+        let row = sqlx::query(
+            "SELECT p.id,p.author_profile_id,p.caption,p.created_at,l.canonical_url,
+                    (SELECT count(*) FROM post_comments c WHERE c.post_id=p.id)::bigint AS comment_count,
+                    (SELECT count(*) FROM post_likes x WHERE x.post_id=p.id)::bigint AS like_count,
+                    EXISTS(SELECT 1 FROM post_likes x WHERE x.post_id=p.id AND x.profile_id=$1) AS viewer_has_liked
+             FROM tardy_posts p
+             LEFT JOIN shared_links l ON l.id=p.shared_link_id
+             WHERE p.id=$2 AND (p.visibility='public'
+                    OR p.author_profile_id=$1
+                    OR (p.visibility='followers' AND EXISTS (
+                        SELECT 1 FROM profile_follows f
+                        WHERE f.follower_profile_id=$1 AND f.followed_profile_id=p.author_profile_id)))",
+        )
+        .bind(viewer)
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or(SocialError::NotFound)?;
+        app_post_from_row(row)
+    }
+
+    /// PostgreSQL supplies deterministic candidate retrieval and first-stage ranking.
+    /// An optional model reranker can reorder this bounded public result set upstream.
+    pub async fn search_app_posts(
+        &self,
+        viewer: Option<Uuid>,
+        query: &str,
+        limit: i64,
+    ) -> Result<Vec<AppSearchResult>, SocialError> {
+        let query = query.trim();
+        if query.is_empty() || query.len() > 500 || !(1..=100).contains(&limit) {
+            return Err(SocialError::Invalid("invalid post search"));
+        }
+        let rows = sqlx::query(
+            "WITH q AS (SELECT websearch_to_tsquery('english',$2) value)
+             SELECT p.id,p.author_profile_id,p.caption,p.created_at,l.canonical_url,
+                    (SELECT count(*) FROM post_comments c WHERE c.post_id=p.id)::bigint AS comment_count,
+                    (SELECT count(*) FROM post_likes x WHERE x.post_id=p.id)::bigint AS like_count,
+                    EXISTS(SELECT 1 FROM post_likes x WHERE x.post_id=p.id AND x.profile_id=$1) AS viewer_has_liked,
+                    ts_rank_cd(to_tsvector('english',p.caption||' '||i.handle||' '||COALESCE(h.display_name,s.display_name,'')),q.value)::float8 AS relevance_score
+             FROM tardy_posts p
+             JOIN social_identities i ON i.profile_id=p.author_profile_id
+             LEFT JOIN human_profiles h ON h.profile_id=i.profile_id
+             LEFT JOIN source_channels s ON i.kind='channel' AND i.handle='source-'||s.id
+             LEFT JOIN shared_links l ON l.id=p.shared_link_id
+             CROSS JOIN q
+             WHERE (p.visibility='public'
+                    OR p.author_profile_id=$1
+                    OR (p.visibility='followers' AND EXISTS (
+                        SELECT 1 FROM profile_follows f
+                        WHERE f.follower_profile_id=$1 AND f.followed_profile_id=p.author_profile_id)))
+               AND to_tsvector('english',p.caption||' '||i.handle||' '||COALESCE(h.display_name,s.display_name,'')) @@ q.value
+             ORDER BY relevance_score DESC,p.created_at DESC,p.id DESC LIMIT $3",
+        )
+        .bind(viewer)
+        .bind(query)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|row| {
+                let relevance_score = row.try_get("relevance_score")?;
+                Ok(AppSearchResult {
+                    post: app_post_from_row(row)?,
+                    relevance_score,
+                })
+            })
+            .collect()
     }
 
     pub async fn app_accounts(&self, ids: &[Uuid]) -> Result<Vec<AppAccount>, SocialError> {

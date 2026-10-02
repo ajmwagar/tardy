@@ -81,6 +81,18 @@ impl SearchService {
         self.reranker.as_ref().map(|value| value.provider())
     }
 
+    pub async fn rerank_documents(
+        &self,
+        query: &str,
+        documents: &[SearchDocument],
+        limit: usize,
+    ) -> Result<Vec<RankedDocument>, SearchError> {
+        let reranker = self.reranker.as_ref().ok_or(SearchError::Unavailable)?;
+        reranker
+            .rerank(query.trim(), documents, limit.min(documents.len()))
+            .await
+    }
+
     pub async fn search(
         &self,
         query: &str,
