@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { useAnimatedStyle, useSharedValue, withSequence, withSpring, withTiming } from 'react-native-reanimated';
+import { scheduleOnRN } from 'react-native-worklets';
 
 import { setLiked } from '@/state/store';
 import { colors } from '@/theme';
@@ -26,15 +27,26 @@ export function DoubleTapLike({
   const scale = useSharedValue(0);
   const opacity = useSharedValue(0);
 
-  const burst = () => {
-    scale.value = withSequence(withSpring(1.15, { duration: 260 }), withSpring(1, { duration: 120 }), withTiming(0.9, { duration: 360 }));
-    opacity.value = withSequence(withTiming(1, { duration: 80 }), withTiming(1, { duration: 520 }), withTiming(0, { duration: 180 }));
+  const commitLike = () => {
     haptic.impact();
     void setLiked(postId, true);
   };
 
-  const doubleTap = Gesture.Tap().numberOfTaps(2).maxDelay(240).runOnJS(true).onEnd(burst);
-  const singleTap = Gesture.Tap().runOnJS(true).onEnd(() => onSingleTap?.());
+  const doubleTap = Gesture.Tap()
+    .numberOfTaps(2)
+    .maxDelay(350)
+    .onEnd((_event, success) => {
+      if (!success) return;
+      // Start the visible response on the UI thread so video/React work cannot delay it.
+      scale.set(0.62);
+      opacity.set(0);
+      scale.set(withSequence(withSpring(1.18, { duration: 220 }), withSpring(1, { duration: 140 }), withTiming(0.92, { duration: 360 })));
+      opacity.set(withSequence(withTiming(1, { duration: 70 }), withTiming(1, { duration: 540 }), withTiming(0, { duration: 190 })));
+      scheduleOnRN(commitLike);
+    });
+  const singleTap = Gesture.Tap().onEnd((_event, success) => {
+    if (success && onSingleTap) scheduleOnRN(onSingleTap);
+  });
   const gesture = Gesture.Exclusive(doubleTap, singleTap);
 
   const heartStyle = useAnimatedStyle(() => ({ opacity: opacity.value, transform: [{ scale: scale.value }] }));
