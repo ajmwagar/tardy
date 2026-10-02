@@ -68,6 +68,7 @@ export const PostCard = memo(function PostCard({
     router.push({ pathname: '/profile/[handle]', params: { handle: author.handle } });
   };
   const openComments = () => router.push({ pathname: '/comments/[postId]', params: { postId: post.id } });
+  const openReel = () => router.push({ pathname: '/reel/[postId]', params: { postId: post.id } });
   const share = () => router.push({ pathname: '/share', params: { postId: post.id } });
   const more = () =>
     ActionSheetIOS.showActionSheetWithOptions(
@@ -119,7 +120,14 @@ export const PostCard = memo(function PostCard({
       </View>
 
       <View style={styles.media}>
-        <MediaCarousel postId={post.id} media={post.media} width={mediaWidth} active={active} onIndexChange={setIndex} />
+        <MediaCarousel
+          postId={post.id}
+          media={post.media}
+          width={mediaWidth}
+          active={active}
+          onIndexChange={setIndex}
+          onSingleTap={post.format === 'reel' ? openReel : undefined}
+        />
       </View>
       <CarouselDots count={post.media.length} index={index} />
 

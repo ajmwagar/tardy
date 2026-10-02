@@ -2,7 +2,7 @@ import { FlashList, type FlashListRef, type ViewToken } from '@shopify/flash-lis
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useIsFocused } from 'expo-router';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { Pressable, RefreshControl, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useSoundPlays } from '@/audio/use-sound-plays';
@@ -139,9 +139,15 @@ const Reel = memo(function Reel({ post, active, height }: { post: Post; active: 
             </PressableScale>
           )}
         </View>
-        <Text style={styles.caption} numberOfLines={expanded ? 6 : 1} onPress={() => setExpanded((e) => !e)}>
-          {post.caption}
-        </Text>
+        {expanded ? (
+          <ScrollView style={[styles.expandedCaption, { maxHeight: height * 0.42 }]} nestedScrollEnabled showsVerticalScrollIndicator>
+            <Text style={styles.caption} onPress={() => setExpanded(false)}>{post.caption}</Text>
+          </ScrollView>
+        ) : (
+          <Pressable onPress={() => setExpanded(true)} accessibilityRole="button" accessibilityLabel="Read full caption">
+            <Text style={styles.caption} numberOfLines={2}>{post.caption} <Text style={styles.more}>more</Text></Text>
+          </Pressable>
+        )}
         {post.sound && (
           <Pressable
             style={styles.sound}
@@ -330,6 +336,8 @@ const styles = StyleSheet.create({
   follow: { borderRadius: 999, paddingHorizontal: 12, paddingVertical: 4, backgroundColor: colors.primary },
   followText: { color: colors.onPrimary, fontSize: 12, fontWeight: '800' },
   caption: { color: '#fff', fontSize: 14, lineHeight: 19, ...shadow },
+  expandedCaption: { flexGrow: 0, paddingRight: 4 },
+  more: { color: colors.textSecondary, fontWeight: '700' },
   sound: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start', maxWidth: '85%' },
   soundText: { color: '#fff', fontSize: 13, fontWeight: '600', ...shadow },
   metaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, alignItems: 'center' },
