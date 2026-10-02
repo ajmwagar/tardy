@@ -347,6 +347,18 @@ pub struct ConversationMessage {
     pub sender_profile_id: String,
     pub body: String,
     pub shared_link_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shared_link: Option<SharedLinkContext>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SharedLinkContext {
+    pub canonical_url: String,
+    pub provider: String,
+    pub status: String,
+    pub title: Option<String>,
+    pub caption: Option<String>,
+    pub media_url: Option<String>,
 }
 
 pub fn activation_prompt(
@@ -360,15 +372,35 @@ pub fn activation_prompt(
         context
             .iter()
             .map(|message| {
+                let link = message.shared_link.as_ref().map(|link| {
+                    format!(
+                        "\nShared link: {}\nProvider: {}\nEnrichment: {}{}{}{}",
+                        link.canonical_url,
+                        link.provider,
+                        link.status,
+                        link.title
+                            .as_deref()
+                            .map(|value| format!("\nTitle: {value}"))
+                            .unwrap_or_default(),
+                        link.caption
+                            .as_deref()
+                            .map(|value| format!("\nCaption/transcript: {value}"))
+                            .unwrap_or_default(),
+                        link.media_url
+                            .as_deref()
+                            .map(|value| format!("\nCached media: {value}"))
+                            .unwrap_or_default(),
+                    )
+                });
                 format!(
                     "[sequence {} from profile {}] {}{}",
                     message.sequence,
                     message.sender_profile_id,
                     message.body,
-                    message
+                    link.or_else(|| message
                         .shared_link_id
                         .as_deref()
-                        .map(|id| format!(" [shared_link_id={id}]"))
+                        .map(|id| format!(" [shared_link_id={id}]")))
                         .unwrap_or_default()
                 )
             })
@@ -471,10 +503,19 @@ mod tests {
                 sender_profile_id: "human".into(),
                 body: "the granted idea".into(),
                 shared_link_id: Some("link".into()),
+                shared_link: Some(SharedLinkContext {
+                    canonical_url: "https://example.com/reel/1".into(),
+                    provider: "web".into(),
+                    status: "ready".into(),
+                    title: Some("A useful reel".into()),
+                    caption: Some("Build this next".into()),
+                    media_url: None,
+                }),
             }],
         );
         assert!(prompt.contains("Context begins at sequence 4"));
-        assert!(prompt.contains("the granted idea [shared_link_id=link]"));
+        assert!(prompt.contains("Shared link: https://example.com/reel/1"));
+        assert!(prompt.contains("Caption/transcript: Build this next"));
         assert!(prompt.contains("Activation message:\nship it"));
     }
 

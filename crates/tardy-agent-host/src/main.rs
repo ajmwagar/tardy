@@ -388,6 +388,27 @@ async fn fetch_context(
     if let Some(through) = activation.sequence {
         messages.retain(|message| message.sequence <= through);
     }
+    for message in &mut messages {
+        let Some(link_id) = message.shared_link_id.as_deref() else {
+            continue;
+        };
+        let response = app
+            .client
+            .get(format!("{}/v1/social/shared-links/{link_id}", api(app)))
+            .bearer_auth(&app.credential.api_token)
+            .header("x-tardy-profile-id", &app.credential.profile_id)
+            .send()
+            .await?;
+        if response.status().is_success() {
+            message.shared_link = Some(response.json().await?);
+        } else {
+            tracing::warn!(
+                link_id,
+                status = %response.status(),
+                "shared link context fetch failed; retaining its durable id"
+            );
+        }
+    }
     Ok(messages)
 }
 
