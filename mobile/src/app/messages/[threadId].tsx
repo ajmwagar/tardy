@@ -14,6 +14,7 @@ import { ThreadAvatar } from '@/components/thread-avatar';
 import { MessageAttachment } from '@/components/message-attachment';
 import { applyReaction, nextReaction, reactionOf, type ReactionKind } from '@/reactions/reactions';
 import { lastSequence, LIVE_FULL_EVERY, mergeMessages, nextCheckMs, quickCheckCursor } from '@/messages/live';
+import { acceptCommand, commandSuggestions } from '@/messages/commands';
 import { messageImages, messageSpans, type MessageImage as InlineMessageImage } from '@/messages/format';
 import { isWork, promotionNotice } from '@/share/sections';
 import { useSharedLink } from '@/share/use-shared-link';
@@ -256,6 +257,8 @@ export default function ThreadScreen() {
   const group = thread !== null && isGroup(thread);
   const otherAccount = useAccount(thread ? othersIn(thread, meId)[0] : undefined);
   const accounts = useStore((s) => s.accounts);
+  const hasAgent = thread?.participantIds.some((id) => accounts.get(id)?.kind === 'agent') ?? false;
+  const commands = useMemo(() => hasAgent ? commandSuggestions(draft) : [], [draft, hasAgent]);
   const groupLabel = thread && group ? threadLabel(thread, meId, (id) => accounts.get(id)?.handle) : null;
   const lastReadId = useRef<string | null>(null);
 
@@ -548,7 +551,26 @@ export default function ThreadScreen() {
             keyboardDismissMode="interactive"
           />
           {typingIds.map((id) => <TypingRow key={id} profileId={id} />)}
-          <View style={[styles.composer, { paddingBottom: Math.max(insets.bottom, 10) }]}>
+          {commands.length > 0 ? (
+            <View style={styles.commandMenu} accessibilityRole="menu" accessibilityLabel="Agent commands">
+              {commands.map((item, index) => (
+                <Pressable
+                  key={item.command}
+                  style={[styles.commandRow, index === 0 && styles.commandRowSelected]}
+                  accessibilityRole="menuitem"
+                  accessibilityLabel={`${item.title}: ${item.detail}`}
+                  onPress={() => setDraft(acceptCommand(item.command))}>
+                  <View style={styles.commandGlyph}><Text style={styles.commandSlash}>/</Text></View>
+                  <View style={styles.commandCopy}>
+                    <Text style={styles.commandTitle}>{item.command} <Text style={styles.commandName}>{item.title}</Text></Text>
+                    <Text style={styles.commandDetail} numberOfLines={1}>{item.detail}</Text>
+                  </View>
+                  {index === 0 ? <Text style={styles.commandHint}>return</Text> : null}
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
+          <View style={[styles.composer, { paddingBottom: Math.max(insets.bottom, 10) }]}> 
             <TextInput
               value={draft}
               onChangeText={setDraft}
@@ -556,6 +578,11 @@ export default function ThreadScreen() {
               placeholderTextColor={colors.textTertiary}
               style={styles.input}
               multiline
+              submitBehavior={commands.length > 0 ? 'submit' : 'newline'}
+              onSubmitEditing={() => {
+                const first = commands[0];
+                if (first) setDraft(acceptCommand(first.command));
+              }}
             />
             {/* Always laid out (dimmed when empty) so the input doesn't jump wider and narrower. */}
             <PressableScale
@@ -633,6 +660,16 @@ const styles = StyleSheet.create({
     borderTopColor: colors.separator,
     backgroundColor: colors.bg,
   },
+  commandMenu: { marginHorizontal: 12, marginBottom: 2, borderRadius: radius.media, overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth, borderColor: colors.separator, backgroundColor: colors.surface },
+  commandRow: { minHeight: 58, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.separator },
+  commandRowSelected: { backgroundColor: colors.elevated },
+  commandGlyph: { width: 30, height: 30, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.primary },
+  commandSlash: { color: colors.onPrimary, fontWeight: '900', fontSize: 18 },
+  commandCopy: { flex: 1, gap: 2 },
+  commandTitle: { color: colors.primary, fontSize: 13.5, fontWeight: '800', fontFamily: 'ui-monospace' },
+  commandName: { color: colors.text, fontFamily: undefined, fontWeight: '700' },
+  commandDetail: { color: colors.textTertiary, fontSize: 11.5 },
+  commandHint: { color: colors.textTertiary, fontSize: 10, fontFamily: 'ui-monospace', textTransform: 'uppercase' },
   input: {
     flex: 1,
     minHeight: 40,
