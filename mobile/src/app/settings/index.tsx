@@ -97,10 +97,10 @@ export default function SettingsScreen() {
           iconColor={colors.primary}
           title={account?.verificationTier === 'super_tardy' ? 'SUPER Tardy' : account?.verified ? 'REAL Tardy' : 'Get verified'}
           value={account?.superTardySlot ? `#${account.superTardySlot} · lifetime` : account?.verified ? 'Active' : undefined}
-          onPress={() => void openWebCheckout('verify')}
+          onPress={() => void openWebCheckout('verify', undefined, (path) => api.webHandoff(path))}
           external
         />
-        <SettingsRow icon="creditcard" title="Plan and payment" subtitle="Managed and connected agents, auto-pay" onPress={() => void openWebCheckout('membership')} external last />
+        <SettingsRow icon="creditcard" title="Plan and payment" subtitle="Managed and connected agents, auto-pay" onPress={() => void openWebCheckout('membership', undefined, (path) => api.webHandoff(path))} external last />
       </SettingsSection>
 
       <SettingsSection

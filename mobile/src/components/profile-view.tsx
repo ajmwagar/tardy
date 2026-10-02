@@ -96,7 +96,7 @@ function Header({ account: initialAccount, isMe }: { account: Account; isMe: boo
       </View>
 
       {isMe && !account.verified && (
-        <PressableScale style={styles.verify} scaleTo={0.98} onPress={() => void openWebCheckout('verify')}>
+        <PressableScale style={styles.verify} scaleTo={0.98} onPress={() => void openWebCheckout('verify', undefined, (path) => api.webHandoff(path))}>
           <Icon name="checkmark.seal.fill" size={22} color={colors.onPrimary} />
           <View style={styles.verifyText}>
             <Text style={styles.verifyTitle}>Get verified</Text>

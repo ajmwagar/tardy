@@ -27,7 +27,7 @@ import type {
   ThreadRef,
   Visibility,
 } from '../types';
-import { array, arraySkipping, isoToMs, snakeKeys, string, TardyWireError, type Decoder } from './codec';
+import { array, arraySkipping, isoToMs, object, snakeKeys, string, TardyWireError, type Decoder } from './codec';
 import * as W from './wire';
 import type { PlayKind } from '@/audio/plays';
 import type { PlanId } from '@/membership/plans';
@@ -212,6 +212,14 @@ export class HttpTardyApi implements TardyApi {
       decode: W.signedIn,
       auth: 'none',
     }));
+  }
+
+  async webHandoff(returnPath: '/verify' | '/membership'): Promise<string> {
+    const result = await this.request('POST', '/v1/web/handoffs', {
+      body: { return_path: returnPath },
+      decode: object<{ url: string }>({ url: string }),
+    });
+    return result.url;
   }
 
   async requestEmailCode(email: string): Promise<void> {

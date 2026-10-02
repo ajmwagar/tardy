@@ -132,6 +132,9 @@ export type MockTardyApiOptions = {
  * hidden throw `TardyApiError('forbidden')`.
  */
 export class MockTardyApi implements TardyApi {
+  async webHandoff(returnPath: '/verify' | '/membership'): Promise<string> {
+    return `https://tardy.news${returnPath}.html`;
+  }
   private readonly auth: MockAuthServer;
   private readonly latencyMs: number;
   private accountsById = new Map(ACCOUNTS.map((a) => [a.id, a]));

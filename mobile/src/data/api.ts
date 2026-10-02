@@ -68,6 +68,8 @@ export class TardyApiError extends Error {
  * with code `forbidden`.
  */
 export interface TardyApi {
+  /** Creates a five-minute, single-use browser sign-in URL for a website billing page. */
+  webHandoff(returnPath: '/verify' | '/membership'): Promise<string>;
   /**
    * Exchanges a provider credential for a session (`POST /sessions`). On success every
    * later call is authenticated as that session. A credential the provider rejects
