@@ -13,6 +13,7 @@ import { ReactionChips, ReactionPicker, type ReactionAnchor } from '@/components
 import { ThreadAvatar } from '@/components/thread-avatar';
 import { applyReaction, nextReaction, reactionOf, type ReactionKind } from '@/reactions/reactions';
 import { lastSequence, LIVE_FULL_EVERY, mergeMessages, nextCheckMs, quickCheckCursor } from '@/messages/live';
+import { messageSpans } from '@/messages/format';
 import { isWork, promotionNotice } from '@/share/sections';
 import { useSharedLink } from '@/share/use-shared-link';
 import { isGroup, othersIn, threadLabel } from '@/share/thread-label';
@@ -82,6 +83,18 @@ function SharedPostCard({ message }: { message: Message }) {
 
 const isUrl = (text: string) => /^https?:\/\/\S+$/.test(text.trim());
 
+function MessageText({ text, mine }: { text: string; mine: boolean }) {
+  return (
+    <Text style={mine ? styles.textMine : styles.textTheirs}>
+      {messageSpans(text).map((span, index) => (
+        <Text key={index} style={span.kind === 'code' ? (mine ? styles.codeMine : styles.codeTheirs) : undefined}>
+          {span.text}
+        </Text>
+      ))}
+    </Text>
+  );
+}
+
 /** A shared link as its preview card, filling in as enrichment finishes. */
 function LinkCard({ id, url }: { id: string; url: string }) {
   // A failed preview read leaves the plain card: the link itself still opens.
@@ -138,7 +151,7 @@ const Bubble = memo(function Bubble({
             accessibilityActions={reactable ? [{ name: 'longpress', label: 'React' }] : undefined}
             onAccessibilityAction={(e) => e.nativeEvent.actionName === 'longpress' && longPress()}
             style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs, row.pending && styles.bubblePending]}>
-            <Text style={mine ? styles.textMine : styles.textTheirs}>{row.text}</Text>
+            <MessageText text={row.text} mine={mine} />
           </Pressable>
         ) : null}
         <ReactionChips
@@ -560,6 +573,8 @@ const styles = StyleSheet.create({
   bubblePending: { opacity: 0.6 },
   textMine: { color: colors.onPrimary, fontSize: 15, lineHeight: 20 },
   textTheirs: { color: colors.text, fontSize: 15, lineHeight: 20 },
+  codeMine: { fontFamily: 'ui-monospace', backgroundColor: 'rgba(0,0,0,0.18)' },
+  codeTheirs: { fontFamily: 'ui-monospace', color: colors.primary, backgroundColor: colors.surface },
   failed: { color: colors.alarm, fontSize: 11.5 },
   receipt: { color: colors.textTertiary, fontSize: 11.5, paddingHorizontal: 4 },
   typingRow: { flexDirection: 'row', alignItems: 'center', gap: 7, minHeight: 38, paddingHorizontal: 16, paddingVertical: 4 },

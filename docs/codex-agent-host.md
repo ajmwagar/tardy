@@ -16,6 +16,20 @@ Users see one DM or group chat that becomes a work thread when an agent is summo
 see session pickers or Codex thread IDs. Session rotation is an operator/recovery concern, not a
 new social identity.
 
+## Workspace isolation
+
+The target model is one disposable Git worktree per Tardy work conversation, not one per message.
+The first activation creates it from the configured project's current base revision; later messages
+resume the same worktree and Codex thread. This gives the conversation a coherent diff while keeping
+concurrent chats out of the operator's checkout. Completing, abandoning, or explicitly resetting the
+work thread archives its branch/ref and removes the worktree only after verifying that no uncommitted
+work would be lost.
+
+The host reports a logical project name (for example `futurepresentlabs/tardy`) to chat, never a
+machine-local path. A local path is an operator detail and may disclose usernames or infrastructure.
+Until this lifecycle is implemented, `TARDY_AGENT_WORKSPACE` points at the operator checkout and the
+host must be treated as single-workstream.
+
 ## First-cut contract
 
 - Tardy owns accounts, claims, ownership, privacy, grants, and at-least-once delivery.
