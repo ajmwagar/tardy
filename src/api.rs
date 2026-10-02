@@ -556,7 +556,7 @@ async fn generate_profile_avatar(
 ) -> Result<Json<AccountView>, ApiError> {
     let account = authenticated_account(&state, &headers).await?;
     let seed = Uuid::new_v4();
-    let avatar_url = format!("{}/v1/avatars/{seed}", state.public_base_url);
+    let avatar_url = dicebear_avatar_url(IdentityKind::Human, &seed.to_string());
     let profile = state
         .pg_accounts
         .as_ref()
@@ -628,7 +628,7 @@ async fn suggested_follows(
         .search_app_accounts(account, "", 50)
         .await?;
     accounts.retain(|candidate| candidate.id != own_profile);
-    localize_accounts(&state, &mut accounts);
+    localize_accounts(&mut accounts);
     Ok(Json(accounts))
 }
 
@@ -691,7 +691,7 @@ async fn list_profiles(
         return Err(ApiError::bad_request("at most 100 profile ids are allowed"));
     }
     let mut accounts = social_store(&state)?.app_accounts(&ids).await?;
-    localize_accounts(&state, &mut accounts);
+    localize_accounts(&mut accounts);
     Ok(Json(accounts))
 }
 
@@ -710,7 +710,7 @@ async fn search_profiles(
     let mut accounts = social_store(&state)?
         .search_app_accounts(account, &query.q, 50)
         .await?;
-    localize_accounts(&state, &mut accounts);
+    localize_accounts(&mut accounts);
     Ok(Json(accounts))
 }
 
@@ -728,9 +728,9 @@ fn signed_in_view(state: &AppState, value: HumanSession) -> SignedInView {
     }
 }
 
-fn account_view(state: &AppState, value: HumanProfile) -> AccountView {
+fn account_view(_state: &AppState, value: HumanProfile) -> AccountView {
     let avatar_url = if value.avatar_url.is_empty() {
-        local_avatar_url(state, value.profile_id).unwrap_or_default()
+        dicebear_avatar_url(IdentityKind::Human, &value.handle)
     } else {
         value.avatar_url
     };
@@ -786,18 +786,21 @@ fn local_blob_url(state: &AppState, name: &str) -> Option<String> {
         .map(|_| format!("{}/v1/dev/blobs/{name}", state.public_base_url))
 }
 
-fn local_avatar_url(state: &AppState, id: Uuid) -> Option<String> {
-    let (poster, _, _) = LOCAL_MEDIA[usize::from(id.as_bytes()[0]) % LOCAL_MEDIA.len()];
-    local_blob_url(state, poster)
+fn dicebear_avatar_url(kind: IdentityKind, seed: &str) -> String {
+    let style = match kind {
+        IdentityKind::Agent => "bottts-neutral",
+        IdentityKind::Project => "shapes",
+        IdentityKind::Channel => "glass",
+        IdentityKind::Human => "notionists",
+    };
+    let encoded_seed: String = url::form_urlencoded::byte_serialize(seed.as_bytes()).collect();
+    format!("https://api.dicebear.com/9.x/{style}/png?seed={encoded_seed}&size=160")
 }
 
-fn localize_accounts(state: &AppState, accounts: &mut [AppAccount]) {
-    if std::env::var_os("TARDY_LOCAL_BLOB_DIR").is_none() {
-        return;
-    }
+fn localize_accounts(accounts: &mut [AppAccount]) {
     for account in accounts {
         if account.avatar_url.is_empty() || account.avatar_url == "https://tardy.news/favicon.svg" {
-            account.avatar_url = local_avatar_url(state, account.id).unwrap_or_default();
+            account.avatar_url = dicebear_avatar_url(account.kind, &account.handle);
         }
     }
 }
@@ -2332,7 +2335,7 @@ async fn get_profile(
     if let Some(social) = &state.social {
         let _ = authenticated_account(&state, &headers).await?;
         let mut account = social.app_account_by_handle(&handle).await?;
-        localize_accounts(&state, std::slice::from_mut(&mut account));
+        localize_accounts(std::slice::from_mut(&mut account));
         return Ok(Json(account).into_response());
     }
     Ok(Json(state.store.public_profile(
@@ -2349,7 +2352,7 @@ async fn get_profile_by_id(
 ) -> Result<Json<AppAccount>, ApiError> {
     let _ = authenticated_account(&state, &headers).await?;
     let mut account = social_store(&state)?.app_account_by_id(id).await?;
-    localize_accounts(&state, std::slice::from_mut(&mut account));
+    localize_accounts(std::slice::from_mut(&mut account));
     Ok(Json(account))
 }
 
@@ -3142,6 +3145,26 @@ impl From<AudioError> for ApiError {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn profile_avatar_defaults_are_kind_specific_and_never_reel_media() {
+        let human = super::dicebear_avatar_url(IdentityKind::Human, "avery fpl");
+        let agent = super::dicebear_avatar_url(IdentityKind::Agent, "builder");
+        let project = super::dicebear_avatar_url(IdentityKind::Project, "tardy");
+        let channel = super::dicebear_avatar_url(IdentityKind::Channel, "hacker-news");
+        assert!(
+            human.contains("/notionists/png?seed=avery+fpl&size=160"),
+            "{human}"
+        );
+        assert!(agent.contains("/bottts-neutral/png?seed=builder&size=160"));
+        assert!(project.contains("/shapes/png?seed=tardy&size=160"));
+        assert!(channel.contains("/glass/png?seed=hacker-news&size=160"));
+        for avatar in [human, agent, project, channel] {
+            assert!(!avatar.contains("/v1/dev/blobs/"));
+            assert!(!avatar.ends_with(".jpg"));
+            assert!(!avatar.ends_with(".mp4"));
+        }
+    }
+
     use super::*;
     use crate::search::{RankedDocument, Reranker, SearchDocument};
     use axum::body::{Body, to_bytes};
