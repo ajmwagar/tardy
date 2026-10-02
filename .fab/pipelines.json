@@ -15,6 +15,32 @@
         "publishDir": "dist",
         "framework": "static"
       }
+    },
+    {
+      "id": "api-image",
+      "watchPaths": [
+        ".fab/",
+        "Cargo.toml",
+        "Cargo.lock",
+        "Dockerfile",
+        "src/",
+        "ingest/",
+        "migrations/",
+        "policies/",
+        "vendor/"
+      ],
+      "pipeline": {
+        "type": "oci_image",
+        "registry": "registry.fpl.dev",
+        "image": "tardy",
+        "context": ".",
+        "dockerfile": "Dockerfile",
+        "tags": [
+          "candidate"
+        ],
+        "push": true,
+        "tlsVerify": true
+      }
     }
   ]
 }
