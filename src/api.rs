@@ -383,8 +383,14 @@ async fn create_session(
                 status: StatusCode::SERVICE_UNAVAILABLE,
                 message: "Sign in with Apple is not configured".into(),
             })?;
+            let verification_started = std::time::Instant::now();
             let identity = verifier.verify(&identity_token, &nonce).await?;
-            accounts
+            tracing::info!(
+                elapsed_ms = verification_started.elapsed().as_millis(),
+                "verified Apple identity token"
+            );
+            let persistence_started = std::time::Instant::now();
+            let session = accounts
                 .sign_in_apple(
                     &identity.subject,
                     identity.email.as_deref(),
@@ -392,7 +398,12 @@ async fn create_session(
                     &identity.assertion_digest,
                     now_ms()?,
                 )
-                .await?
+                .await?;
+            tracing::info!(
+                elapsed_ms = persistence_started.elapsed().as_millis(),
+                "persisted Apple session"
+            );
+            session
         }
     };
     Ok((StatusCode::CREATED, Json(signed_in_view(session))))
@@ -2352,7 +2363,6 @@ impl From<PgAccountError> for ApiError {
                 message: value.to_string(),
             },
             PgAccountError::InvalidEmail => Self::bad_request(value.to_string()),
-            PgAccountError::AssertionReplayed => Self::unauthorized(value.to_string()),
             PgAccountError::Database(_) | PgAccountError::Timestamp => {
                 Self::internal(value.to_string())
             }
