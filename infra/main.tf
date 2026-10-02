@@ -13,6 +13,35 @@ provider "fpl" {
   default_project = var.project
 }
 
+resource "fpl_fab_project" "tardy" {
+  slug                = var.project
+  display_name        = "Tardy"
+  owner               = "tardy"
+  default_environment = var.environment
+
+  labels = {
+    application = "tardy"
+    managed_by  = "opentofu"
+  }
+}
+
+resource "fpl_fab_repository" "tardy" {
+  project           = fpl_fab_project.tardy.slug
+  name              = "tardy"
+  git_url           = "https://github.com/ajmwagar/tardy.git"
+  github_owner      = "ajmwagar"
+  github_repo       = "tardy"
+  default_branch    = "master"
+  pipeline_path     = ".fab/pipelines.json"
+  registration_mode = "existing"
+  environments      = [var.environment]
+
+  labels = {
+    application = "tardy"
+    managed_by  = "opentofu"
+  }
+}
+
 resource "fpl_fab_site" "landing" {
   id                      = "tardy"
   project                 = var.project
@@ -27,6 +56,8 @@ resource "fpl_fab_site" "landing" {
   publish_dir             = "dist"
   framework               = "static"
   env                     = {}
+
+  depends_on = [fpl_fab_repository.tardy]
 }
 
 resource "fpl_storage_bucket" "media" {
