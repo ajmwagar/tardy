@@ -1,0 +1,223 @@
+{
+  "$schema_note": "Breaking-lane launch manifest. Replay with: tardy replay --manifest content/breaking/2026-10-01.json. Every entry is public fact backed by source_url; client_request_id is stable so replays are idempotent.",
+  "reviewed_at": "2026-10-01",
+  "provenance": "research/ai-breaking-2026-10-01.md",
+  "posts": [
+    {
+      "client_request_id": "7b3c9762-caac-469f-bf5c-61253f41a44a",
+      "caption": "TypeSafe AI launched Jev on Sept 15: a 'System One' model that returns typed choices, scores and yes/no answers with probabilities instead of text. $0.042 per million input tokens; output is free.",
+      "visibility": "public",
+      "source_url": "https://typesafe.ai/blog/introducing-system-one-models-and-jev",
+      "topic": "jev",
+      "published_at": "2026-09-15",
+      "confidence": "high"
+    },
+    {
+      "client_request_id": "b019e80f-2c82-43e3-b098-db8eaa818229",
+      "caption": "TypeSafe AI left stealth Sept 15 with a $40M seed led by DCVC. Founder and CEO Diogo Almeida is a former OpenAI researcher; Erik Gafni and Sasha Sheng are co-founders.",
+      "visibility": "public",
+      "source_url": "https://dealroom.co/news/151032-typesafe-exits-stealth-with-40m-seed-to-build-ai-for-software-not-people/",
+      "topic": "jev",
+      "published_at": "2026-09-15",
+      "confidence": "medium"
+    },
+    {
+      "client_request_id": "ee35f67a-0e5a-4d51-a77f-d6048b2aeba9",
+      "caption": "Vercel: Jev reached nearly 13% of paid AI Gateway teams in 24 hours, the fastest-adopted model in gateway history, 2x the GPT-5.6 family. Caveat: it was free on the gateway through Sept 25.",
+      "visibility": "public",
+      "source_url": "https://vercel.com/blog/ai-gateway-jev-model-launch",
+      "topic": "jev",
+      "published_at": "2026-09-18",
+      "confidence": "high"
+    },
+    {
+      "client_request_id": "1e979ab5-6390-4291-821b-c3080d183137",
+      "caption": "TypeSafe says Jev answers in 70-500 ms and was 193.6x faster and 444.6x cheaper than an average of GPT-6 Astra and Fable 5.1 on its own workflow evals. No independent benchmark yet.",
+      "visibility": "public",
+      "source_url": "https://typesafe.ai",
+      "topic": "jev",
+      "published_at": "2026-09-15",
+      "confidence": "medium"
+    },
+    {
+      "client_request_id": "137dd549-1571-4409-b212-97dce226a76f",
+      "caption": "Browser Use open-sourced Jev Ultrafast (MIT): Jev picks the action and page element, a small LLM writes text only when typing is needed. A Zurich-London Google Flights search took 7.1 s.",
+      "visibility": "public",
+      "source_url": "https://github.com/browser-use/jev-ultrafast",
+      "topic": "jev",
+      "published_at": "2026-09-17",
+      "confidence": "high"
+    },
+    {
+      "client_request_id": "90870313-280c-4878-a624-601501171f65",
+      "caption": "Jev Ultrafast perf notes: the optimized loop cut median browser protocol calls from 1,092 to 101 and median task time by 25%. Browser Use flags it: three run pairs, not a broad benchmark.",
+      "visibility": "public",
+      "source_url": "https://github.com/browser-use/jev-ultrafast/blob/main/docs/performance.md",
+      "topic": "jev",
+      "published_at": "2026-09-17",
+      "confidence": "high"
+    },
+    {
+      "client_request_id": "5fe0bb21-b48b-428b-8068-11f1a7eec755",
+      "caption": "Hassan (@nutlope) classified 1,018 AI papers into 24 topics with Jev for $0.08 total, 256 ms median latency per paper. Summarizing them first with DeepSeek V4 Flash cost $3.99.",
+      "visibility": "public",
+      "source_url": "https://x.com/nutlope/status/2100426999546184123",
+      "topic": "jev",
+      "published_at": "2026-09-17",
+      "confidence": "high"
+    },
+    {
+      "client_request_id": "8a7f3f48-da02-4b43-bf50-24ee6a567163",
+      "caption": "TypeSafe's Jev docs: asking 13 questions about one document in a single call was 12.2x cheaper and 10x faster than 13 separate calls, with the same answers. State is billed once per call.",
+      "visibility": "public",
+      "source_url": "https://docs.typesafe.ai/cookbooks/parallel_questions",
+      "topic": "jev",
+      "published_at": "2026-09-15",
+      "confidence": "high"
+    },
+    {
+      "client_request_id": "e8cb4f7c-b1b0-4aa5-9b60-69711cfe47f3",
+      "caption": "OpenAI DevDay added a Decisions API in limited preview: GPT-6 Luna answers user-defined questions with fixed answer sets to classify inputs, route requests or pick an action.",
+      "visibility": "public",
+      "source_url": "https://community.openai.com/t/devday-2026-announcements-and-developer-resources/1402006",
+      "topic": "openai",
+      "published_at": "2026-09-29",
+      "confidence": "high"
+    },
+    {
+      "client_request_id": "bf64c107-e0aa-4da2-b23d-3b243d6adfc6",
+      "caption": "GPT-6.1 Sol is in the API, ChatGPT Work and Codex at $2/$10 per M tokens, cached input cut to $0.10/M. OpenAI: 75.2% on DeepSWE v1.1 vs GPT-6 Sol's 68.8%, at ~76% lower cost per task.",
+      "visibility": "public",
+      "source_url": "https://community.openai.com/t/gpt-6-1-sol-in-the-api-a-meaningful-step-up-in-cost-performance/1402388",
+      "topic": "openai",
+      "published_at": "2026-09-30",
+      "confidence": "medium"
+    },
+    {
+      "client_request_id": "b7b75f15-5125-47fe-a530-71ae3a8c2cf8",
+      "caption": "OpenAI's new Ultrafast tier for GPT-6 Astra: up to 8x faster token generation (300 tokens/s) in Codex and up to 6x in the API, paired with WebSocket mode. Ultrafast for GPT-6.1 Sol is coming.",
+      "visibility": "public",
+      "source_url": "https://community.openai.com/t/build-ultrafast-with-astra-in-codex-and-the-api/1402393",
+      "topic": "openai",
+      "published_at": "2026-09-30",
+      "confidence": "high"
+    },
+    {
+      "client_request_id": "e2a2a74c-a736-43ee-8edb-f3e2f50f18f2",
+      "caption": "OpenAI's Agents API is in public beta: the Codex agent harness, run on OpenAI's infrastructure, with OpenAI-hosted sandboxes or your own (E2B, Modal, Daytona, Vercel). No fee beyond tokens and tools.",
+      "visibility": "public",
+      "source_url": "https://community.openai.com/t/introducing-the-agents-api-and-hosted-sandboxes/1396481",
+      "topic": "openai",
+      "published_at": "2026-09-10",
+      "confidence": "high"
+    },
+    {
+      "client_request_id": "9fb961e3-4c60-4101-a286-8092b5069675",
+      "caption": "GPT-6 Sol ($2/$10 per M tokens) and GPT-6 Luna ($0.10/$0.50) launched Sept 22, priced 50% below GPT-5.6 promo rates. Both are in the API, Codex and ChatGPT Work.",
+      "visibility": "public",
+      "source_url": "https://community.openai.com/t/announcing-gpt-6-sol-and-gpt-6-luna-in-the-api-codex-and-chatgpt/1399925",
+      "topic": "openai",
+      "published_at": "2026-09-22",
+      "confidence": "high"
+    },
+    {
+      "client_request_id": "dd60d3f5-c863-410e-b398-d10c6a2f8fde",
+      "caption": "Anthropic released Claude Opus 5.5 on Sept 22: $4/$20 per M tokens, cache reads $0.20/M, about 40% cheaper than Opus 5 on typical work and 30%+ faster output. 66.4% on Terminal-Bench 4.0.",
+      "visibility": "public",
+      "source_url": "https://www.anthropic.com/claude-opus-5-5",
+      "topic": "anthropic",
+      "published_at": "2026-09-22",
+      "confidence": "high"
+    },
+    {
+      "client_request_id": "18441ff5-972d-4df7-b9f8-cba69a7878de",
+      "caption": "From Anthropic's Opus 5.5 notes: one early tester finished a 680,000-line code migration in under a day, and asked to cut load times across a web app, Opus 5.5 succeeded 39 of 40 times.",
+      "visibility": "public",
+      "source_url": "https://www.anthropic.com/claude-opus-5-5",
+      "topic": "anthropic",
+      "published_at": "2026-09-22",
+      "confidence": "high"
+    },
+    {
+      "client_request_id": "cd04e751-752e-49f9-9d78-89d7c81ee49b",
+      "caption": "Claude Sonnet 5.5 is out: $2/$10 per M tokens, 70.6% on Terminal-Bench 4.0 (Sonnet 5: 10.3%), 30%+ faster output. Anthropic says Haiku 5.5 follows in the coming weeks.",
+      "visibility": "public",
+      "source_url": "https://www.anthropic.com/claude-sonnet-5-5",
+      "topic": "anthropic",
+      "published_at": "2026-09-28",
+      "confidence": "high"
+    },
+    {
+      "client_request_id": "524ace7d-2362-48d2-8609-fe6fe5478cc1",
+      "caption": "Claude Fable 5.1 and Mythos 5.1 are one model with different safeguards. Fable 5.1 is generally available; Anthropic estimates it costs ~25% less than Fable 5 thanks to cheaper cache reads.",
+      "visibility": "public",
+      "source_url": "https://www.anthropic.com/claude-fable-and-mythos-5-1",
+      "topic": "anthropic",
+      "published_at": "2026-09-01",
+      "confidence": "medium"
+    },
+    {
+      "client_request_id": "455c546e-584f-4a4e-9610-ecc43712ee2c",
+      "caption": "Claude Code's /advisor lets the main model consult a stronger one, e.g. Opus 5.5 with Fable 5.1 as advisor. It sees the full session incl. tool calls; Claude decides when to ask.",
+      "visibility": "public",
+      "source_url": "https://code.claude.com/docs/en/advisor",
+      "topic": "claude-code",
+      "published_at": "2026-09-03",
+      "confidence": "high"
+    },
+    {
+      "client_request_id": "1e2531dc-feec-4cc4-8a22-ea4d608e6e57",
+      "caption": "Claude Code 2.1.287 adds Claude Mods, letting plugins change deeper behavior, plus 'You should know', a built-in side agent that flags things you or Claude might miss.",
+      "visibility": "public",
+      "source_url": "https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md",
+      "topic": "claude-code",
+      "published_at": "2026-10-01",
+      "confidence": "high"
+    },
+    {
+      "client_request_id": "796f8443-80b6-441c-b8bb-3b8fb8bf9253",
+      "caption": "Anthropic's new life-sciences lab reports Claude found an unrecognized system in a jumbo phage: a reverse transcriptase with CRISPR-like DNA repeat arrays and an accessory protein. Function unknown.",
+      "visibility": "public",
+      "source_url": "https://www.anthropic.com/news/claude-discovers-novel-enzyme-system",
+      "topic": "ai-science",
+      "published_at": "2026-09-23",
+      "confidence": "high"
+    },
+    {
+      "client_request_id": "5b8ca963-09eb-48f4-a444-1199b4d0c6ff",
+      "caption": "Anthropic and HHMI Janelia opened a preview of the Model Hardware Standard: one driver spec so any agent can run lab gear like microscopes, liquid handlers and robot arms, reachable over MCP.",
+      "visibility": "public",
+      "source_url": "https://www.anthropic.com/news/model-hardware-standard-research-preview",
+      "topic": "ai-science",
+      "published_at": "2026-08-27",
+      "confidence": "high"
+    },
+    {
+      "client_request_id": "45b1b393-aa57-4c4d-ab7b-331cb3d93f4f",
+      "caption": "Janelia, Google Research and Cambridge published the first complete male fruit fly CNS connectome in Cell: 166,000+ neurons, 11,691 cell types, covering the brain plus the ventral nerve cord.",
+      "visibility": "public",
+      "source_url": "https://blog.google/innovation-and-ai/technology/research/male-fruit-fly-brain-map/",
+      "topic": "fly-brain",
+      "published_at": "2026-09-03",
+      "confidence": "high"
+    },
+    {
+      "client_request_id": "bad59623-7d0d-4b80-b441-f4cf16d09105",
+      "caption": "Comparing male and female fly connectomes, the MaleCNS team found 262 sex-specific and 114 sexually dimorphic cell types, about 4.8% of the central brain.",
+      "visibility": "public",
+      "source_url": "https://www.janelia.org/project-team/flyem/male-cns-connectome",
+      "topic": "fly-brain",
+      "published_at": "2026-09-03",
+      "confidence": "high"
+    },
+    {
+      "client_request_id": "ac0dd114-da16-4898-bccc-967ee4508487",
+      "caption": "A day after MaleCNS went public, Georgia Tech student Evan Sinclair Smith wired the fly connectome into Minecraft; Doom and Mario 64 ports followed. Neuron-to-control mappings are hand-picked.",
+      "visibility": "public",
+      "source_url": "https://404media.co/a-digital-fly-brain-has-taken-over-the-internet",
+      "topic": "fly-brain",
+      "published_at": "2026-09-04",
+      "confidence": "medium"
+    }
+  ]
+}

@@ -97,11 +97,19 @@ they include embargoed copy or media URLs. Each entry needs:
 - media R2 object key plus content digest;
 - approval/provenance note.
 
-Replay the manifest through `POST /v1/social/posts` as its owning publisher account. The
+Replay the manifest through `POST /v1/social/posts` as its owning publisher account
+(`tardy replay --manifest FILE` does this: a shared link per source, then the post under
+its stable request ID, after checking every entry first). The
 stable request ID makes replays idempotent. Upload media through the signed upload API;
 do not place R2 credentials or presigned URLs in the manifest. Public facts may live in a
 reviewed repository manifest later, but embargoed launch material belongs in encrypted
 release storage.
+
+Reviewed public-fact manifests live in `content/breaking/`. The first,
+`2026-10-01.json`, is 24 Breaking-lane posts about AI developments (Jev, the male fly
+connectome, model and Claude Code releases), each at most 200 characters and backed by
+its `source_url`; the research behind it is `research/ai-breaking-2026-10-01.md`. Replay
+it as the Breaking publisher account, never as a source organization.
 
 ## 6. Acceptance checks
 
