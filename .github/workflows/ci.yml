@@ -9,6 +9,21 @@ permissions:
   contents: read
 
 jobs:
+  infrastructure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: 1.12.6
+      - name: Check customer infrastructure formatting
+        run: tofu -chdir=infra fmt -check -diff
+      - name: Reject credentials and local state in the backend contract
+        run: |
+          ! grep -Eiq '(access_key|secret_key|token|password)[[:space:]]*=' infra/backend.r2.tfbackend
+          grep -Eq '^use_lockfile[[:space:]]*=[[:space:]]*true$' infra/backend.r2.tfbackend
+          ! git ls-files | grep -Eq '(^|/)(terraform\.tfstate|[^/]+\.tfplan)$'
+
   mobile:
     runs-on: ubuntu-latest
     defaults:

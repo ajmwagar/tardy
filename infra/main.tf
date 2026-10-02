@@ -1,5 +1,10 @@
 terraform {
   required_version = ">= 1.8.0, < 2.0.0"
+
+  # FPL's protected executor supplies this backend's non-secret key during
+  # init. Credentials come only from short-lived AWS_* environment variables.
+  backend "s3" {}
+
   required_providers {
     fpl = {
       source = "registry.fpl.dev/fpl/shroud"

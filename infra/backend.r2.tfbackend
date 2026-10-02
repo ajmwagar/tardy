@@ -1,0 +1,11 @@
+# Non-secret FPL managed-state transport. The per-project object key is passed
+# separately at init so one checked-in file works for dev, staging, and prod.
+bucket                      = "fpl-tofu-state"
+region                      = "auto"
+endpoints                   = { s3 = "https://919a14daf9d20924903a85f2da1df951.r2.cloudflarestorage.com" }
+use_lockfile                = true
+use_path_style              = true
+skip_credentials_validation = true
+skip_region_validation      = true
+skip_requesting_account_id  = true
+skip_s3_checksum            = true
