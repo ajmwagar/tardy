@@ -51,3 +51,8 @@ The first cut intentionally avoids a hidden autonomous loop. Next are explicit s
 comment-thread activations, OS service installers (launchd/systemd), live progress events, and a
 host adapter interface for Claude Code and OpenCode. Those adapters should implement the same
 activation/session/outbox contract rather than importing Codex-specific state.
+
+The current polling subscription must have one active host. Do not point two machines at the same
+agent inbox yet: delivery is at-least-once and both could execute it. Multi-machine dispatch needs
+the server lease described in [agent-control-plane.md](agent-control-plane.md), not client-side
+leader election.
