@@ -1,8 +1,8 @@
-import { FlashList, type ViewToken } from '@shopify/flash-list';
+import { FlashList, type FlashListRef, type ViewToken } from '@shopify/flash-list';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useIsFocused } from 'expo-router';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Pressable, RefreshControl, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useSoundPlays } from '@/audio/use-sound-plays';
@@ -18,6 +18,8 @@ import { VideoSurface } from '@/components/video-surface';
 import type { Post } from '@/data/types';
 import { api, loadFeedPage, logEngagement, toggleAlarm, toggleFollowing, toggleLiked, toggleMuted, toggleRepost, toggleSaved, useAccount, useIsFollowing, usePostState, useStore } from '@/state/store';
 import { colors } from '@/theme';
+import { useRefresh } from '@/components/use-refresh';
+import { freshReelOrder } from '@/reels/refresh';
 
 type Item = { key: string; post: Post };
 
@@ -170,6 +172,7 @@ const Reel = memo(function Reel({ post, active, height }: { post: Post; active: 
 });
 
 export default function ReelsScreen() {
+  const listRef = useRef<FlashListRef<Item>>(null);
   const window = useWindowDimensions();
   // Size each reel to the list's real viewport (between the status bar and tab bar), not
   // the window, so paging lands exactly on item boundaries.
@@ -211,6 +214,19 @@ export default function ReelsScreen() {
     setExhausted(false);
     void load();
   }, [load]);
+  const { refreshing, onRefresh } = useRefresh(
+    useCallback(async () => {
+      const previousId = items.find((item) => item.key === activeKey)?.post.id ?? items[0]?.post.id;
+      const page = await loadFeedPage(api.reelsFeed(null));
+      const fresh = freshReelOrder(page.items, previousId);
+      cursor.current = page.nextCursor;
+      setItems(fresh.map((post, index) => ({ key: `refresh:${Date.now()}:${index}:${post.id}`, post })));
+      setActiveKey(null);
+      setExhausted(page.nextCursor === null);
+      setError(null);
+      listRef.current?.scrollToOffset({ offset: 0, animated: false });
+    }, [activeKey, items]),
+  );
   const chrome = insets.bottom + TAB_BAR_CLEARANCE;
 
   const dwell = useRef<{ id: string; at: number } | null>(null);
@@ -258,6 +274,7 @@ export default function ReelsScreen() {
         )
       ) : (
         <FlashList
+          ref={listRef}
           data={items}
           keyExtractor={keyOf}
           renderItem={renderItem}
@@ -284,6 +301,7 @@ export default function ReelsScreen() {
           onViewableItemsChanged={onViewableItemsChanged}
           viewabilityConfig={VIEWABILITY}
           drawDistance={height}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />}
         />
       )}
       <View pointerEvents="box-none" style={[styles.topBar, { top: insets.top }]}>
