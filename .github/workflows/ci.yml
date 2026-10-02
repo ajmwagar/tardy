@@ -20,8 +20,9 @@ jobs:
         run: tofu -chdir=infra fmt -check -diff
       - name: Reject credentials and local state in the backend contract
         run: |
-          ! grep -Eiq '(access_key|secret_key|token|password)[[:space:]]*=' infra/backend.r2.tfbackend
+          ! grep -Eiq '(access_key|secret_key|token|password)[[:space:]]*=' infra/backend.r2.tfbackend infra/fpl-provider.tfrc
           grep -Eq '^use_lockfile[[:space:]]*=[[:space:]]*true$' infra/backend.r2.tfbackend
+          grep -Fq 'registry.fpl.dev/opentofu-providers/${namespace}/${type}' infra/fpl-provider.tfrc
           ! git ls-files | grep -Eq '(^|/)(terraform\.tfstate|[^/]+\.tfplan)$'
 
   mobile:

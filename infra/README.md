@@ -48,11 +48,17 @@ Initialize a clean checkout with a deterministic, project-owned state key:
 
 ```sh
 export FPL_PROJECT=tardy-prod
+export TF_CLI_CONFIG_FILE="$PWD/infra/fpl-provider.tfrc"
 test -n "$AWS_ACCESS_KEY_ID" && test -n "$AWS_SECRET_ACCESS_KEY"
 tofu -chdir=infra init -input=false \
   -backend-config=backend.r2.tfbackend \
   -backend-config="key=customers/${FPL_PROJECT}/tardy/terraform.tfstate"
 ```
+
+The narrow CLI configuration installs only `registry.fpl.dev/fpl/shroud`
+through FPL's official OCI provider mirror. Registry authentication comes from
+the standard Docker credential store populated by FPL sign-in; it is not part
+of the file. Other providers retain OpenTofu's normal direct installation.
 
 Use exactly `customers/<project>/tardy/terraform.tfstate`; the project-scoped
 state credential must be unable to read or write another prefix. A second clean
