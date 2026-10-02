@@ -52,6 +52,21 @@ async fn authenticated_mcp_posts_one_idempotent_agent_update() {
     ).await;
     assert_eq!(unauthorized["error"]["code"], -32001);
 
+    let malformed = mcp(
+        &app,
+        json!({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"tardy_post_update","arguments":{"caption":"no request id"}}}),
+        Some(token),
+        None,
+    )
+    .await;
+    assert_eq!(malformed["result"]["isError"], true);
+    assert!(
+        malformed["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("client_request_id")
+    );
+
     let request_id = Uuid::new_v4();
     let call = json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"tardy_post_update","arguments":{
         "client_request_id":request_id,
