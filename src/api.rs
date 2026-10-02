@@ -303,6 +303,18 @@ pub fn router(state: Arc<AppState>) -> Router {
             post(send_social_message).get(list_social_messages),
         )
         .route(
+            "/v1/social/conversations/{id}",
+            put(rename_social_conversation),
+        )
+        .route(
+            "/v1/social/conversations/{id}/participants",
+            post(add_social_conversation_participant),
+        )
+        .route(
+            "/v1/social/conversations/{id}/participants/{profile_id}",
+            axum::routing::delete(remove_social_conversation_participant),
+        )
+        .route(
             "/v1/social/conversations/{id}/messages/{message_id}/reaction",
             put(set_social_message_reaction).delete(clear_social_message_reaction),
         )
@@ -1584,6 +1596,18 @@ pub(crate) struct CreateSocialConversation {
     recipient_profile_id: Option<Uuid>,
     #[serde(default)]
     participant_profile_ids: Vec<Uuid>,
+    #[serde(default)]
+    title: Option<String>,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct RenameSocialConversation {
+    title: Option<String>,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct AddConversationParticipant {
+    profile_id: Uuid,
 }
 
 async fn create_social_conversation(
@@ -1602,6 +1626,7 @@ async fn create_social_conversation(
                 .create_group_conversation(
                     authenticated_actor(&state, &headers).await?,
                     &recipients,
+                    body.title.as_deref(),
                 )
                 .await?,
         ),
@@ -1615,6 +1640,52 @@ async fn list_social_conversations(
     Ok(Json(
         social_store(&state)?
             .conversations(authenticated_actor(&state, &headers).await?)
+            .await?,
+    ))
+}
+
+async fn rename_social_conversation(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(body): Json<RenameSocialConversation>,
+) -> Result<Json<Conversation>, ApiError> {
+    Ok(Json(
+        social_store(&state)?
+            .rename_conversation(
+                authenticated_actor(&state, &headers).await?,
+                id,
+                body.title.as_deref(),
+            )
+            .await?,
+    ))
+}
+
+async fn add_social_conversation_participant(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(body): Json<AddConversationParticipant>,
+) -> Result<Json<Conversation>, ApiError> {
+    Ok(Json(
+        social_store(&state)?
+            .add_participant(
+                authenticated_actor(&state, &headers).await?,
+                id,
+                body.profile_id,
+            )
+            .await?,
+    ))
+}
+
+async fn remove_social_conversation_participant(
+    State(state): State<Arc<AppState>>,
+    Path((id, profile_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+) -> Result<Json<Conversation>, ApiError> {
+    Ok(Json(
+        social_store(&state)?
+            .remove_participant(authenticated_actor(&state, &headers).await?, id, profile_id)
             .await?,
     ))
 }

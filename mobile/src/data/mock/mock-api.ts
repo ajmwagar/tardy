@@ -601,18 +601,54 @@ export class MockTardyApi implements TardyApi {
     const members = [...new Set([this.viewerId, ...participants.map((p) => p.id)])];
     if (members.length < 2) throw new TardyApiError('invalid', 'A thread needs someone besides you.');
     for (const id of members) this.visibleAccount(id, `participant ${id}`);
-    const key = (ids: readonly string[]) => [...ids].sort().join(',');
-    const existing = this.threadList.find((t) => key(t.participantIds) === key(members));
-    if (existing) return this.delay(existing);
     const name = title?.trim();
+    const key = (ids: readonly string[]) => [...ids].sort().join(',');
+    if (members.length === 2 && !name) {
+      const existing = this.threadList.find((t) => t.participantIds.length === 2 && key(t.participantIds) === key(members));
+      if (existing) return this.delay(existing);
+    }
     const thread: ThreadRef = {
       id: `t-new-${this.threadList.length}`,
       participantIds: members,
-      ...(members.length > 2 && name ? { title: name } : {}),
+      ...(name ? { title: name } : {}),
       kind: this.kindOf(members),
     };
     this.threadList.push(thread);
     return this.delay(thread);
+  }
+
+  async renameThread(threadId: string, title?: string): Promise<ThreadRef> {
+    this.visibleThread(threadId);
+    const index = this.threadList.findIndex((thread) => thread.id === threadId);
+    const thread = this.threadList[index];
+    const name = title?.trim();
+    const renamed = { ...thread, ...(name ? { title: name } : {}) };
+    if (!name) delete renamed.title;
+    this.threadList[index] = renamed;
+    return this.delay(renamed);
+  }
+
+  async addThreadParticipant(threadId: string, profileId: string): Promise<ThreadRef> {
+    this.visibleThread(threadId);
+    const index = this.threadList.findIndex((thread) => thread.id === threadId);
+    const thread = this.threadList[index];
+    const profile = this.visibleAccount(profileId, `participant ${profileId}`);
+    if (profile.kind === 'agent') throw new TardyApiError('invalid', 'Add agents with addAgent.');
+    const participantIds = thread.participantIds.includes(profileId) ? thread.participantIds : [...thread.participantIds, profileId];
+    const updated = { ...thread, participantIds };
+    this.threadList[index] = updated;
+    return this.delay(updated);
+  }
+
+  async removeThreadParticipant(threadId: string, profileId: string): Promise<ThreadRef> {
+    this.visibleThread(threadId);
+    const index = this.threadList.findIndex((thread) => thread.id === threadId);
+    const thread = this.threadList[index];
+    const participantIds = thread.participantIds.filter((id) => id !== profileId);
+    if (participantIds.length < 2) throw new TardyApiError('invalid', 'A thread needs two participants.');
+    const updated = { ...thread, participantIds };
+    this.threadList[index] = updated;
+    return this.delay(updated);
   }
 
   async addAgent(threadId: string, agentId: string, includeAnchorShare = true): Promise<ThreadRef> {

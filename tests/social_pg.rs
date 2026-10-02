@@ -6,6 +6,67 @@ use uuid::Uuid;
 static DATABASE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[tokio::test]
+async fn direct_threads_reuse_while_groups_keep_their_own_identity() {
+    let _guard = DATABASE_TEST_LOCK.lock().unwrap();
+    let Some((_pool, store)) = setup().await else {
+        return;
+    };
+    let owner = Uuid::new_v4();
+    let friend_owner = Uuid::new_v4();
+    let owner_profile = Uuid::new_v4();
+    let friend = Uuid::new_v4();
+    let third = Uuid::new_v4();
+    for (account, profile, handle) in [
+        (owner, owner_profile, "thread-owner"),
+        (friend_owner, friend, "thread-friend"),
+        (friend_owner, third, "thread-third"),
+    ] {
+        store
+            .register_identity(account, profile, handle, IdentityKind::Human)
+            .await
+            .unwrap();
+    }
+
+    let direct = store
+        .create_conversation(owner_profile, friend)
+        .await
+        .unwrap();
+    let reused = store
+        .create_conversation(friend, owner_profile)
+        .await
+        .unwrap();
+    assert_eq!(direct.id, reused.id);
+
+    let first_group = store
+        .create_group_conversation(owner_profile, &[friend], Some("Project One"))
+        .await
+        .unwrap();
+    let second_group = store
+        .create_group_conversation(owner_profile, &[friend], Some("Project Two"))
+        .await
+        .unwrap();
+    assert_ne!(first_group.id, second_group.id);
+    assert_eq!(first_group.title.as_deref(), Some("Project One"));
+
+    let expanded = store
+        .add_participant(owner_profile, first_group.id, third)
+        .await
+        .unwrap();
+    assert!(expanded.participants.contains(&third));
+    let renamed = store
+        .rename_conversation(owner_profile, first_group.id, Some("Ship Room"))
+        .await
+        .unwrap();
+    assert_eq!(renamed.title.as_deref(), Some("Ship Room"));
+    let reduced = store
+        .remove_participant(owner_profile, first_group.id, third)
+        .await
+        .unwrap();
+    assert_eq!(reduced.id, first_group.id);
+    assert!(!reduced.participants.contains(&third));
+}
+
+#[tokio::test]
 async fn dm_stays_quiet_until_an_owned_agent_is_summoned() {
     let _guard = DATABASE_TEST_LOCK.lock().unwrap();
     let Some((pool, store)) = setup().await else {
@@ -76,7 +137,7 @@ async fn dm_stays_quiet_until_an_owned_agent_is_summoned() {
             .is_empty()
     );
     store
-        .send_message(human, conversation.id, "look at this", None)
+        .send_message(human, conversation.id, "look at this", None, &[])
         .await
         .unwrap();
     assert!(
@@ -103,6 +164,7 @@ async fn dm_stays_quiet_until_an_owned_agent_is_summoned() {
             conversation.id,
             "@builder can you prototype it?",
             None,
+            &[],
         )
         .await
         .unwrap();
@@ -336,7 +398,7 @@ async fn human_group_notifies_members_then_becomes_work_when_an_agent_is_summone
     .await
     .unwrap();
     let conversation = store
-        .create_group_conversation(avery, &[james, friend])
+        .create_group_conversation(avery, &[james, friend], Some("Launch crew"))
         .await
         .unwrap();
     assert_eq!(conversation.mode, tardy::social::ConversationMode::Dm);
@@ -351,7 +413,13 @@ async fn human_group_notifies_members_then_becomes_work_when_an_agent_is_summone
     );
 
     let message = store
-        .send_message(avery, conversation.id, "Let’s build this together", None)
+        .send_message(
+            avery,
+            conversation.id,
+            "Let’s build this together",
+            None,
+            &[],
+        )
         .await
         .unwrap();
     let notifications = push.notifications(james_account, 10).await.unwrap();

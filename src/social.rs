@@ -133,6 +133,7 @@ pub struct SocialIdentity {
 pub struct Conversation {
     pub id: Uuid,
     pub mode: ConversationMode,
+    pub title: Option<String>,
     pub participants: Vec<Uuid>,
 }
 
@@ -140,6 +141,7 @@ pub struct Conversation {
 pub struct ConversationSummary {
     pub id: Uuid,
     pub mode: ConversationMode,
+    pub title: Option<String>,
     pub participants: Vec<Uuid>,
     pub last_message: Option<ConversationMessage>,
     pub unread_count: i64,
@@ -970,13 +972,15 @@ impl PgSocialStore {
         actor: Uuid,
         recipient: Uuid,
     ) -> Result<Conversation, SocialError> {
-        self.create_group_conversation(actor, &[recipient]).await
+        self.create_group_conversation(actor, &[recipient], None)
+            .await
     }
 
     pub async fn create_group_conversation(
         &self,
         actor: Uuid,
         recipients: &[Uuid],
+        title: Option<&str>,
     ) -> Result<Conversation, SocialError> {
         let mut recipients = recipients.to_vec();
         recipients.sort_unstable();
@@ -986,6 +990,11 @@ impl PgSocialStore {
                 "conversation requires 1-31 other participants",
             ));
         }
+        let title = title.map(str::trim).filter(|value| !value.is_empty());
+        if title.is_some_and(|value| value.chars().count() > 100) {
+            return Err(SocialError::Invalid("group title must be 1-100 characters"));
+        }
+        let is_direct = recipients.len() == 1 && title.is_none();
         let mut tx = self.pool.begin().await?;
         require_identity(&mut tx, actor).await?;
         let mut agent = None;
@@ -1004,9 +1013,39 @@ impl PgSocialStore {
         } else {
             ConversationMode::Dm
         };
+        if is_direct {
+            let recipient = recipients[0];
+            let mut pair = [actor, recipient];
+            pair.sort_unstable();
+            let lock_key = format!("{}:{}", pair[0], pair[1]);
+            sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+                .bind(lock_key)
+                .execute(&mut *tx)
+                .await?;
+            if let Some(row) = sqlx::query(
+                "SELECT c.id,c.mode,c.title
+                 FROM conversations c
+                 WHERE c.scope='direct'
+                   AND (SELECT array_agg(p.profile_id ORDER BY p.profile_id) FROM conversation_participants p WHERE p.conversation_id=c.id)
+                       = (SELECT array_agg(v ORDER BY v) FROM unnest(ARRAY[$1::uuid,$2::uuid]) v)
+                 ORDER BY c.created_at,c.id LIMIT 1",
+            )
+            .bind(actor)
+            .bind(recipient)
+            .fetch_optional(&mut *tx)
+            .await?
+            {
+                let id: Uuid = row.try_get("id")?;
+                let participants = sqlx::query_scalar("SELECT profile_id FROM conversation_participants WHERE conversation_id=$1 ORDER BY joined_at,profile_id")
+                    .bind(id).fetch_all(&mut *tx).await?;
+                let stored_mode: String = row.try_get("mode")?;
+                tx.commit().await?;
+                return Ok(Conversation { id, mode: parse_mode(&stored_mode)?, title: row.try_get("title")?, participants });
+            }
+        }
         let id = Uuid::new_v4();
-        sqlx::query("INSERT INTO conversations (id,mode,created_by,promoted_by,promoted_at) VALUES ($1,$2,$3,CASE WHEN $2='work' THEN $3 END,CASE WHEN $2='work' THEN now() END)")
-            .bind(id).bind(mode_name(mode)).bind(actor).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO conversations (id,mode,scope,title,created_by,promoted_by,promoted_at) VALUES ($1,$2,$3,$4,$5,CASE WHEN $2='work' THEN $5 END,CASE WHEN $2='work' THEN now() END)")
+            .bind(id).bind(mode_name(mode)).bind(if is_direct { "direct" } else { "group" }).bind(title).bind(actor).execute(&mut *tx).await?;
         let mut participants = Vec::with_capacity(recipients.len() + 1);
         participants.push(actor);
         participants.extend(recipients.iter().copied());
@@ -1050,6 +1089,7 @@ impl PgSocialStore {
         Ok(Conversation {
             id,
             mode,
+            title: title.map(str::to_owned),
             participants,
         })
     }
@@ -1059,7 +1099,7 @@ impl PgSocialStore {
         actor: Uuid,
     ) -> Result<Vec<ConversationSummary>, SocialError> {
         let rows = sqlx::query(
-            "SELECT c.id,c.mode,array_agg(DISTINCT p.profile_id ORDER BY p.profile_id) AS participants,
+            "SELECT c.id,c.mode,c.title,array_agg(DISTINCT p.profile_id ORDER BY p.profile_id) AS participants,
                     mine.last_read_sequence,
                     last_message.id AS last_id,last_message.sequence AS last_sequence,
                     last_message.sender_profile_id AS last_sender_profile_id,
@@ -1079,7 +1119,7 @@ impl PgSocialStore {
                  ORDER BY m.sequence DESC LIMIT 1
              ) last_message ON true
              LEFT JOIN conversation_messages unread ON unread.conversation_id=c.id AND unread.sequence>mine.last_read_sequence
-             GROUP BY c.id,c.mode,c.created_at,mine.last_read_sequence,last_message.id,last_message.sequence,
+             GROUP BY c.id,c.mode,c.title,c.created_at,mine.last_read_sequence,last_message.id,last_message.sequence,
                       last_message.sender_profile_id,last_message.body,last_message.shared_link_id,last_message.created_at,
                       last_message.reactions
              ORDER BY COALESCE(last_message.created_at,c.created_at) DESC,c.id",
@@ -1118,6 +1158,7 @@ impl PgSocialStore {
                 Ok(ConversationSummary {
                     id,
                     mode: parse_mode(&mode)?,
+                    title: row.try_get("title")?,
                     participants: row.try_get("participants")?,
                     last_message,
                     unread_count: row.try_get("unread_count")?,
@@ -1223,6 +1264,8 @@ impl PgSocialStore {
             .bind(conversation_id).bind(actor).execute(&mut *tx).await?;
         sqlx::query("INSERT INTO conversation_participants (conversation_id,profile_id,invited_by) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING")
             .bind(conversation_id).bind(agent).bind(actor).execute(&mut *tx).await?;
+        sqlx::query("UPDATE conversations SET scope='group' WHERE id=$1 AND (SELECT count(*) FROM conversation_participants WHERE conversation_id=$1)>2")
+            .bind(conversation_id).execute(&mut *tx).await?;
         sqlx::query("INSERT INTO conversation_agent_grants (conversation_id,agent_profile_id,granted_by,context_from_sequence,include_anchor_share) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING")
             .bind(conversation_id).bind(agent).bind(actor).bind(next_sequence).bind(include_anchor_share).execute(&mut *tx).await?;
         emit_agent_event(&mut tx, "agent_share", conversation_id, agent, serde_json::json!({"conversation_id": conversation_id, "context_from_sequence": next_sequence, "include_anchor_share": include_anchor_share})).await?;
@@ -1231,7 +1274,145 @@ impl PgSocialStore {
         Ok(Conversation {
             id: conversation_id,
             mode: ConversationMode::Work,
+            title: sqlx::query_scalar("SELECT title FROM conversations WHERE id=$1")
+                .bind(conversation_id)
+                .fetch_one(&self.pool)
+                .await?,
             participants,
+        })
+    }
+
+    pub async fn rename_conversation(
+        &self,
+        actor: Uuid,
+        conversation_id: Uuid,
+        title: Option<&str>,
+    ) -> Result<Conversation, SocialError> {
+        let title = title.map(str::trim).filter(|value| !value.is_empty());
+        if title.is_some_and(|value| value.chars().count() > 100) {
+            return Err(SocialError::Invalid("group title must be 1-100 characters"));
+        }
+        let updated = sqlx::query(
+            "UPDATE conversations SET title=$3
+             WHERE id=$1 AND created_by=$2 AND scope='group'",
+        )
+        .bind(conversation_id)
+        .bind(actor)
+        .bind(title)
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+        if updated == 0 {
+            return Err(SocialError::Forbidden);
+        }
+        self.conversation_for(actor, conversation_id).await
+    }
+
+    pub async fn add_participant(
+        &self,
+        actor: Uuid,
+        conversation_id: Uuid,
+        profile_id: Uuid,
+    ) -> Result<Conversation, SocialError> {
+        let mut tx = self.pool.begin().await?;
+        require_participant(&mut tx, conversation_id, actor).await?;
+        if require_identity(&mut tx, profile_id).await? == IdentityKind::Agent {
+            return Err(SocialError::Invalid(
+                "add agents through the summon endpoint",
+            ));
+        }
+        sqlx::query("SELECT id FROM conversations WHERE id=$1 FOR UPDATE")
+            .bind(conversation_id)
+            .execute(&mut *tx)
+            .await?;
+        let count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM conversation_participants WHERE conversation_id=$1",
+        )
+        .bind(conversation_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if count >= 32 {
+            return Err(SocialError::Invalid(
+                "conversation has reached 32 participants",
+            ));
+        }
+        sqlx::query("INSERT INTO conversation_participants (conversation_id,profile_id,invited_by) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING")
+            .bind(conversation_id).bind(profile_id).bind(actor).execute(&mut *tx).await?;
+        sqlx::query("UPDATE conversations SET scope='group' WHERE id=$1")
+            .bind(conversation_id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        self.conversation_for(actor, conversation_id).await
+    }
+
+    pub async fn remove_participant(
+        &self,
+        actor: Uuid,
+        conversation_id: Uuid,
+        profile_id: Uuid,
+    ) -> Result<Conversation, SocialError> {
+        let mut tx = self.pool.begin().await?;
+        require_participant(&mut tx, conversation_id, actor).await?;
+        let creator: Uuid =
+            sqlx::query_scalar("SELECT created_by FROM conversations WHERE id=$1 FOR UPDATE")
+                .bind(conversation_id)
+                .fetch_one(&mut *tx)
+                .await?;
+        if profile_id == creator || actor != creator {
+            return Err(SocialError::Forbidden);
+        }
+        let count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM conversation_participants WHERE conversation_id=$1",
+        )
+        .bind(conversation_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if count <= 2 {
+            return Err(SocialError::Invalid(
+                "conversation must retain at least two participants",
+            ));
+        }
+        sqlx::query("DELETE FROM conversation_agent_grants WHERE conversation_id=$1 AND agent_profile_id=$2")
+            .bind(conversation_id).bind(profile_id).execute(&mut *tx).await?;
+        let removed = sqlx::query(
+            "DELETE FROM conversation_participants WHERE conversation_id=$1 AND profile_id=$2",
+        )
+        .bind(conversation_id)
+        .bind(profile_id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        if removed == 0 {
+            return Err(SocialError::NotFound);
+        }
+        tx.commit().await?;
+        self.conversation_for(actor, conversation_id).await
+    }
+
+    async fn conversation_for(
+        &self,
+        actor: Uuid,
+        conversation_id: Uuid,
+    ) -> Result<Conversation, SocialError> {
+        let row = sqlx::query(
+            "SELECT c.id,c.mode,c.title,array_agg(p.profile_id ORDER BY p.joined_at,p.profile_id) AS participants
+             FROM conversations c
+             JOIN conversation_participants mine ON mine.conversation_id=c.id AND mine.profile_id=$2
+             JOIN conversation_participants p ON p.conversation_id=c.id
+             WHERE c.id=$1 GROUP BY c.id,c.mode,c.title",
+        )
+        .bind(conversation_id)
+        .bind(actor)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or(SocialError::NotFound)?;
+        let mode: String = row.try_get("mode")?;
+        Ok(Conversation {
+            id: row.try_get("id")?,
+            mode: parse_mode(&mode)?,
+            title: row.try_get("title")?,
+            participants: row.try_get("participants")?,
         })
     }
 

@@ -185,14 +185,20 @@ export interface TardyApi {
   /** Starts/renews or clears this viewer's typing lease. Leases also expire after disconnects. */
   setTyping(threadId: string, active: boolean): Promise<void>;
   /**
-   * Finds or starts the thread with exactly these participants; the viewer is implied and
-   * may be omitted. Idempotent: the same set returns the same thread, so sharing to the same
-   * people twice lands in one conversation. Two or more others make a group, named by
-   * `title` when it starts (ignored for an existing thread). With an agent in it the thread
+   * Finds or starts a direct thread, or creates a distinct group. The viewer is implied and
+   * may be omitted. A single unnamed recipient reuses the pair's durable direct thread.
+   * Two or more recipients—or any title—creates a new group identity even when another group
+   * has the same members. With an agent in it the thread
    * is `work` from the start. `invalid` with no one else; `forbidden` if any participant is
    * hidden from the viewer.
    */
   openThread(participants: readonly ThreadParticipant[], title?: string): Promise<ThreadRef>;
+  /** Renames a group. Passing no title restores its member-derived label. */
+  renameThread(threadId: string, title?: string): Promise<ThreadRef>;
+  /** Adds a human to the existing thread. Agents use `addAgent` so context grants stay explicit. */
+  addThreadParticipant(threadId: string, profileId: string): Promise<ThreadRef>;
+  /** Removes a non-owner participant. The conversation identity and history remain stable. */
+  removeThreadParticipant(threadId: string, profileId: string): Promise<ThreadRef>;
   /**
    * Adds one of the viewer's own agents to a thread, promoting it to `work`. Visible and
    * irreversible. The agent's context starts at this point: it gets messages sent from now

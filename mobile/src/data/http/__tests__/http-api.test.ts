@@ -322,14 +322,12 @@ describe('HttpTardyApi: decoding', () => {
 
   it('openThread starts with the person, then adds agents', async () => {
     const { api, calls } = await signedInClient(
-      { status: 200, body: [] },
       { status: 201, body: { id: 't9', mode: 'dm', participants: ['acct-1', 'h2'] } },
       { status: 200, body: { id: 't9', mode: 'work', participants: ['acct-1', 'h2', 'a3'] } },
     );
     const thread = await api.openThread([{ id: 'a3', kind: 'agent' }, { id: 'h2', kind: 'human' }]);
     expect(thread).toEqual({ id: 't9', kind: 'work', participantIds: ['acct-1', 'h2', 'a3'] });
     expect(calls.map((c) => [c.method, c.url.replace(BASE, '/'), c.body])).toEqual([
-      ['GET', '/v1/social/conversations', undefined],
       ['POST', '/v1/social/conversations', { participant_profile_ids: ['h2'] }],
       ['POST', '/v1/social/conversations/t9/agents', { agent_profile_id: 'a3', include_anchor_share: true }],
     ]);
@@ -337,11 +335,27 @@ describe('HttpTardyApi: decoding', () => {
 
   it('openThread creates all people in one group request', async () => {
     const { api, calls } = await signedInClient(
-      { status: 200, body: [] },
       { status: 201, body: { id: 'tg', mode: 'dm', participants: ['acct-1', 'h2', 'h3'] } },
     );
     await expect(api.openThread([{ id: 'h2', kind: 'human' }, { id: 'h3', kind: 'human' }])).resolves.toMatchObject({ id: 'tg' });
-    expect(calls[1].body).toEqual({ participant_profile_ids: ['h2', 'h3'] });
+    expect(calls[0].body).toEqual({ participant_profile_ids: ['h2', 'h3'] });
+  });
+
+  it('renames groups and adds or removes participants in place', async () => {
+    const thread = { id: 'tg', mode: 'dm', title: 'Ship Room', participants: ['acct-1', 'h2', 'h3'] };
+    const { api, calls } = await signedInClient(
+      { status: 200, body: thread },
+      { status: 200, body: thread },
+      { status: 200, body: { ...thread, participants: ['acct-1', 'h2'] } },
+    );
+    await api.renameThread('tg', 'Ship Room');
+    await api.addThreadParticipant('tg', 'h3');
+    await api.removeThreadParticipant('tg', 'h3');
+    expect(calls.map((call) => [call.method, call.url.replace(BASE, '/'), call.body])).toEqual([
+      ['PUT', '/v1/social/conversations/tg', { title: 'Ship Room' }],
+      ['POST', '/v1/social/conversations/tg/participants', { profile_id: 'h3' }],
+      ['DELETE', '/v1/social/conversations/tg/participants/h3', undefined],
+    ]);
   });
 });
 

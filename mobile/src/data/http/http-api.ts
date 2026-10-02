@@ -388,7 +388,6 @@ export class HttpTardyApi implements TardyApi {
   }
 
   async openThread(participants: readonly ThreadParticipant[], title?: string): Promise<ThreadRef> {
-    void title; // Group titles are proposed; the server does not store them yet.
     const viewerId = this.current?.accountId;
     if (!viewerId) throw new TardyApiError('unauthenticated', 'Sign in to message.');
     const plan = conversationPlan(participants, viewerId);
@@ -396,20 +395,41 @@ export class HttpTardyApi implements TardyApi {
       throw new TardyApiError('invalid', 'A thread needs someone besides you.');
     }
     const others = [...plan.recipientIds, ...plan.addAgentIds];
-    // The server creates a new conversation on every call; find the existing one first.
-    const existing = (await this.request('GET', '/v1/social/conversations', { decode: array(W.conversation) })).find((t) =>
-      sameMembers(t.participantIds, viewerId, others),
-    );
-    if (existing) {
-      const { lastMessage: _last, unreadCount: _unread, ...ref } = existing;
-      return ref;
+    const name = title?.trim();
+    const explicitGroup = others.length > 1 || Boolean(name);
+    if (!explicitGroup) {
+      const existing = (await this.request('GET', '/v1/social/conversations', { decode: array(W.conversation) })).find((t) =>
+        t.participantIds.length === 2 && sameMembers(t.participantIds, viewerId, others),
+      );
+      if (existing) {
+        const { lastMessage: _last, unreadCount: _unread, ...ref } = existing;
+        return ref;
+      }
     }
     let thread = await this.request('POST', '/v1/social/conversations', {
-      body: { participant_profile_ids: plan.recipientIds },
+      body: { participant_profile_ids: plan.recipientIds, ...(name && { title: name }) },
       decode: W.threadRef,
     });
     for (const agentId of plan.addAgentIds) thread = await this.addAgent(thread.id, agentId);
     return thread;
+  }
+
+  renameThread(threadId: string, title?: string): Promise<ThreadRef> {
+    return this.request('PUT', `/v1/social/conversations/${segment(threadId)}`, {
+      body: { title: title?.trim() || null }, decode: W.threadRef,
+    });
+  }
+
+  addThreadParticipant(threadId: string, profileId: string): Promise<ThreadRef> {
+    return this.request('POST', `/v1/social/conversations/${segment(threadId)}/participants`, {
+      body: { profile_id: profileId }, decode: W.threadRef,
+    });
+  }
+
+  removeThreadParticipant(threadId: string, profileId: string): Promise<ThreadRef> {
+    return this.request('DELETE', `/v1/social/conversations/${segment(threadId)}/participants/${segment(profileId)}`, {
+      decode: W.threadRef,
+    });
   }
 
   addAgent(threadId: string, agentId: string, includeAnchorShare = true): Promise<ThreadRef> {

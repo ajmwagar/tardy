@@ -3,12 +3,13 @@ use crate::ads::{
     PaymentRequirements, ResourceInfo, Settlement,
 };
 use crate::api::{
-    AccountView, AgentShareRequest, ClaimAgentCode, ClaimTardyAccount, CreatePostComment,
-    CreateProfile, CreateShare, CreateSharedLink, CreateSocialConversation, CreateThread,
-    CreateWebHandoff, ErrorBody, ExchangeWebHandoff, HandoffRequest, MarkConversationRead,
-    MarkNotificationsRead, PublishReel, PublishSocialPost, RecordEngagement, SearchRequest,
-    SendMessage, SendMessageMedia, SendSocialMessage, SessionCredential, SessionView, SetHandle,
-    SetPostVisibility, SignedInView, StartLive, SummonAgent, UpdateProfile, VerificationCheckout,
+    AccountView, AddConversationParticipant, AgentShareRequest, ClaimAgentCode, ClaimTardyAccount,
+    CreatePostComment, CreateProfile, CreateShare, CreateSharedLink, CreateSocialConversation,
+    CreateThread, CreateWebHandoff, ErrorBody, ExchangeWebHandoff, HandoffRequest,
+    MarkConversationRead, MarkNotificationsRead, PublishReel, PublishSocialPost, RecordEngagement,
+    RenameSocialConversation, SearchRequest, SendMessage, SendMessageMedia, SendSocialMessage,
+    SessionCredential, SessionView, SetHandle, SetPostVisibility, SignedInView, StartLive,
+    SummonAgent, UpdateProfile, VerificationCheckout,
 };
 use crate::audio::{
     AttachPostAudio, AudioRelease, AudioTrack, AudioUsage, AudioUsageKind, NewAudioRelease,
@@ -55,7 +56,7 @@ use utoipa::OpenApi;
         NewOriginalTrack, ReleaseType, TrendingAudio, VerificationEntitlement, VerificationProduct, VerificationTier, BillingStatus, WebHandoff,
         AppAccount, AppFeedPost, AppSearchResult, AppNotification, Comment, Conversation, ConversationMessage, ConversationMode, ConversationSummary, IdentityKind, MessageMedia,
         PostMedia, PostVisibility, SetBrandAffiliate, SharedLink, SocialIdentity, TardyPost, CreatePostComment, SessionCredential, SessionView, SetHandle, SetPostVisibility, SignedInView, UpdateProfile,
-        CreateSharedLink, CreateSocialConversation, MarkConversationRead, MarkNotificationsRead, PublishSocialPost, SendMessageMedia, SendSocialMessage, SummonAgent, CreateWebHandoff, ExchangeWebHandoff, VerificationCheckout
+        AddConversationParticipant, CreateSharedLink, CreateSocialConversation, MarkConversationRead, MarkNotificationsRead, PublishSocialPost, RenameSocialConversation, SendMessageMedia, SendSocialMessage, SummonAgent, CreateWebHandoff, ExchangeWebHandoff, VerificationCheckout
     )),
     tags(
         (name = "onboarding"), (name = "profiles"), (name = "messaging"),
@@ -94,6 +95,39 @@ pub fn document() -> Value {
             200,
             false,
             false,
+        ),
+        op(
+            "put",
+            "/v1/social/conversations/{id}",
+            "renameSocialConversation",
+            "social",
+            Some("RenameSocialConversation"),
+            Some("Conversation"),
+            200,
+            true,
+            true,
+        ),
+        op(
+            "post",
+            "/v1/social/conversations/{id}/participants",
+            "addSocialConversationParticipant",
+            "social",
+            Some("AddConversationParticipant"),
+            Some("Conversation"),
+            200,
+            true,
+            true,
+        ),
+        op(
+            "delete",
+            "/v1/social/conversations/{id}/participants/{profile_id}",
+            "removeSocialConversationParticipant",
+            "social",
+            None,
+            Some("Conversation"),
+            200,
+            true,
+            true,
         ),
         op(
             "post",
