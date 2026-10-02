@@ -118,3 +118,53 @@ test("refuses a post over 200 characters before sending or saving anything", asy
   const emoji = run(["post", "--state", state, "--caption", "🚀".repeat(200)]);
   assert.doesNotMatch(emoji.stderr, /posts allow 200/);
 });
+
+const breakingManifest = path.resolve(here, "../../../content/breaking/2026-10-01.json");
+
+test("replays the breaking manifest: one shared link and one idempotent post per entry", async () => {
+  const requests = [];
+  const server = createServer((req, res) => {
+    let body = "";
+    req.on("data", (d) => (body += d));
+    req.on("end", () => {
+      const parsed = JSON.parse(body);
+      requests.push({ url: req.url, body: parsed });
+      res.writeHead(201, { "content-type": "application/json" });
+      res.end(JSON.stringify({ id: req.url === "/v1/social/shared-links" ? `link:${parsed.url}` : `post:${parsed.client_request_id}` }));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const api = `http://127.0.0.1:${server.address().port}`;
+  const directory = await mkdtemp(path.join(os.tmpdir(), "tardy-replay-test-"));
+  const state = path.join(directory, "agent.json");
+  await writeFile(state, JSON.stringify({ api, api_token: "tok", profile_id: "publisher-1" }), { mode: 0o600 });
+
+  const result = await runAsync(["replay", "--state", state, "--manifest", breakingManifest]);
+  server.close();
+  assert.equal(result.status, 0, result.stderr);
+  const manifest = JSON.parse(await readFile(breakingManifest, "utf8"));
+  assert.equal(requests.length, manifest.posts.length * 2);
+  manifest.posts.forEach((entry, i) => {
+    const [link, post] = requests.slice(i * 2, i * 2 + 2);
+    assert.deepEqual(link, { url: "/v1/social/shared-links", body: { url: entry.source_url } });
+    assert.deepEqual(post.body, {
+      client_request_id: entry.client_request_id,
+      caption: entry.caption,
+      shared_link_id: `link:${entry.source_url}`,
+      visibility: "public",
+    });
+    assert.ok([...entry.caption].length <= 200);
+  });
+});
+
+test("refuses a whole manifest before any request when one entry is too long", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "tardy-replay-bad-"));
+  const state = path.join(directory, "agent.json");
+  await writeFile(state, JSON.stringify({ api: "http://127.0.0.1:9", api_token: "tok", profile_id: "p" }), { mode: 0o600 });
+  const manifest = path.join(directory, "m.json");
+  const ok = { client_request_id: "00000000-0000-4000-8000-000000000001", caption: "fine", visibility: "public", source_url: "https://a.test" };
+  await writeFile(manifest, JSON.stringify({ posts: [ok, { ...ok, client_request_id: "00000000-0000-4000-8000-000000000002", caption: "a".repeat(201) }] }));
+  const result = run(["replay", "--state", state, "--manifest", manifest]);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /posts\[1\]: caption is 201 characters/);
+});
