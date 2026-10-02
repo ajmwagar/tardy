@@ -16,6 +16,8 @@ function run(args, options = {}) {
   return spawnSync(process.execPath, [cli, ...args], {
     encoding: Object.hasOwn(options, "encoding") ? options.encoding : "utf8",
     input: options.input,
+    cwd: options.cwd,
+    env: { ...process.env, TARDY_API_URL: "", ...options.env },
   });
 }
 
@@ -101,4 +103,49 @@ test("refuses a replayed webhook delivery", async () => {
   const replay = run(args, { input: body });
   assert.equal(replay.status, 1);
   assert.match(replay.stderr, /already processed/);
+});
+
+test("installs for Claude Code with a secret-free project MCP server", async () => {
+  const project = await mkdtemp(path.join(os.tmpdir(), "tardy-claude-code-test-"));
+  const state = path.join(project, "agent.json");
+  await writeFile(state, JSON.stringify({ api: "https://api.tardy.test", api_token: "tok-secret", profile_id: "agent-1" }), { mode: 0o600 });
+  await writeFile(path.join(project, ".mcp.json"), JSON.stringify({ mcpServers: { other: { type: "stdio", command: "other" } } }));
+
+  const result = run(["install", "--host", "claude-code", "--source", skill], { cwd: project, env: { TARDY_STATE_PATH: state } });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(await readFile(path.join(project, ".claude/skills/tardy/SKILL.md"), "utf8"), /^---\nname: tardy\n/);
+  const config = await readFile(path.join(project, ".mcp.json"), "utf8");
+  assert.doesNotMatch(config, /tok-secret/);
+  assert.deepEqual(JSON.parse(config).mcpServers, {
+    other: { type: "stdio", command: "other" },
+    tardy: { type: "http", url: "https://api.tardy.test/mcp", headersHelper: "tardy mcp-headers" },
+  });
+
+  const headers = run(["mcp-headers"], { env: { TARDY_STATE_PATH: state } });
+  assert.equal(headers.status, 0, headers.stderr);
+  assert.deepEqual(JSON.parse(headers.stdout), { Authorization: "Bearer tok-secret", "X-Tardy-Profile-Id": "agent-1" });
+});
+
+test("refuses to overwrite a different Claude Code tardy server without --force", async () => {
+  const project = await mkdtemp(path.join(os.tmpdir(), "tardy-claude-code-force-test-"));
+  const mine = { type: "http", url: "https://elsewhere.test/mcp" };
+  await writeFile(path.join(project, ".mcp.json"), JSON.stringify({ mcpServers: { tardy: mine } }));
+  const env = { TARDY_STATE_PATH: path.join(project, "missing.json") };
+
+  const refused = run(["install", "--host", "claude-code", "--source", skill], { cwd: project, env });
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /different "tardy" server/);
+  assert.deepEqual(JSON.parse(await readFile(path.join(project, ".mcp.json"), "utf8")).mcpServers.tardy, mine);
+
+  const forced = run(["install", "--host", "claude-code", "--source", skill, "--force"], { cwd: project, env });
+  assert.equal(forced.status, 0, forced.stderr);
+  assert.equal(JSON.parse(await readFile(path.join(project, ".mcp.json"), "utf8")).mcpServers.tardy.url, "https://api.tardy.news/mcp");
+});
+
+test("mcp-headers fails loudly before onboarding", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "tardy-headers-test-"));
+  const result = run(["mcp-headers"], { env: { TARDY_STATE_PATH: path.join(directory, "missing.json") } });
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, "");
+  assert.match(result.stderr, /run `tardy onboard` first/);
 });
