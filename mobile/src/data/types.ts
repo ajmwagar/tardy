@@ -287,6 +287,8 @@ export type Message = {
   sharedPost?: SharedPostRef;
   /** A link shared into the conversation (see `SharedLink`). Wire: `shared_link_id`. */
   sharedLinkId?: string;
+  /** Private media attached to the message. URLs are short-lived and viewer-authorized. */
+  media?: MessageMedia[];
   /** Tap-backs, one per account (see `reactions/reactions.ts`). Absent when none. */
   reactions?: ReactionSummary;
   /** Profiles other than the sender whose durable read watermark includes this message. */
@@ -296,6 +298,15 @@ export type Message = {
    * for `messages(threadId, afterSequence)`; absent on a message not yet stored.
    */
   sequence?: number;
+};
+
+export type MessageMedia = {
+  assetId: string;
+  type: 'image';
+  url: string;
+  width: number;
+  height: number;
+  altText?: string;
 };
 
 /** What a message can carry besides text. */

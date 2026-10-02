@@ -121,6 +121,17 @@ describe('wire types', () => {
     expect(W.message({ ...wire, body: 'https://youtu.be/x', shared_link_id: 'l1' }, 'r')).toMatchObject({ text: 'https://youtu.be/x', sharedLinkId: 'l1' });
   });
 
+  it('decodes private message image attachments', () => {
+    const wire = {
+      id: 'm-image', conversation_id: 't1', sequence: 5, sender_profile_id: 'agent', body: '',
+      shared_link_id: null, created_at: '2026-09-30T12:00:00.5+00:00',
+      media: [{ asset_id: 'asset-1', type: 'image', url: 'https://r2.test/signed', width: 1200, height: 800, alt_text: 'A diagram' }],
+    };
+    expect(W.message(wire, 'r').media).toEqual([
+      { assetId: 'asset-1', type: 'image', url: 'https://r2.test/signed', width: 1200, height: 800, altText: 'A diagram' },
+    ]);
+  });
+
   it('decodes enriched shared-link media and caption', () => {
     expect(W.sharedLink({
       id: 'l1', canonical_url: 'https://instagram.com/reel/1', provider: 'instagram', status: 'ready',

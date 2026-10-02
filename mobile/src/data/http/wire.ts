@@ -234,6 +234,14 @@ export const conversationMessage: Decoder<{ message: Message; sequence: number }
     createdAt: wire('created_at', isoTime),
     sharedPost: optional(sharedPost),
     sharedLinkId: optional(string),
+    media: optional(array(object({
+      assetId: wire('asset_id', string),
+      type: knownOf(['image'] as const),
+      url: string,
+      width: integer,
+      height: integer,
+      altText: optional(wire('alt_text', string)),
+    }))),
     reactions,
     readByIds: optional(array(string)),
     sequence: integer,
@@ -243,6 +251,7 @@ export const conversationMessage: Decoder<{ message: Message; sequence: number }
     const message: Message = sharedPostId ? { ...m, text: '', sharedPost: { status: 'available', postId: sharedPostId } } : m;
     if (message.sharedLinkId === undefined) delete message.sharedLinkId;
     if (message.sharedPost === undefined) delete message.sharedPost;
+    if (message.media === undefined) delete message.media;
     if (message.reactions === undefined) delete message.reactions;
     if (message.readByIds === undefined) delete message.readByIds;
     return { message: { ...message, sequence }, sequence };

@@ -146,6 +146,10 @@ const Bubble = memo(function Bubble({
 }) {
   const sender = useAccount(row.senderId);
   const formatted = useMemo(() => messageImages(row.text), [row.text]);
+  const images = [
+    ...(row.media ?? []).map((item) => ({ url: item.url, alt: item.altText ?? 'Image attachment' })),
+    ...formatted.images.filter((item) => !(row.media ?? []).some((media) => media.url === item.url)),
+  ];
   const bubbleRef = useRef<View>(null);
   // Only delivered messages can be reacted to (a pending or failed one has no server id yet).
   const reactable = !row.pending && !row.failed && !row.id.startsWith('local-');
@@ -161,7 +165,7 @@ const Bubble = memo(function Bubble({
         {showName && !mine && sender && <Text style={styles.senderName}>{sender.handle}</Text>}
         {row.sharedPost && <SharedPostCard message={row} />}
         {row.sharedLinkId && !row.sharedPost ? <LinkCard id={row.sharedLinkId} url={isUrl(row.text) ? row.text : ''} /> : null}
-        {formatted.images.map((image) => <MessageImageCard key={image.url} image={image} />)}
+        {images.map((image) => <MessageImageCard key={image.url} image={image} />)}
         {formatted.text && !(row.sharedLinkId && isUrl(row.text)) ? (
           <Pressable
             ref={bubbleRef}
