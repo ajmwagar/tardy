@@ -30,6 +30,7 @@ use crate::store::{MemoryStore, NewLive, NewProfile, NewReel, Store, StoreError}
 use crate::subscriptions::{
     FeedEvent, NewSubscription, PgSubscriptionStore, Subscription, SubscriptionError,
 };
+use crate::web_billing::{BillingError, PgWebBillingStore, WEB_SESSION_COOKIE};
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -40,6 +41,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::io::ReaderStream;
+use tower_http::cors::CorsLayer;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
@@ -58,6 +60,7 @@ pub struct AppState {
     pub social: Option<Arc<PgSocialStore>>,
     pub audio: Option<Arc<PgAudioStore>>,
     pub apple_auth: Option<Arc<AppleAuthenticator>>,
+    pub web_billing: Option<Arc<PgWebBillingStore>>,
 }
 
 pub struct AdsRuntime {
@@ -86,6 +89,7 @@ impl AppState {
             social: None,
             audio: None,
             apple_auth: None,
+            web_billing: None,
         })
     }
 
@@ -108,6 +112,7 @@ impl AppState {
             social: None,
             audio: None,
             apple_auth: None,
+            web_billing: None,
         })
     }
 
@@ -130,6 +135,7 @@ impl AppState {
             social: None,
             audio: None,
             apple_auth: None,
+            web_billing: None,
         })
     }
 
@@ -168,6 +174,11 @@ impl AppState {
         self
     }
 
+    pub fn with_web_billing(mut self, value: PgWebBillingStore) -> Self {
+        self.web_billing = Some(Arc::new(value));
+        self
+    }
+
     pub async fn purge_expired_unclaimed_tardies(&self) -> Result<usize, ApiError> {
         let expired = purge_accounts(self, now_ms()?).await?;
         if !expired.is_empty() {
@@ -180,11 +191,32 @@ impl AppState {
 
 pub fn router(state: Arc<AppState>) -> Router {
     let metrics = state.metrics.clone();
+    let web_origin =
+        std::env::var("TARDY_WEB_BASE_URL").unwrap_or_else(|_| "https://tardy.news".into());
+    let cors = CorsLayer::new()
+        .allow_origin(
+            web_origin
+                .parse::<axum::http::HeaderValue>()
+                .expect("TARDY_WEB_BASE_URL must be an HTTP origin"),
+        )
+        .allow_credentials(true)
+        .allow_methods([Method::GET, Method::POST, Method::DELETE])
+        .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]);
     Router::new()
         .route("/healthz", get(|| async { StatusCode::NO_CONTENT }))
         .route("/metrics", get(metrics_endpoint))
         .route("/openapi.json", get(openapi_endpoint))
         .route("/v1/verification/products", get(verification_products))
+        .route("/v1/web/handoffs", post(create_web_handoff))
+        .route("/v1/web/session/exchange", post(exchange_web_handoff))
+        .route("/v1/web/session", axum::routing::delete(delete_web_session))
+        .route("/v1/web/billing", get(web_billing_status))
+        .route(
+            "/v1/web/billing/stripe/checkout",
+            post(stripe_verification_checkout),
+        )
+        .route("/v1/web/billing/stripe/portal", post(stripe_billing_portal))
+        .route("/v1/web/billing/stripe/webhook", post(stripe_webhook))
         .route("/llms.txt", get(llms_txt))
         .route("/mcp", post(crate::mcp::endpoint))
         .route("/v1/sessions", post(create_session))
@@ -324,6 +356,7 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(poll_feed_subscription),
         )
         .with_state(state)
+        .layer(cors)
         .layer(middleware::from_fn(move |request, next| {
             crate::metrics::track(metrics.clone(), request, next)
         }))
@@ -331,6 +364,150 @@ pub fn router(state: Arc<AppState>) -> Router {
 
 async fn verification_products() -> Json<[crate::verification::VerificationProduct; 2]> {
     Json(crate::verification::products())
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub(crate) struct CreateWebHandoff {
+    return_path: String,
+}
+
+async fn create_web_handoff(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<CreateWebHandoff>,
+) -> Result<Json<crate::web_billing::WebHandoff>, ApiError> {
+    let account_id = authenticated_account(&state, &headers).await?;
+    Ok(Json(
+        web_billing(&state)?
+            .issue_handoff(account_id, &body.return_path)
+            .await?,
+    ))
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub(crate) struct ExchangeWebHandoff {
+    code: String,
+}
+
+async fn exchange_web_handoff(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<ExchangeWebHandoff>,
+) -> Result<Response, ApiError> {
+    let session = web_billing(&state)?.exchange_handoff(&body.code).await?;
+    let secure = web_billing(&state)?.cookie_secure_attribute();
+    let cookie = format!(
+        "{WEB_SESSION_COOKIE}={}; Path=/v1/web; Max-Age=2592000; HttpOnly; SameSite=Lax{secure}",
+        session.cookie,
+    );
+    Ok((
+        [(header::SET_COOKIE, cookie)],
+        Json(serde_json::json!({ "return_path": session.return_path })),
+    )
+        .into_response())
+}
+
+async fn delete_web_session(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    if let Some(token) = web_cookie(&headers) {
+        web_billing(&state)?.revoke(token).await?;
+    }
+    Ok((
+        [(
+            header::SET_COOKIE,
+            format!(
+                "{WEB_SESSION_COOKIE}=; Path=/v1/web; Max-Age=0; HttpOnly; SameSite=Lax{}",
+                web_billing(&state)?.cookie_secure_attribute()
+            ),
+        )],
+        StatusCode::NO_CONTENT,
+    )
+        .into_response())
+}
+
+async fn web_billing_status(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<crate::web_billing::BillingStatus>, ApiError> {
+    let account = web_account(&state, &headers).await?;
+    Ok(Json(web_billing(&state)?.status(account).await?))
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub(crate) struct VerificationCheckout {
+    tier: crate::verification::VerificationTier,
+}
+
+async fn stripe_verification_checkout(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<VerificationCheckout>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_web_origin(&headers)?;
+    let account = web_account(&state, &headers).await?;
+    let url = web_billing(&state)?
+        .stripe_checkout(account, body.tier)
+        .await?;
+    Ok(Json(serde_json::json!({ "url": url })))
+}
+
+async fn stripe_billing_portal(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_web_origin(&headers)?;
+    let account = web_account(&state, &headers).await?;
+    let url = web_billing(&state)?.stripe_portal(account).await?;
+    Ok(Json(serde_json::json!({ "url": url })))
+}
+
+async fn stripe_webhook(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Result<StatusCode, ApiError> {
+    let signature = headers
+        .get("stripe-signature")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| ApiError::unauthorized("Stripe signature is required"))?;
+    web_billing(&state)?
+        .stripe_webhook(signature, &body)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+fn web_billing(state: &AppState) -> Result<&PgWebBillingStore, ApiError> {
+    state.web_billing.as_deref().ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        message: "website billing is not configured".into(),
+    })
+}
+
+async fn web_account(state: &AppState, headers: &HeaderMap) -> Result<Uuid, ApiError> {
+    let token = web_cookie(headers)
+        .ok_or_else(|| ApiError::unauthorized("website session is required"))?
+        .to_owned();
+    Ok(web_billing(state)?.authenticate(&token).await?)
+}
+
+fn web_cookie(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(header::COOKIE)?
+        .to_str()
+        .ok()?
+        .split(';')
+        .map(str::trim)
+        .find_map(|part| part.strip_prefix(&format!("{WEB_SESSION_COOKIE}=")))
+}
+
+fn require_web_origin(headers: &HeaderMap) -> Result<(), ApiError> {
+    let expected =
+        std::env::var("TARDY_WEB_BASE_URL").unwrap_or_else(|_| "https://tardy.news".into());
+    match headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) {
+        Some(origin) if origin.trim_end_matches('/') == expected.trim_end_matches('/') => Ok(()),
+        _ => Err(ApiError::forbidden("website origin is not allowed")),
+    }
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -3199,6 +3376,32 @@ impl From<AdsError> for ApiError {
                 Self::not_found("ads resource not found")
             }
             AdsError::Database(_) => Self::internal(value.to_string()),
+        }
+    }
+}
+
+impl From<BillingError> for ApiError {
+    fn from(value: BillingError) -> Self {
+        match value {
+            BillingError::InvalidHandoff | BillingError::InvalidSession => {
+                Self::unauthorized(value.to_string())
+            }
+            BillingError::Unconfigured => Self {
+                status: StatusCode::SERVICE_UNAVAILABLE,
+                message: value.to_string(),
+            },
+            BillingError::SuperTardySoldOut => Self {
+                status: StatusCode::CONFLICT,
+                message: value.to_string(),
+            },
+            BillingError::Invalid(_) => Self::bad_request(value.to_string()),
+            BillingError::Provider(_) => Self {
+                status: StatusCode::BAD_GATEWAY,
+                message: value.to_string(),
+            },
+            BillingError::Database(_) | BillingError::Verification(_) => {
+                Self::internal(value.to_string())
+            }
         }
     }
 }

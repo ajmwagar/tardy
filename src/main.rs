@@ -7,6 +7,7 @@ use tardy::pg_accounts::PgAccountStore;
 use tardy::push::PgPushStore;
 use tardy::social::PgSocialStore;
 use tardy::subscriptions::PgSubscriptionStore;
+use tardy::web_billing::{PgWebBillingStore, StripeConfig};
 use tardy::{AppState, router};
 
 #[tokio::main]
@@ -31,6 +32,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     state = state.with_pg_accounts(PgAccountStore::new(pool.clone()));
     state = state.with_social_store(PgSocialStore::new(pool.clone()));
     state = state.with_audio_store(PgAudioStore::new(pool.clone()));
+    let web_base_url =
+        std::env::var("TARDY_WEB_BASE_URL").unwrap_or_else(|_| "https://tardy.news".into());
+    let stripe = StripeConfig::from_env(web_base_url.clone())?;
+    if stripe.is_none() {
+        tracing::warn!("STRIPE_SECRET_KEY is unset; Stripe checkout is disabled");
+    }
+    state = state.with_web_billing(PgWebBillingStore::new(pool.clone(), web_base_url, stripe));
     if let Ok(client_id) = std::env::var("APPLE_CLIENT_ID") {
         state = state.with_apple_auth(AppleAuthenticator::new(client_id)?);
     } else {

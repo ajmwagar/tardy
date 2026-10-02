@@ -5,10 +5,10 @@ use crate::ads::{
 use crate::api::{
     AccountView, AgentShareRequest, ClaimAgentCode, ClaimTardyAccount, CreatePostComment,
     CreateProfile, CreateShare, CreateSharedLink, CreateSocialConversation, CreateThread,
-    ErrorBody, HandoffRequest, MarkConversationRead, MarkNotificationsRead, PublishReel,
-    PublishSocialPost, RecordEngagement, SearchRequest, SendMessage, SendSocialMessage,
-    SessionCredential, SessionView, SetHandle, SetPostVisibility, SignedInView, StartLive,
-    SummonAgent, UpdateProfile,
+    CreateWebHandoff, ErrorBody, ExchangeWebHandoff, HandoffRequest, MarkConversationRead,
+    MarkNotificationsRead, PublishReel, PublishSocialPost, RecordEngagement, SearchRequest,
+    SendMessage, SendSocialMessage, SessionCredential, SessionView, SetHandle, SetPostVisibility,
+    SignedInView, StartLive, SummonAgent, UpdateProfile, VerificationCheckout,
 };
 use crate::audio::{
     AttachPostAudio, AudioRelease, AudioTrack, AudioUsage, AudioUsageKind, NewAudioRelease,
@@ -33,6 +33,7 @@ use crate::subscriptions::{
     DeliveryMode, FeedEvent, NewSubscription, Subscription, SubscriptionKind,
 };
 use crate::verification::{VerificationEntitlement, VerificationProduct, VerificationTier};
+use crate::web_billing::{BillingStatus, WebHandoff};
 use serde_json::{Map, Value, json};
 use utoipa::OpenApi;
 
@@ -51,16 +52,16 @@ use utoipa::OpenApi;
         NewCampaign, PaymentRequired, PaymentRequirements, ResourceInfo, Settlement,
         DeliveryMode, FeedEvent, NewSubscription, Subscription, SubscriptionKind,
         AttachPostAudio, AudioRelease, AudioTrack, AudioUsage, AudioUsageKind, NewAudioRelease,
-        NewOriginalTrack, ReleaseType, TrendingAudio, VerificationEntitlement, VerificationProduct, VerificationTier,
+        NewOriginalTrack, ReleaseType, TrendingAudio, VerificationEntitlement, VerificationProduct, VerificationTier, BillingStatus, WebHandoff,
         AppAccount, AppFeedPost, AppSearchResult, AppNotification, Comment, Conversation, ConversationMessage, ConversationMode, ConversationSummary, IdentityKind,
         PostMedia, PostVisibility, SetBrandAffiliate, SharedLink, SocialIdentity, TardyPost, CreatePostComment, SessionCredential, SessionView, SetHandle, SetPostVisibility, SignedInView, UpdateProfile,
-        CreateSharedLink, CreateSocialConversation, MarkConversationRead, MarkNotificationsRead, PublishSocialPost, SendSocialMessage, SummonAgent
+        CreateSharedLink, CreateSocialConversation, MarkConversationRead, MarkNotificationsRead, PublishSocialPost, SendSocialMessage, SummonAgent, CreateWebHandoff, ExchangeWebHandoff, VerificationCheckout
     )),
     tags(
         (name = "onboarding"), (name = "profiles"), (name = "messaging"),
         (name = "sharing"), (name = "media"), (name = "feed"), (name = "live"),
         (name = "notifications")
-        ,(name = "ads"), (name = "subscriptions"), (name = "social"), (name = "audio"), (name = "verification")
+        ,(name = "ads"), (name = "subscriptions"), (name = "social"), (name = "audio"), (name = "verification"), (name = "billing")
     )
 )]
 struct ApiDoc;
@@ -90,6 +91,72 @@ pub fn document() -> Value {
             "listVerificationProducts",
             "verification",
             "VerificationProduct",
+            200,
+            false,
+            false,
+        ),
+        op(
+            "post",
+            "/v1/web/handoffs",
+            "createWebHandoff",
+            "billing",
+            Some("CreateWebHandoff"),
+            Some("WebHandoff"),
+            200,
+            true,
+            false,
+        ),
+        op(
+            "post",
+            "/v1/web/session/exchange",
+            "exchangeWebHandoff",
+            "billing",
+            Some("ExchangeWebHandoff"),
+            None,
+            200,
+            false,
+            false,
+        ),
+        op(
+            "delete",
+            "/v1/web/session",
+            "deleteWebSession",
+            "billing",
+            None,
+            None,
+            204,
+            false,
+            false,
+        ),
+        op(
+            "get",
+            "/v1/web/billing",
+            "getWebBilling",
+            "billing",
+            None,
+            Some("BillingStatus"),
+            200,
+            false,
+            false,
+        ),
+        op(
+            "post",
+            "/v1/web/billing/stripe/checkout",
+            "createStripeVerificationCheckout",
+            "billing",
+            Some("VerificationCheckout"),
+            None,
+            200,
+            false,
+            false,
+        ),
+        op(
+            "post",
+            "/v1/web/billing/stripe/portal",
+            "createStripeBillingPortal",
+            "billing",
+            None,
+            None,
             200,
             false,
             false,

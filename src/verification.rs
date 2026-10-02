@@ -157,6 +157,22 @@ impl PgVerificationStore {
             expires_at: row.try_get("expires_at")?,
         })
     }
+
+    pub async fn revoke_provider_reference(
+        &self,
+        provider: &str,
+        provider_reference: &str,
+    ) -> Result<(), VerificationError> {
+        sqlx::query(
+            "UPDATE profile_verifications SET revoked_at=now(),updated_at=now()
+             WHERE provider=$1 AND provider_reference=$2 AND revoked_at IS NULL",
+        )
+        .bind(provider)
+        .bind(provider_reference)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
 }
 
 fn tier_name(tier: VerificationTier) -> &'static str {
