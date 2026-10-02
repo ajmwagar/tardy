@@ -3144,10 +3144,14 @@ async fn complete_upload(
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, ApiError> {
     let actor = authenticated_actor(&state, &headers).await?;
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(state.media.complete(actor, id, now_ms()?).await?),
-    ))
+    let asset = state.media.complete(actor, id, now_ms()?).await?;
+    let url = state.media.delivery_url(asset.id).await?;
+    let mut view = serde_json::to_value(asset)
+        .map_err(|error| ApiError::internal(format!("serialize completed upload: {error}")))?;
+    view.as_object_mut()
+        .ok_or_else(|| ApiError::internal("completed upload did not serialize as an object"))?
+        .insert("url".into(), serde_json::Value::String(url));
+    Ok((StatusCode::ACCEPTED, Json(view)))
 }
 
 pub(crate) fn selected_profile(headers: &HeaderMap) -> Result<Option<Uuid>, ApiError> {

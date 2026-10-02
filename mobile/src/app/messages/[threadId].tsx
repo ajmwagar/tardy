@@ -19,6 +19,7 @@ import { messageImages, messageSpans, type MessageImage as InlineMessageImage } 
 import { isWork, promotionNotice } from '@/share/sections';
 import { useSharedLink } from '@/share/use-shared-link';
 import { isGroup, othersIn, threadLabel } from '@/share/thread-label';
+import { parseTardyUrl } from '@/share/links';
 import { api, cacheAccounts, ensureAccounts, refreshUnread, reportError, useAccount, useStore } from '@/state/store';
 import { colors, IMAGE_TRANSITION_MS, radius, timeAgo } from '@/theme';
 
@@ -32,16 +33,15 @@ const LINK_CARD_WIDTH = 260;
  */
 type Row = Message & { pending?: boolean; failed?: boolean; event?: string };
 
-function SharedPostCard({ message }: { message: Message }) {
-  const ref = message.sharedPost;
+function NativePostCard({ postId, unavailable = false }: { postId: string; unavailable?: boolean }) {
   const [post, setPost] = useState<Post | null>(null);
-  const [hidden, setHidden] = useState(ref?.status === 'unavailable');
+  const [hidden, setHidden] = useState(unavailable);
   const author = useAccount(post?.authorId);
 
   useEffect(() => {
-    if (ref?.status !== 'available') return;
+    if (unavailable) return;
     api
-      .post(ref.postId)
+      .post(postId)
       .then(async (p) => {
         await ensureAccounts([p.authorId]);
         setPost(p);
@@ -51,9 +51,8 @@ function SharedPostCard({ message }: { message: Message }) {
         if (e instanceof TardyApiError) setHidden(true);
         else reportError(`Couldn't load a shared tardy: ${e instanceof Error ? e.message : String(e)}`);
       });
-  }, [ref]);
+  }, [postId, unavailable]);
 
-  if (!ref) return null;
   if (hidden) {
     return (
       <View style={[styles.shared, styles.sharedHidden]}>
@@ -81,6 +80,12 @@ function SharedPostCard({ message }: { message: Message }) {
       </View>
     </Pressable>
   );
+}
+
+function SharedPostCard({ message }: { message: Message }) {
+  const ref = message.sharedPost;
+  if (!ref) return null;
+  return <NativePostCard postId={ref.status === 'available' ? ref.postId : ''} unavailable={ref.status === 'unavailable'} />;
 }
 
 const isUrl = (text: string) => /^https?:\/\/\S+$/.test(text.trim());
@@ -120,6 +125,8 @@ function LinkCard({ id, url }: { id: string; url: string }) {
   // A failed preview read leaves the plain card: the link itself still opens.
   const { link } = useSharedLink(id);
   if (!link && !isUrl(url)) return <SkeletonBlock style={{ width: LINK_CARD_WIDTH, height: 150 }} />;
+  const postId = link ? parseTardyUrl(link.canonicalUrl) : null;
+  if (postId) return <NativePostCard postId={postId} />;
   return <LinkPreview url={link?.canonicalUrl ?? url} link={link} width={LINK_CARD_WIDTH} />;
 }
 

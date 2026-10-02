@@ -15,8 +15,8 @@ use std::{
 use tardy_agent_host::{
     AgentCommand, AgentCredential, BoxError, CodexRunner, ConversationMessage, HostData,
     InboxEvent, PendingMedia, PendingReply, QueuedEvent, TapbackDecider, WorkActivation,
-    activation_prompt, dispatchable_deliveries, extract_image_directives, load_json,
-    obvious_tapback, store_json, verify_signature,
+    activation_prompt, dispatchable_deliveries, extract_image_directives, extract_tardy_caption,
+    load_json, obvious_tapback, store_json, verify_signature,
 };
 use tokio::sync::{Mutex, Notify};
 
@@ -458,13 +458,17 @@ async fn publish_last_result_as_tardy(
     app: &App,
     activation: &WorkActivation,
 ) -> Result<(), BoxError> {
-    let saved = app
-        .data
-        .lock()
-        .await
-        .last_results
-        .get(&activation.key)
-        .cloned();
+    let (saved, saved_media, saved_caption) = {
+        let data = app.data.lock().await;
+        (
+            data.last_results.get(&activation.key).cloned(),
+            data.last_media
+                .get(&activation.key)
+                .cloned()
+                .unwrap_or_default(),
+            data.last_captions.get(&activation.key).cloned(),
+        )
+    };
     let result = if let Some(result) = saved {
         result
     } else {
@@ -492,7 +496,49 @@ async fn publish_last_result_as_tardy(
             .map(|message| message.body)
             .ok_or("There is no completed agent result in this conversation yet")?
     };
-    let caption = result.chars().take(5_000).collect::<String>();
+    let caption = saved_caption
+        .unwrap_or(result)
+        .chars()
+        .take(5_000)
+        .collect::<String>();
+    let video = saved_media.iter().find(|item| {
+        item.content_type
+            .as_deref()
+            .is_some_and(|kind| kind.starts_with("video/"))
+    });
+    let post_media = if let Some(video) = video {
+        let poster = saved_media.iter().find(|item| {
+            item.content_type
+                .as_deref()
+                .is_some_and(|kind| kind.starts_with("image/"))
+        });
+        vec![json!({
+            "type": "video",
+            "url": video.url.as_deref().ok_or("completed reel upload omitted its URL")?,
+            "poster_url": poster.and_then(|item| item.url.as_deref()),
+            "width": video.width.ok_or("reel upload omitted width")?,
+            "height": video.height.ok_or("reel upload omitted height")?,
+            "duration_ms": video.duration_ms.ok_or("reel upload omitted duration")?
+        })]
+    } else {
+        saved_media
+            .iter()
+            .filter_map(|item| {
+                item.content_type
+                    .as_deref()
+                    .filter(|kind| kind.starts_with("image/"))?;
+                Some(json!({
+                    "type": "image",
+                    "url": item.url.as_deref()?,
+                    "poster_url": null,
+                    "width": item.width?,
+                    "height": item.height?,
+                    "duration_ms": 0
+                }))
+            })
+            .take(4)
+            .collect()
+    };
     let digest = Sha256::digest(format!("tardy:{}", activation.message_id).as_bytes());
     let mut request_bytes = [0_u8; 16];
     request_bytes.copy_from_slice(&digest[..16]);
@@ -507,7 +553,7 @@ async fn publish_last_result_as_tardy(
         .json(&json!({
             "client_request_id": client_request_id.to_string(),
             "caption": caption,
-            "media": [],
+            "media": post_media,
             "shared_link_id": null,
             "visibility": "private"
         }))
@@ -521,12 +567,13 @@ async fn publish_last_result_as_tardy(
         .get("id")
         .and_then(Value::as_str)
         .ok_or("private Tardy response omitted id")?;
+    let post_url = format!("https://tardy.news/t/{post_id}");
     let link_response = app
         .client
         .post(format!("{}/v1/social/shared-links", api(app)))
         .bearer_auth(&app.credential.api_token)
         .header("x-tardy-profile-id", &app.credential.profile_id)
-        .json(&json!({"url": format!("https://tardy.news/t/{post_id}")}))
+        .json(&json!({"url": post_url}))
         .send()
         .await?;
     if !link_response.status().is_success() {
@@ -551,7 +598,7 @@ async fn publish_last_result_as_tardy(
             .bearer_auth(&app.credential.api_token)
             .header("x-tardy-profile-id", &app.credential.profile_id)
             .json(&json!({
-                "body": format!("@{} turned this into a Tardy. It is private until you promote it.", app.credential.handle),
+                "body": post_url,
                 "shared_link_id": link_id
             })),
     )
@@ -623,6 +670,7 @@ async fn process_one(app: &App, queued: &QueuedEvent) -> Result<(), BoxError> {
                 )
                 .await?;
             let (body, directives) = extract_image_directives(&result.reply)?;
+            let (body, tardy_caption) = extract_tardy_caption(&body);
             let media = upload_images(app, &directives).await?;
             let pending = PendingReply {
                 conversation_id: activation.conversation_id.clone(),
@@ -634,6 +682,11 @@ async fn process_one(app: &App, queued: &QueuedEvent) -> Result<(), BoxError> {
             let mut data = app.data.lock().await;
             data.last_results
                 .insert(activation.key.clone(), pending.body.clone());
+            data.last_media
+                .insert(activation.key.clone(), pending.media.clone());
+            if let Some(caption) = tardy_caption {
+                data.last_captions.insert(activation.key.clone(), caption);
+            }
             data.sessions
                 .insert(activation.key.clone(), result.thread_id);
             if let Some(cursor) = pending.context_cursor {
@@ -871,25 +924,82 @@ async fn upload_images(
             }
         }
         request_ok(upload).await?;
-        request_ok(
-            app.client
-                .post(format!("{}/v1/uploads/{id}/complete", api(app)))
-                .bearer_auth(&app.credential.api_token)
-                .header("x-tardy-profile-id", &app.credential.profile_id),
-        )
-        .await?;
+        let completed = app
+            .client
+            .post(format!("{}/v1/uploads/{id}/complete", api(app)))
+            .bearer_auth(&app.credential.api_token)
+            .header("x-tardy-profile-id", &app.credential.profile_id)
+            .send()
+            .await?;
+        if !completed.status().is_success() {
+            return Err(format!(
+                "Tardy upload completion returned HTTP {}: {}",
+                completed.status(),
+                completed.text().await?
+            )
+            .into());
+        }
+        let completed: Value = completed.json().await?;
+        let (width, height, duration_ms) = probe_media(&path).await.unwrap_or_else(|| {
+            dimensions
+                .map(|(width, height)| (Some(width), Some(height), None))
+                .unwrap_or((None, None, None))
+        });
         uploaded.push(PendingMedia {
             asset_id: id.to_owned(),
-            width: dimensions.map(|value| value.0),
-            height: dimensions.map(|value| value.1),
+            width,
+            height,
             file_name: path
                 .file_name()
                 .and_then(|value| value.to_str())
                 .map(str::to_owned),
             alt_text: directive.alt_text.clone(),
+            url: completed
+                .get("url")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            content_type: Some(content_type.into()),
+            duration_ms,
         });
     }
     Ok(uploaded)
+}
+
+async fn probe_media(path: &Path) -> Option<(Option<u32>, Option<u32>, Option<u64>)> {
+    let output = tokio::process::Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=width,height:format=duration",
+            "-of",
+            "json",
+        ])
+        .arg(path)
+        .output()
+        .await
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let value: Value = serde_json::from_slice(&output.stdout).ok()?;
+    let stream = value.get("streams")?.as_array()?.first();
+    let width = stream
+        .and_then(|row| row.get("width"))
+        .and_then(Value::as_u64)
+        .and_then(|v| u32::try_from(v).ok());
+    let height = stream
+        .and_then(|row| row.get("height"))
+        .and_then(Value::as_u64)
+        .and_then(|v| u32::try_from(v).ok());
+    let duration_ms = value
+        .get("format")?
+        .get("duration")?
+        .as_str()?
+        .parse::<f64>()
+        .ok()
+        .map(|value| (value * 1000.0).round() as u64);
+    Some((width, height, duration_ms))
 }
 
 fn png_dimensions(bytes: &[u8]) -> Result<(u32, u32), BoxError> {

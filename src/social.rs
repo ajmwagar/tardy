@@ -2169,6 +2169,8 @@ fn post_format(row: &sqlx::postgres::PgRow) -> Result<&'static str, SocialError>
     Ok(
         if media.first().is_some_and(|item| item["type"] == "video") {
             "reel"
+        } else if media.len() > 1 {
+            "carousel"
         } else {
             "photo"
         },
@@ -2184,11 +2186,20 @@ fn validate_post_media(media: &[PostMedia]) -> Result<(), SocialError> {
     if media.len() > 4 {
         return Err(SocialError::Invalid("too many media items"));
     }
+    let media_kind = media.first().map(|item| item.kind.as_str());
+    if media_kind == Some("video") && media.len() != 1 {
+        return Err(SocialError::Invalid("a reel must contain one video"));
+    }
     for item in media {
-        if item.kind != "video"
+        let shape_is_valid = match item.kind.as_str() {
+            "video" => item.duration_ms > 0,
+            "image" => item.duration_ms == 0 && item.poster_url.is_none(),
+            _ => false,
+        };
+        if Some(item.kind.as_str()) != media_kind
+            || !shape_is_valid
             || item.width == 0
             || item.height == 0
-            || item.duration_ms == 0
             || url::Url::parse(&item.url)
                 .ok()
                 .filter(|url| matches!(url.scheme(), "http" | "https"))
@@ -2204,6 +2215,34 @@ fn validate_post_media(media: &[PostMedia]) -> Result<(), SocialError> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod post_media_tests {
+    use super::*;
+
+    fn media(kind: &str, duration_ms: u64) -> PostMedia {
+        PostMedia {
+            kind: kind.into(),
+            url: format!("https://media.test/item.{kind}"),
+            poster_url: (kind == "video").then(|| "https://media.test/poster.jpg".into()),
+            width: 1080,
+            height: if kind == "video" { 1920 } else { 1350 },
+            duration_ms,
+        }
+    }
+
+    #[test]
+    fn accepts_one_reel_or_an_image_carousel() {
+        assert!(validate_post_media(&[media("video", 15_000)]).is_ok());
+        assert!(validate_post_media(&[media("image", 0), media("image", 0)]).is_ok());
+    }
+
+    #[test]
+    fn rejects_mixed_or_multi_video_posts() {
+        assert!(validate_post_media(&[media("video", 15_000), media("image", 0)]).is_err());
+        assert!(validate_post_media(&[media("video", 15_000), media("video", 15_000)]).is_err());
+    }
 }
 fn message_from_row(row: &sqlx::postgres::PgRow) -> Result<ConversationMessage, SocialError> {
     Ok(ConversationMessage {

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Tardy</title><meta name="theme-color" content="#0A0A0D">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/site.css">
+  <style>
+    .post-shell{min-height:100vh;display:grid;place-items:center;padding:24px}.post-card{width:min(100%,560px);padding:34px;border:1px solid #2b2b34;border-radius:24px;background:#15151b}.post-mark{font-size:54px;line-height:1;margin-bottom:18px}.post-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:24px}.post-id{color:#80808c;font:12px ui-monospace,SFMono-Regular,monospace;word-break:break-all}
+  </style>
+</head>
+<body><main class="post-shell"><section class="post-card" id="card"><div class="post-mark">⏰</div><h1>That Tardy is private.</h1><p>Open it in Tardy to view it with the account it was shared with.</p><div class="post-actions"><a class="button primary" id="open" href="/ios.html">Open in Tardy</a><a class="button" href="/ios.html">Get the iOS app</a></div><p class="post-id" id="post-id"></p></section></main>
+<script>
+  const match = location.pathname.match(/^\/t\/([0-9a-f-]+)\/?$/i);
+  if (match) {
+    document.title = 'Open Tardy';
+    document.getElementById('post-id').textContent = `Tardy ${match[1]}`;
+    document.getElementById('open').href = `tardy://posts/${encodeURIComponent(match[1])}`;
+  } else {
+    document.querySelector('h1').textContent = "Don't be tardy.";
+    document.querySelector('.post-card p').textContent = "That page isn't here.";
+    document.getElementById('post-id').remove();
+  }
+</script></body></html>
