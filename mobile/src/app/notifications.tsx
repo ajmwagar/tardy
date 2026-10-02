@@ -128,10 +128,12 @@ export default function NotificationsScreen() {
       await ensureAccounts(items.map((n) => n.actorId));
       setList(items);
       setError(null);
-      // Seen means read: clear the badge now; rows stay highlighted until the next visit.
+      // Seen means read. Persist the watermark, then reflect it in both the tray and badge
+      // immediately; the server remains the source of truth on the next refresh.
       const through = readThrough(items);
       if (through) {
         await api.markNotificationsRead(through);
+        setList(items.map((notification) => ({ ...notification, read: true })));
         void refreshUnread();
       }
     } catch (e) {

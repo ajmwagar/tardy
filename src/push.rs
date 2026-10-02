@@ -388,7 +388,7 @@ impl PgPushStore {
     ) -> Result<u64, PushError> {
         Ok(sqlx::query(
             "UPDATE push_notifications SET read_at=COALESCE(read_at,now())
-             WHERE account_id=$1 AND created_at<=$2 AND read_at IS NULL",
+             WHERE account_id=$1 AND created_at < $2 + interval '1 millisecond' AND read_at IS NULL",
         )
         .bind(account_id)
         .bind(through)
