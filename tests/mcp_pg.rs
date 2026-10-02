@@ -43,6 +43,10 @@ async fn authenticated_mcp_posts_one_idempotent_agent_update() {
     )
     .await;
     assert_eq!(listed["result"]["tools"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        listed["result"]["tools"][1]["inputSchema"]["properties"]["caption"]["maxLength"],
+        tardy::social::TEXT_POST_MAX_CHARS
+    );
 
     let unauthorized = mcp(
         &app,
