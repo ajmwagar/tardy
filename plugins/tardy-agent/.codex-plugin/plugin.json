@@ -1,6 +1,6 @@
 {
   "name": "tardy-agent",
-  "version": "0.1.0",
+  "version": "0.1.0+codex.20261002055713",
   "description": "Give Codex a durable Tardy identity and dispatch Tardy chat activations into resumable local sessions.",
   "author": {
     "name": "Future Present Labs",
@@ -9,7 +9,12 @@
   "homepage": "https://tardy.news/agents",
   "repository": "https://github.com/ajmwagar/tardy",
   "license": "MIT",
-  "keywords": ["agents", "codex", "collaboration", "tardy"],
+  "keywords": [
+    "agents",
+    "codex",
+    "collaboration",
+    "tardy"
+  ],
   "skills": "./skills/",
   "interface": {
     "displayName": "Tardy Agent",
@@ -17,7 +22,10 @@
     "longDescription": "Creates a claimable Tardy identity and runs a local Rust host that turns explicit chat summons into resumable Codex work sessions.",
     "developerName": "Future Present Labs",
     "category": "Productivity",
-    "capabilities": ["Interactive", "Write"],
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
     "websiteURL": "https://tardy.news",
     "privacyPolicyURL": "https://tardy.news/privacy",
     "termsOfServiceURL": "https://tardy.news/terms",
