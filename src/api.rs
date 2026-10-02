@@ -24,7 +24,7 @@ use crate::search::{SearchDocument, SearchError, SearchService};
 use crate::social::{
     AppAccount, AppEngagementAction, AppFeedPost, AppSearchResult, Comment, Conversation,
     ConversationMessage, ConversationSummary, IdentityKind, PgSocialStore, PostMedia,
-    PostVisibility, SharedLink, SocialError, TardyPost,
+    PostVisibility, SetBrandAffiliate, SharedLink, SocialError, TardyPost,
 };
 use crate::store::{MemoryStore, NewLive, NewProfile, NewReel, Store, StoreError};
 use crate::subscriptions::{
@@ -184,6 +184,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/healthz", get(|| async { StatusCode::NO_CONTENT }))
         .route("/metrics", get(metrics_endpoint))
         .route("/openapi.json", get(openapi_endpoint))
+        .route("/v1/verification/products", get(verification_products))
         .route("/llms.txt", get(llms_txt))
         .route("/mcp", post(crate::mcp::endpoint))
         .route("/v1/sessions", post(create_session))
@@ -200,6 +201,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/profiles/by-id/{id}", get(get_profile_by_id))
         .route("/v1/profiles/by-id/{id}/posts", get(get_profile_posts))
         .route("/v1/profiles/{handle}", get(get_profile))
+        .route(
+            "/v1/brands/{brand_id}/affiliates/{profile_id}",
+            put(set_brand_affiliate).delete(clear_brand_affiliate),
+        )
         .route(
             "/v1/profiles/{profile_id}/follow",
             put(follow_profile).delete(unfollow_profile),
@@ -324,6 +329,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         }))
 }
 
+async fn verification_products() -> Json<[crate::verification::VerificationProduct; 2]> {
+    Json(crate::verification::products())
+}
+
 #[derive(Debug, Deserialize, ToSchema)]
 pub(crate) struct AppEngagementBatch {
     actions: Vec<AppEngagementAction>,
@@ -414,6 +423,12 @@ pub(crate) struct AccountView {
     avatar_url: String,
     bio: String,
     verified: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verification_tier: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    super_tardy_slot: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    brand_affiliate: Option<crate::social::BrandAffiliate>,
     followers: u64,
     following: u64,
     post_count: u64,
@@ -767,10 +782,39 @@ async fn account_view(state: &AppState, value: HumanProfile) -> Result<AccountVi
         },
         bio: account.bio,
         verified: account.verified,
+        verification_tier: account.verification_tier,
+        super_tardy_slot: account.super_tardy_slot,
+        brand_affiliate: account.brand_affiliate,
         followers: account.followers.max(0) as u64,
         following: account.following.max(0) as u64,
         post_count: account.post_count.max(0) as u64,
     })
+}
+
+async fn set_brand_affiliate(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((brand_id, profile_id)): Path<(Uuid, Uuid)>,
+    Json(body): Json<SetBrandAffiliate>,
+) -> Result<Json<AppAccount>, ApiError> {
+    let account_id = authenticated_account(&state, &headers).await?;
+    Ok(Json(
+        social_store(&state)?
+            .set_brand_affiliate(account_id, brand_id, profile_id, body.label.as_deref())
+            .await?,
+    ))
+}
+
+async fn clear_brand_affiliate(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((brand_id, profile_id)): Path<(Uuid, Uuid)>,
+) -> Result<StatusCode, ApiError> {
+    let account_id = authenticated_account(&state, &headers).await?;
+    social_store(&state)?
+        .clear_brand_affiliate(account_id, brand_id, profile_id)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 const LOCAL_MEDIA: [(&str, &str, u64); 7] = [

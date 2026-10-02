@@ -242,11 +242,31 @@ pub struct AppAccount {
     pub avatar_url: String,
     pub bio: String,
     pub verified: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verification_tier: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub super_tardy_slot: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub brand_affiliate: Option<BrandAffiliate>,
     pub followers: i64,
     pub following: i64,
     pub post_count: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub owned_by_viewer: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct BrandAffiliate {
+    pub profile_id: Uuid,
+    pub handle: String,
+    pub avatar_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+pub struct SetBrandAffiliate {
+    pub label: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -606,12 +626,15 @@ impl PgSocialStore {
                     COALESCE(h.display_name,s.display_name,i.handle) AS display_name,
                     COALESCE(NULLIF(h.avatar_url,''),'https://tardy.news/favicon.svg') AS avatar_url,
                     COALESCE(h.bio,CASE WHEN s.id IS NOT NULL THEN 'Updates from '||s.display_name||', with links to the original source.' END,'') AS bio,
+                    badges.verification_tier,badges.super_tardy_slot,badges.brand_profile_id,
+                    badges.brand_handle,badges.brand_avatar_url,badges.brand_label,
                     (SELECT count(*) FROM profile_follows f WHERE f.followed_profile_id=i.profile_id)::bigint AS followers,
                     (SELECT count(*) FROM profile_follows f WHERE f.follower_profile_id=i.profile_id)::bigint AS following,
                     (SELECT count(*) FROM tardy_posts p WHERE p.author_profile_id=i.profile_id)::bigint AS post_count
              FROM social_identities i
              LEFT JOIN human_profiles h ON h.profile_id=i.profile_id
              LEFT JOIN source_channels s ON i.kind='channel' AND i.handle='source-'||s.id
+             LEFT JOIN active_profile_badges badges ON badges.profile_id=i.profile_id
              WHERE i.profile_id=ANY($1)",
         )
         .bind(ids)
@@ -635,6 +658,65 @@ impl PgSocialStore {
         self.app_account_by_id(id).await
     }
 
+    pub async fn set_brand_affiliate(
+        &self,
+        actor_account_id: Uuid,
+        brand_profile_id: Uuid,
+        profile_id: Uuid,
+        label: Option<&str>,
+    ) -> Result<AppAccount, SocialError> {
+        let label = label.unwrap_or("").trim();
+        if label.len() > 50 || brand_profile_id == profile_id {
+            return Err(SocialError::Invalid("invalid brand affiliation"));
+        }
+        let result = sqlx::query(
+            "INSERT INTO profile_brand_affiliations
+                 (profile_id,brand_profile_id,granted_by_account_id,label)
+             SELECT $1,i.profile_id,$2,$3
+             FROM social_identities i
+             WHERE i.profile_id=$4 AND i.account_id=$2 AND i.kind IN ('project','channel')
+             ON CONFLICT (profile_id) DO UPDATE SET
+                 brand_profile_id=excluded.brand_profile_id,
+                 granted_by_account_id=excluded.granted_by_account_id,
+                 label=excluded.label,
+                 created_at=now()",
+        )
+        .bind(profile_id)
+        .bind(actor_account_id)
+        .bind(label)
+        .bind(brand_profile_id)
+        .execute(&self.pool)
+        .await?;
+        if result.rows_affected() == 0 {
+            return Err(SocialError::Forbidden);
+        }
+        self.app_account_by_id(profile_id).await
+    }
+
+    pub async fn clear_brand_affiliate(
+        &self,
+        actor_account_id: Uuid,
+        brand_profile_id: Uuid,
+        profile_id: Uuid,
+    ) -> Result<(), SocialError> {
+        let result = sqlx::query(
+            "DELETE FROM profile_brand_affiliations ba
+             USING social_identities brand
+             WHERE ba.profile_id=$1 AND ba.brand_profile_id=$2
+               AND brand.profile_id=ba.brand_profile_id
+               AND brand.account_id=$3 AND brand.kind IN ('project','channel')",
+        )
+        .bind(profile_id)
+        .bind(brand_profile_id)
+        .bind(actor_account_id)
+        .execute(&self.pool)
+        .await?;
+        if result.rows_affected() == 0 {
+            return Err(SocialError::NotFound);
+        }
+        Ok(())
+    }
+
     pub async fn search_app_accounts(
         &self,
         viewer_account: Uuid,
@@ -652,6 +734,8 @@ impl PgSocialStore {
                     COALESCE(h.display_name,s.display_name,i.handle) AS display_name,
                     COALESCE(NULLIF(h.avatar_url,''),'https://tardy.news/favicon.svg') AS avatar_url,
                     COALESCE(h.bio,CASE WHEN s.id IS NOT NULL THEN 'Updates from '||s.display_name||', with links to the original source.' END,'') AS bio,
+                    badges.verification_tier,badges.super_tardy_slot,badges.brand_profile_id,
+                    badges.brand_handle,badges.brand_avatar_url,badges.brand_label,
                     (SELECT count(*) FROM profile_follows f WHERE f.followed_profile_id=i.profile_id)::bigint AS followers,
                     (SELECT count(*) FROM profile_follows f WHERE f.follower_profile_id=i.profile_id)::bigint AS following,
                     (SELECT count(*) FROM tardy_posts p WHERE p.author_profile_id=i.profile_id)::bigint AS post_count,
@@ -659,6 +743,7 @@ impl PgSocialStore {
              FROM social_identities i
              LEFT JOIN human_profiles h ON h.profile_id=i.profile_id
              LEFT JOIN source_channels s ON i.kind='channel' AND i.handle='source-'||s.id
+             LEFT JOIN active_profile_badges badges ON badges.profile_id=i.profile_id
              WHERE $2='' OR i.handle ILIKE $3 OR COALESCE(h.display_name,s.display_name,i.handle) ILIKE $3
              ORDER BY (i.account_id=$1 AND i.kind='agent') DESC,
                       (lower(i.handle)=$2) DESC,
@@ -1672,6 +1757,11 @@ fn parse_visibility(value: &str) -> Result<PostVisibility, SocialError> {
     }
 }
 fn app_account_from_row(row: sqlx::postgres::PgRow) -> Result<AppAccount, SocialError> {
+    let verification_tier: Option<String> = row.try_get("verification_tier")?;
+    let brand_profile_id: Option<Uuid> = row.try_get("brand_profile_id")?;
+    let brand_handle: Option<String> = row.try_get("brand_handle")?;
+    let brand_avatar_url: Option<String> = row.try_get("brand_avatar_url")?;
+    let brand_label: Option<String> = row.try_get("brand_label")?;
     Ok(AppAccount {
         id: row.try_get("profile_id")?,
         kind: parse_kind(&row.try_get::<String, _>("kind")?)?,
@@ -1679,7 +1769,15 @@ fn app_account_from_row(row: sqlx::postgres::PgRow) -> Result<AppAccount, Social
         display_name: row.try_get("display_name")?,
         avatar_url: row.try_get("avatar_url")?,
         bio: row.try_get("bio")?,
-        verified: false,
+        verified: verification_tier.is_some(),
+        verification_tier,
+        super_tardy_slot: row.try_get("super_tardy_slot")?,
+        brand_affiliate: brand_profile_id.map(|profile_id| BrandAffiliate {
+            profile_id,
+            handle: brand_handle.unwrap_or_default(),
+            avatar_url: brand_avatar_url.unwrap_or_default(),
+            label: brand_label,
+        }),
         followers: row.try_get("followers")?,
         following: row.try_get("following")?,
         post_count: row.try_get("post_count")?,

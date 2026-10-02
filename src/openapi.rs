@@ -26,12 +26,13 @@ use crate::push::AppNotification;
 use crate::push::{ApnsEnvironment, NotificationPreference, PushDevice, RegisterPushDevice};
 use crate::social::{
     AppAccount, AppFeedPost, AppSearchResult, Comment, Conversation, ConversationMessage,
-    ConversationMode, ConversationSummary, IdentityKind, PostMedia, PostVisibility, SharedLink,
-    SocialIdentity, TardyPost,
+    ConversationMode, ConversationSummary, IdentityKind, PostMedia, PostVisibility,
+    SetBrandAffiliate, SharedLink, SocialIdentity, TardyPost,
 };
 use crate::subscriptions::{
     DeliveryMode, FeedEvent, NewSubscription, Subscription, SubscriptionKind,
 };
+use crate::verification::{VerificationEntitlement, VerificationProduct, VerificationTier};
 use serde_json::{Map, Value, json};
 use utoipa::OpenApi;
 
@@ -50,16 +51,16 @@ use utoipa::OpenApi;
         NewCampaign, PaymentRequired, PaymentRequirements, ResourceInfo, Settlement,
         DeliveryMode, FeedEvent, NewSubscription, Subscription, SubscriptionKind,
         AttachPostAudio, AudioRelease, AudioTrack, AudioUsage, AudioUsageKind, NewAudioRelease,
-        NewOriginalTrack, ReleaseType, TrendingAudio,
+        NewOriginalTrack, ReleaseType, TrendingAudio, VerificationEntitlement, VerificationProduct, VerificationTier,
         AppAccount, AppFeedPost, AppSearchResult, AppNotification, Comment, Conversation, ConversationMessage, ConversationMode, ConversationSummary, IdentityKind,
-        PostMedia, PostVisibility, SharedLink, SocialIdentity, TardyPost, CreatePostComment, SessionCredential, SessionView, SetHandle, SetPostVisibility, SignedInView, UpdateProfile,
+        PostMedia, PostVisibility, SetBrandAffiliate, SharedLink, SocialIdentity, TardyPost, CreatePostComment, SessionCredential, SessionView, SetHandle, SetPostVisibility, SignedInView, UpdateProfile,
         CreateSharedLink, CreateSocialConversation, MarkConversationRead, MarkNotificationsRead, PublishSocialPost, SendSocialMessage, SummonAgent
     )),
     tags(
         (name = "onboarding"), (name = "profiles"), (name = "messaging"),
         (name = "sharing"), (name = "media"), (name = "feed"), (name = "live"),
         (name = "notifications")
-        ,(name = "ads"), (name = "subscriptions"), (name = "social"), (name = "audio")
+        ,(name = "ads"), (name = "subscriptions"), (name = "social"), (name = "audio"), (name = "verification")
     )
 )]
 struct ApiDoc;
@@ -83,6 +84,16 @@ pub fn document() -> Value {
         "bearerAuth": { "type": "http", "scheme": "bearer", "bearerFormat": "Tardy API token" }
     });
     let operations = [
+        array_op(
+            "get",
+            "/v1/verification/products",
+            "listVerificationProducts",
+            "verification",
+            "VerificationProduct",
+            200,
+            false,
+            false,
+        ),
         op(
             "post",
             "/v1/sessions",
