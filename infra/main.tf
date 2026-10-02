@@ -7,7 +7,8 @@ terraform {
 
   required_providers {
     fpl = {
-      source = "registry.fpl.dev/fpl/shroud"
+      source  = "registry.fpl.dev/fpl/shroud"
+      version = "= 0.1.0"
     }
   }
 }
