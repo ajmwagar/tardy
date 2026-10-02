@@ -9,16 +9,19 @@ COPY src ./src
 COPY ingest ./ingest
 COPY policies ./policies
 COPY migrations ./migrations
+COPY launch ./launch
 COPY vendor ./vendor
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/build/target \
     cargo build --locked --release \
       --bin tardy \
+      --bin launch-seed \
       --bin ingest-worker \
       --bin push-worker \
       --bin webhook-worker && \
     cp target/release/tardy /tmp/tardy && \
+    cp target/release/launch-seed /tmp/tardy-launch-seed && \
     cp target/release/ingest-worker /tmp/tardy-ingest-worker && \
     cp target/release/push-worker /tmp/tardy-push-worker && \
     cp target/release/webhook-worker /tmp/tardy-webhook-worker
@@ -32,6 +35,7 @@ RUN apk add --no-cache ca-certificates && \
     chown tardy:tardy /data
 
 COPY --from=builder /tmp/tardy /usr/local/bin/tardy
+COPY --from=builder /tmp/tardy-launch-seed /usr/local/bin/tardy-launch-seed
 COPY --from=builder /tmp/tardy-ingest-worker /usr/local/bin/tardy-ingest-worker
 COPY --from=builder /tmp/tardy-push-worker /usr/local/bin/tardy-push-worker
 COPY --from=builder /tmp/tardy-webhook-worker /usr/local/bin/tardy-webhook-worker
