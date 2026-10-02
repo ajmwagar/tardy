@@ -864,6 +864,55 @@ impl PgSocialStore {
         self.message(actor, conversation_id, message_id).await
     }
 
+    pub async fn set_typing(
+        &self,
+        actor: Uuid,
+        conversation_id: Uuid,
+        active: bool,
+    ) -> Result<(), SocialError> {
+        let mut tx = self.pool.begin().await?;
+        require_participant(&mut tx, conversation_id, actor).await?;
+        if active {
+            sqlx::query("INSERT INTO conversation_typing (conversation_id,profile_id,expires_at)
+                         VALUES ($1,$2,now() + interval '5 seconds')
+                         ON CONFLICT (conversation_id,profile_id) DO UPDATE SET expires_at=excluded.expires_at")
+                .bind(conversation_id).bind(actor).execute(&mut *tx).await?;
+        } else {
+            sqlx::query(
+                "DELETE FROM conversation_typing WHERE conversation_id=$1 AND profile_id=$2",
+            )
+            .bind(conversation_id)
+            .bind(actor)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn typing(
+        &self,
+        actor: Uuid,
+        conversation_id: Uuid,
+    ) -> Result<Vec<Uuid>, SocialError> {
+        let mut tx = self.pool.begin().await?;
+        require_participant(&mut tx, conversation_id, actor).await?;
+        sqlx::query("DELETE FROM conversation_typing WHERE expires_at<=now()")
+            .execute(&mut *tx)
+            .await?;
+        let profiles = sqlx::query_scalar(
+            "SELECT profile_id FROM conversation_typing
+             WHERE conversation_id=$1 AND profile_id<>$2 AND expires_at>now()
+             ORDER BY profile_id",
+        )
+        .bind(conversation_id)
+        .bind(actor)
+        .fetch_all(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(profiles)
+    }
+
     async fn message(
         &self,
         actor: Uuid,

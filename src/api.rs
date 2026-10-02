@@ -250,6 +250,12 @@ pub fn router(state: Arc<AppState>) -> Router {
             put(set_social_message_reaction).delete(clear_social_message_reaction),
         )
         .route(
+            "/v1/social/conversations/{id}/typing",
+            get(list_social_typing)
+                .put(start_social_typing)
+                .delete(stop_social_typing),
+        )
+        .route(
             "/v1/social/conversations/{id}/read",
             post(mark_social_conversation_read),
         )
@@ -1064,6 +1070,40 @@ async fn clear_social_message_reaction(
             .clear_message_reaction(authenticated_actor(&state, &headers).await?, id, message_id)
             .await?,
     ))
+}
+
+async fn list_social_typing(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<Uuid>>, ApiError> {
+    Ok(Json(
+        social_store(&state)?
+            .typing(authenticated_actor(&state, &headers).await?, id)
+            .await?,
+    ))
+}
+
+async fn start_social_typing(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    social_store(&state)?
+        .set_typing(authenticated_actor(&state, &headers).await?, id, true)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn stop_social_typing(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    social_store(&state)?
+        .set_typing(authenticated_actor(&state, &headers).await?, id, false)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn send_social_message(

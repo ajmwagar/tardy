@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 struct AgentState {
     api: String,
     api_token: String,
@@ -80,12 +80,31 @@ async fn process_event(
         return Ok(());
     };
     acknowledge(client, state, &work).await?;
+    set_typing(client, state, &work.conversation_id, true).await?;
+    let (stop_typing, mut stopped) = tokio::sync::oneshot::channel();
+    let typing_client = client.clone();
+    let typing_state = state.clone();
+    let typing_conversation = work.conversation_id.clone();
+    let renewal = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = &mut stopped => break,
+                _ = tokio::time::sleep(Duration::from_secs(3)) => {
+                    if let Err(error) = set_typing(&typing_client, &typing_state, &typing_conversation, true).await {
+                        tracing::warn!(%error, "failed to renew typing lease");
+                    }
+                }
+            }
+        }
+    });
     tracing::info!(event_id = event.id, conversation = %work.conversation_id, "drafting Tardy reply");
     let prompt = reply_prompt(&state.handle, &work);
     let workspace = workspace.to_owned();
-    let reply = tokio::task::spawn_blocking(move || draft_with_codex(&workspace, &prompt))
-        .await?
-        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    let reply = tokio::task::spawn_blocking(move || draft_with_codex(&workspace, &prompt)).await;
+    let _ = stop_typing.send(());
+    let _ = renewal.await;
+    set_typing(client, state, &work.conversation_id, false).await?;
+    let reply = reply?.map_err(|error| std::io::Error::other(error.to_string()))?;
     send_reply(client, state, &work.conversation_id, &reply).await?;
     tracing::info!(event_id = event.id, "posted Tardy reply");
     Ok(())
@@ -246,6 +265,33 @@ async fn acknowledge(
         .await?;
     if !response.status().is_success() {
         return Err(format!("acknowledgement failed: HTTP {}", response.status()).into());
+    }
+    Ok(())
+}
+
+async fn set_typing(
+    client: &reqwest::Client,
+    state: &AgentState,
+    conversation: &str,
+    active: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let request = client
+        .request(
+            if active {
+                reqwest::Method::PUT
+            } else {
+                reqwest::Method::DELETE
+            },
+            format!(
+                "{}/v1/social/conversations/{conversation}/typing",
+                state.api.trim_end_matches('/')
+            ),
+        )
+        .bearer_auth(&state.api_token)
+        .header("x-tardy-profile-id", &state.profile_id);
+    let response = request.send().await?;
+    if !response.status().is_success() {
+        return Err(format!("typing update failed: HTTP {}", response.status()).into());
     }
     Ok(())
 }

@@ -178,6 +178,10 @@ export interface TardyApi {
    * attached is `invalid`. In a work thread, agents granted context receive the message.
    */
   sendMessage(threadId: string, text: string, attachment?: MessageAttachment): Promise<Message>;
+  /** Profiles other than the viewer with an active, short-lived typing lease in this thread. */
+  typing(threadId: string): Promise<string[]>;
+  /** Starts/renews or clears this viewer's typing lease. Leases also expire after disconnects. */
+  setTyping(threadId: string, active: boolean): Promise<void>;
   /**
    * Finds or starts the thread with exactly these participants; the viewer is implied and
    * may be omitted. Idempotent: the same set returns the same thread, so sharing to the same

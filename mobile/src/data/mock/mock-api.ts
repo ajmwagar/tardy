@@ -157,6 +157,8 @@ export class MockTardyApi implements TardyApi {
   private commentLog: Comment[] = [...COMMENTS];
   /** Per (viewer, thread): index into the thread's messages of the last one read. */
   private threadReadThrough = new Map<string, number>();
+  /** Short-lived typing leases keyed by thread then profile. */
+  private typingLeases = new Map<string, Map<string, number>>();
   /** Per viewer: notifications at or before this time are read. */
   private notificationsReadThrough = new Map<string, number>();
   private snapshots = new Map<string, Post[]>();
@@ -558,6 +560,24 @@ export class MockTardyApi implements TardyApi {
     this.messageLog.push(message);
     this.scheduleAgentReply(threadId, message.id);
     return this.delay(message);
+  }
+
+  async typing(threadId: string) {
+    this.visibleThread(threadId);
+    const now = Date.now();
+    const leases = this.typingLeases.get(threadId);
+    if (!leases) return this.delay([]);
+    for (const [profile, expires] of leases) if (expires <= now) leases.delete(profile);
+    return this.delay([...leases.keys()].filter((profile) => profile !== this.viewerId));
+  }
+
+  async setTyping(threadId: string, active: boolean) {
+    this.visibleThread(threadId);
+    const leases = this.typingLeases.get(threadId) ?? new Map<string, number>();
+    this.typingLeases.set(threadId, leases);
+    if (active) leases.set(this.viewerId, Date.now() + 5_000);
+    else leases.delete(this.viewerId);
+    return this.delay(undefined);
   }
 
   async markThreadRead(threadId: string, throughMessageId: string) {

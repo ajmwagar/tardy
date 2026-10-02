@@ -1,7 +1,7 @@
 import { Image } from 'expo-image';
 import { router, Stack, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActionSheetIOS, Alert, AppState, FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActionSheetIOS, Alert, Animated, AppState, Easing, FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ErrorState, Pulse, SkeletonBlock } from '@/components/states';
@@ -163,6 +163,45 @@ function ThreadSkeleton() {
   );
 }
 
+function TypingRow({ profileId }: { profileId: string }) {
+  const account = useAccount(profileId);
+  const [dots] = useState(() => [new Animated.Value(0), new Animated.Value(0), new Animated.Value(0)]);
+
+  useEffect(() => {
+    const animation = Animated.loop(
+      Animated.stagger(
+        130,
+        dots.map((dot) =>
+          Animated.sequence([
+            Animated.timing(dot, { toValue: 1, duration: 260, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+            Animated.timing(dot, { toValue: 0, duration: 260, easing: Easing.in(Easing.quad), useNativeDriver: true }),
+          ]),
+        ),
+      ),
+    );
+    animation.start();
+    return () => animation.stop();
+  }, [dots]);
+
+  return (
+    <View style={styles.typingRow} accessibilityLiveRegion="polite" accessibilityLabel={`${account?.handle ?? 'Someone'} is typing`}>
+      <Avatar account={account} size={26} />
+      <View style={styles.typingBubble}>
+        {dots.map((dot, index) => (
+          <Animated.View
+            key={index}
+            style={[
+              styles.typingDot,
+              { opacity: dot.interpolate({ inputRange: [0, 1], outputRange: [0.35, 1] }), transform: [{ translateY: dot.interpolate({ inputRange: [0, 1], outputRange: [0, -3] }) }] },
+            ]}
+          />
+        ))}
+      </View>
+      <Text style={styles.typingLabel}>{account?.handle ?? 'Someone'} is typing</Text>
+    </View>
+  );
+}
+
 export default function ThreadScreen() {
   const { threadId } = useLocalSearchParams<{ threadId: string }>();
   const insets = useSafeAreaInsets();
@@ -171,6 +210,7 @@ export default function ThreadScreen() {
   const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
+  const [typingIds, setTypingIds] = useState<string[]>([]);
   const group = thread !== null && isGroup(thread);
   const otherAccount = useAccount(thread ? othersIn(thread, meId)[0] : undefined);
   const accounts = useStore((s) => s.accounts);
@@ -191,12 +231,14 @@ export default function ThreadScreen() {
     inFlight.current = true;
     try {
       const full = cursor.current === 0 || checks.current++ % LIVE_FULL_EVERY === 0;
-      const [current, fetched] = await Promise.all([
+      const [current, fetched, typing] = await Promise.all([
         full ? api.thread(threadId) : Promise.resolve(null),
         api.messages(threadId, full ? undefined : quickCheckCursor(cursor.current)),
+        api.typing(threadId),
       ]);
-      await ensureAccounts([...(current?.participantIds ?? []), ...fetched.map((m) => m.senderId)]);
+      await ensureAccounts([...(current?.participantIds ?? []), ...fetched.map((m) => m.senderId), ...typing]);
       if (current) setThread(current);
+      setTypingIds(typing.filter((id) => id !== meId));
       if (fetched.some((m) => (m.sequence ?? 0) > cursor.current)) lastActivity.current = Date.now();
       cursor.current = Math.max(cursor.current, lastSequence(fetched));
       // Keep local pending/failed sends and event lines; everything else comes from the server.
@@ -220,7 +262,20 @@ export default function ThreadScreen() {
     } finally {
       inFlight.current = false;
     }
-  }, [threadId]);
+  }, [threadId, meId]);
+
+  const composing = draft.trim().length > 0;
+  const chatReady = rows !== null;
+  useEffect(() => {
+    if (!chatReady) return;
+    void api.setTyping(threadId, composing).catch(() => {});
+    if (!composing) return;
+    const renewal = setInterval(() => void api.setTyping(threadId, true).catch(() => {}), 3_000);
+    return () => {
+      clearInterval(renewal);
+      void api.setTyping(threadId, false).catch(() => {});
+    };
+  }, [threadId, composing, chatReady]);
 
   useFocusEffect(
     useCallback(() => {
@@ -439,6 +494,7 @@ export default function ThreadScreen() {
             contentContainerStyle={styles.list}
             keyboardDismissMode="interactive"
           />
+          {typingIds.map((id) => <TypingRow key={id} profileId={id} />)}
           <View style={[styles.composer, { paddingBottom: Math.max(insets.bottom, 10) }]}>
             <TextInput
               value={draft}
@@ -491,6 +547,10 @@ const styles = StyleSheet.create({
   textMine: { color: colors.onPrimary, fontSize: 15, lineHeight: 20 },
   textTheirs: { color: colors.text, fontSize: 15, lineHeight: 20 },
   failed: { color: colors.alarm, fontSize: 11.5 },
+  typingRow: { flexDirection: 'row', alignItems: 'center', gap: 7, minHeight: 38, paddingHorizontal: 16, paddingVertical: 4 },
+  typingBubble: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 12, height: 30, borderRadius: 16, backgroundColor: colors.elevated },
+  typingDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: colors.textSecondary },
+  typingLabel: { color: colors.textTertiary, fontSize: 11.5 },
   shared: { width: 230, borderRadius: radius.media, backgroundColor: colors.surface, overflow: 'hidden' },
   sharedHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, padding: 8 },
   sharedMedia: { width: 230, height: 230 * 1.25, backgroundColor: colors.elevated },

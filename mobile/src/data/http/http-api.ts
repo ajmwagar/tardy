@@ -27,7 +27,7 @@ import type {
   ThreadRef,
   Visibility,
 } from '../types';
-import { array, arraySkipping, isoToMs, snakeKeys, TardyWireError, type Decoder } from './codec';
+import { array, arraySkipping, isoToMs, snakeKeys, string, TardyWireError, type Decoder } from './codec';
 import * as W from './wire';
 import type { PlayKind } from '@/audio/plays';
 import type { PlanId } from '@/membership/plans';
@@ -359,6 +359,14 @@ export class HttpTardyApi implements TardyApi {
     const link = this.links.get(attachment.sharedLinkId);
     if (!text.trim() && !link) throw new TardyApiError('invalid', 'A shared link needs text, or a link created by this client.');
     return send(text.trim() || link!.canonicalUrl, attachment.sharedLinkId);
+  }
+
+  typing(threadId: string): Promise<string[]> {
+    return this.request('GET', `/v1/social/conversations/${segment(threadId)}/typing`, { decode: array(string) });
+  }
+
+  async setTyping(threadId: string, active: boolean): Promise<void> {
+    await this.request(active ? 'PUT' : 'DELETE', `/v1/social/conversations/${segment(threadId)}/typing`);
   }
 
   async openThread(participants: readonly ThreadParticipant[], title?: string): Promise<ThreadRef> {
