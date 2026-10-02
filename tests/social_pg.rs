@@ -129,6 +129,19 @@ async fn dm_stays_quiet_until_an_owned_agent_is_summoned() {
         .await
         .unwrap();
     assert_eq!(reloaded[1].reactions, acknowledged.reactions);
+    assert!(reloaded[1].read_by.is_empty());
+    store
+        .mark_read(human, conversation.id, messages[1].id)
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .messages(friend, conversation.id, 0, 50)
+            .await
+            .unwrap()[1]
+            .read_by,
+        vec![human]
+    );
     store
         .mark_read(friend, conversation.id, messages[1].id)
         .await

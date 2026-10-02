@@ -224,6 +224,7 @@ export const conversationMessage: Decoder<{ message: Message; sequence: number }
     sharedPost: optional(sharedPost),
     sharedLinkId: optional(string),
     reactions,
+    readByIds: optional(array(string)),
     sequence: integer,
   }),
   ({ sequence, ...m }) => {
@@ -232,6 +233,7 @@ export const conversationMessage: Decoder<{ message: Message; sequence: number }
     if (message.sharedLinkId === undefined) delete message.sharedLinkId;
     if (message.sharedPost === undefined) delete message.sharedPost;
     if (message.reactions === undefined) delete message.reactions;
+    if (message.readByIds === undefined) delete message.readByIds;
     return { message: { ...message, sequence }, sequence };
   },
 );

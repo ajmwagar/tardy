@@ -98,6 +98,7 @@ const Bubble = memo(function Bubble({
   onRetry,
   onReact,
   onToggleReaction,
+  receipt,
 }: {
   row: Row;
   mine: boolean;
@@ -109,6 +110,7 @@ const Bubble = memo(function Bubble({
   /** Long-press: open the tap-back bar above this bubble. */
   onReact: (row: Row, anchor: ReactionAnchor) => void;
   onToggleReaction: (row: Row, kind: ReactionKind) => void;
+  receipt?: string;
 }) {
   const sender = useAccount(row.senderId);
   const bubbleRef = useRef<View>(null);
@@ -146,6 +148,7 @@ const Bubble = memo(function Bubble({
           align={mine ? 'flex-end' : 'flex-start'}
         />
         {row.failed && <Text style={styles.failed}>Not delivered · tap to retry</Text>}
+        {!row.failed && receipt ? <Text style={styles.receipt}>{receipt}</Text> : null}
       </View>
     </View>
   );
@@ -331,6 +334,7 @@ export default function ThreadScreen() {
   );
 
   const data = useMemo(() => [...(rows ?? [])].reverse(), [rows]); // inverted list: newest first
+  const latestMineId = useMemo(() => [...(rows ?? [])].reverse().find((row) => row.senderId === meId && !row.event)?.id, [rows, meId]);
 
   /**
    * Adds one of the viewer's own agents. The confirmation names the agent and what it will
@@ -411,6 +415,15 @@ export default function ThreadScreen() {
       const older = data[index + 1];
       const newer = data[index - 1];
       const gap = older && Date.parse(item.createdAt) - Date.parse(older.createdAt) > BREAK_MS;
+      const recipientCount = Math.max(0, (thread?.participantIds.length ?? 1) - 1);
+      const readCount = item.readByIds?.length ?? 0;
+      const receipt = item.id === latestMineId && !item.pending
+        ? readCount >= recipientCount && recipientCount > 0
+          ? 'Read'
+          : readCount > 0
+            ? `Read by ${readCount}`
+            : 'Delivered'
+        : undefined;
       if (item.event) {
         return (
           <Text style={styles.event} accessibilityRole="text">
@@ -430,11 +443,12 @@ export default function ThreadScreen() {
             onRetry={retry}
             onReact={openPicker}
             onToggleReaction={toggleReaction}
+            receipt={receipt}
           />
         </View>
       );
     },
-    [data, meId, retry, group, openPicker, toggleReaction],
+    [data, meId, retry, group, openPicker, toggleReaction, latestMineId, thread],
   );
 
   return (
@@ -547,6 +561,7 @@ const styles = StyleSheet.create({
   textMine: { color: colors.onPrimary, fontSize: 15, lineHeight: 20 },
   textTheirs: { color: colors.text, fontSize: 15, lineHeight: 20 },
   failed: { color: colors.alarm, fontSize: 11.5 },
+  receipt: { color: colors.textTertiary, fontSize: 11.5, paddingHorizontal: 4 },
   typingRow: { flexDirection: 'row', alignItems: 'center', gap: 7, minHeight: 38, paddingHorizontal: 16, paddingVertical: 4 },
   typingBubble: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 12, height: 30, borderRadius: 16, backgroundColor: colors.elevated },
   typingDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: colors.textSecondary },

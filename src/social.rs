@@ -157,6 +157,9 @@ pub struct ConversationMessage {
     pub created_at: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reactions: Vec<ReactionSummary>,
+    /// Participants other than the sender whose durable read watermark reached this message.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub read_by: Vec<Uuid>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -923,6 +926,7 @@ impl PgSocialStore {
                                 .expect("selected with last id"),
                         )
                         .expect("reaction rows have a stable shape"),
+                        read_by: Vec::new(),
                     });
                 Ok(ConversationSummary {
                     id,
@@ -978,7 +982,12 @@ impl PgSocialStore {
                     (SELECT COALESCE(jsonb_agg(jsonb_build_object('kind',r.kind,'account_ids',r.account_ids) ORDER BY r.sort), '[]'::jsonb)
                      FROM (SELECT kind,array_agg(reactor_profile_id ORDER BY reactor_profile_id) account_ids,
                                   min(CASE kind WHEN 'like' THEN 1 WHEN 'love' THEN 2 WHEN 'laugh' THEN 3 WHEN 'emphasize' THEN 4 WHEN 'question' THEN 5 WHEN 'seen' THEN 6 ELSE 7 END) sort
-                           FROM conversation_message_reactions WHERE message_id=m.id GROUP BY kind) r) AS reactions
+                           FROM conversation_message_reactions WHERE message_id=m.id GROUP BY kind) r) AS reactions,
+                    ARRAY(SELECT p.profile_id FROM conversation_participants p
+                          WHERE p.conversation_id=m.conversation_id
+                            AND p.profile_id<>m.sender_profile_id
+                            AND p.last_read_sequence>=m.sequence
+                          ORDER BY p.profile_id) AS read_by
              FROM conversation_messages m WHERE m.conversation_id=$1 AND m.sequence>$2 ORDER BY m.sequence LIMIT $3")
             .bind(conversation_id).bind(after).bind(limit).fetch_all(&self.pool).await?;
         rows.into_iter().map(|row| message_from_row(&row)).collect()
@@ -1150,6 +1159,7 @@ impl PgSocialStore {
             shared_link_id,
             created_at: row.try_get("created_at")?,
             reactions: Vec::new(),
+            read_by: Vec::new(),
         };
         tx.commit().await?;
         Ok(message)
@@ -1762,6 +1772,7 @@ fn message_from_row(row: &sqlx::postgres::PgRow) -> Result<ConversationMessage, 
         created_at: row.try_get("created_at")?,
         reactions: serde_json::from_value(row.try_get("reactions")?)
             .map_err(|_| SocialError::Invalid("persisted reactions"))?,
+        read_by: row.try_get("read_by")?,
     })
 }
 fn map_foreign_key(
