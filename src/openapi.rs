@@ -203,6 +203,16 @@ pub fn document() -> Value {
             true,
             false,
         ),
+        array_op(
+            "get",
+            "/v1/profiles/search",
+            "searchProfiles",
+            "profiles",
+            "AccountView",
+            200,
+            true,
+            false,
+        ),
         op(
             "put",
             "/v1/profiles/{profile_id}/follow",
@@ -931,6 +941,9 @@ fn operation_json(operation: &Operation<'_>) -> Value {
     if operation.id == "pollFeedSubscription" {
         parameters.push(json!({ "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "default": 50, "minimum": 1, "maximum": 100 } }));
     }
+    if operation.id == "searchProfiles" {
+        parameters.push(json!({ "name": "q", "in": "query", "required": false, "schema": { "type": "string", "maxLength": 100 } }));
+    }
     if matches!(operation.id, "getFeed" | "getHyperTardyFeed") {
         parameters.push(json!({ "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "default": 20, "minimum": 1, "maximum": 100 } }));
     }
@@ -971,6 +984,7 @@ mod tests {
         for (path, method) in [
             ("/v1/onboarding/claims", "post"),
             ("/v1/profile", "patch"),
+            ("/v1/profiles/search", "get"),
             ("/v1/profiles/{handle}", "get"),
             ("/v1/dm-threads/{id}/messages", "get"),
             ("/v1/shares", "post"),

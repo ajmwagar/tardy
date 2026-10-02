@@ -189,6 +189,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/profile", get(current_profile).patch(update_profile))
         .route("/v1/profile/following", get(current_following))
         .route("/v1/profiles", post(create_profile).get(list_profiles))
+        .route("/v1/profiles/search", get(search_profiles))
         .route("/v1/profiles/by-id/{id}", get(get_profile_by_id))
         .route("/v1/profiles/by-id/{id}/posts", get(get_profile_posts))
         .route("/v1/profiles/{handle}", get(get_profile))
@@ -533,6 +534,25 @@ async fn list_profiles(
         return Err(ApiError::bad_request("at most 100 profile ids are allowed"));
     }
     Ok(Json(social_store(&state)?.app_accounts(&ids).await?))
+}
+
+#[derive(Deserialize)]
+struct ProfileSearchQuery {
+    #[serde(default)]
+    q: String,
+}
+
+async fn search_profiles(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<ProfileSearchQuery>,
+) -> Result<Json<Vec<AppAccount>>, ApiError> {
+    let account = authenticated_account(&state, &headers).await?;
+    Ok(Json(
+        social_store(&state)?
+            .search_app_accounts(account, &query.q, 50)
+            .await?,
+    ))
 }
 
 fn signed_in_view(value: HumanSession) -> SignedInView {
