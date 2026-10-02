@@ -236,7 +236,7 @@ export const conversationMessage: Decoder<{ message: Message; sequence: number }
     sharedLinkId: optional(string),
     media: optional(array(object({
       assetId: wire('asset_id', string),
-      type: knownOf(['image'] as const),
+      type: oneOf(['image'] as const),
       url: string,
       width: integer,
       height: integer,
