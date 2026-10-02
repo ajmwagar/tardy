@@ -1,7 +1,9 @@
 (() => {
   'use strict';
-  const local = location.hostname === '127.0.0.1' || location.hostname === 'localhost';
-  const api = (local ? 'http://127.0.0.1:3300' : document.querySelector('meta[name="tardy-api-url"]')?.content)?.replace(/\/$/, '');
+  const loopback = location.hostname === '127.0.0.1' || location.hostname === 'localhost';
+  const tailnet = location.hostname.endsWith('.ts.net');
+  const developmentApi = loopback ? 'http://127.0.0.1:3300' : tailnet ? `https://${location.hostname}:8443` : null;
+  const api = (developmentApi || document.querySelector('meta[name="tardy-api-url"]')?.content)?.replace(/\/$/, '');
   const status = document.querySelector('#billing-status');
   const buttons = [...document.querySelectorAll('[data-tier]')];
   const manage = document.querySelector('#manage-billing');
