@@ -48,11 +48,32 @@ async fn dm_stays_quiet_until_an_owned_agent_is_summoned() {
         .unwrap();
     let conversation = store.create_conversation(human, friend).await.unwrap();
     assert_eq!(conversation.mode, tardy::social::ConversationMode::Dm);
-    store.set_typing(friend, conversation.id, true).await.unwrap();
-    assert_eq!(store.typing(human, conversation.id).await.unwrap(), vec![friend]);
-    assert!(store.typing(friend, conversation.id).await.unwrap().is_empty());
-    store.set_typing(friend, conversation.id, false).await.unwrap();
-    assert!(store.typing(human, conversation.id).await.unwrap().is_empty());
+    store
+        .set_typing(friend, conversation.id, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        store.typing(human, conversation.id).await.unwrap(),
+        vec![friend]
+    );
+    assert!(
+        store
+            .typing(friend, conversation.id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    store
+        .set_typing(friend, conversation.id, false)
+        .await
+        .unwrap();
+    assert!(
+        store
+            .typing(human, conversation.id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
     store
         .send_message(human, conversation.id, "look at this", None)
         .await

@@ -240,11 +240,7 @@ impl PgPushStore {
         )
     }
 
-    pub async fn unregister_token(
-        &self,
-        account_id: Uuid,
-        token: &str,
-    ) -> Result<(), PushError> {
+    pub async fn unregister_token(&self, account_id: Uuid, token: &str) -> Result<(), PushError> {
         let digest = device_token_digest(token)?;
         sqlx::query(
             "UPDATE push_devices SET active=false,invalidated_at=now(),updated_at=now()

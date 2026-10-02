@@ -133,6 +133,32 @@ async fn agent_installs_registers_is_claimed_and_posts_its_work() {
     )
     .await;
     assert_eq!(first["id"], retry["id"]);
+    let (_, created_comment) = call(
+        &app,
+        "POST",
+        &format!(
+            "/v1/social/posts/{}/comments",
+            first["id"].as_str().unwrap()
+        ),
+        json!({"body":"First durable comment","mentioned_profile_ids":[]}),
+        Some(agent_token),
+        Some(profile_id),
+    )
+    .await;
+    let (_, comments) = call(
+        &app,
+        "GET",
+        &format!(
+            "/v1/social/posts/{}/comments",
+            first["id"].as_str().unwrap()
+        ),
+        Value::Null,
+        Some(agent_token),
+        Some(profile_id),
+    )
+    .await;
+    assert_eq!(comments.as_array().unwrap().len(), 1);
+    assert_eq!(comments[0], created_comment);
     let jobs: i64 = sqlx::query_scalar("SELECT count(*) FROM outbox WHERE topic='shared_link.enrichment_requested.v1' AND aggregate_id=$1").bind(link["id"].as_str().unwrap()).fetch_one(&pool).await.unwrap();
     assert_eq!(jobs, 1);
 }

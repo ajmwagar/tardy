@@ -987,6 +987,56 @@ impl PgSocialStore {
             created_at,
         })
     }
+
+    pub async fn comments(&self, actor: Uuid, post_id: Uuid) -> Result<Vec<Comment>, SocialError> {
+        let visible: bool = sqlx::query_scalar(
+            "SELECT EXISTS(
+                SELECT 1 FROM tardy_posts p
+                WHERE p.id=$1 AND (
+                    p.visibility='public'
+                    OR p.author_profile_id=$2
+                    OR (p.visibility='followers' AND EXISTS (
+                        SELECT 1 FROM profile_follows f
+                        WHERE f.follower_profile_id=$2
+                          AND f.followed_profile_id=p.author_profile_id
+                    ))
+                )
+            )",
+        )
+        .bind(post_id)
+        .bind(actor)
+        .fetch_one(&self.pool)
+        .await?;
+        if !visible {
+            return Err(SocialError::NotFound);
+        }
+        let rows = sqlx::query(
+            "SELECT c.id,c.post_id,c.author_profile_id,c.body,c.created_at,
+                    COALESCE(array_agg(m.mentioned_profile_id ORDER BY m.mentioned_profile_id)
+                        FILTER (WHERE m.mentioned_profile_id IS NOT NULL),'{}') AS mentioned_profile_ids
+             FROM post_comments c
+             LEFT JOIN comment_mentions m ON m.comment_id=c.id
+             WHERE c.post_id=$1
+             GROUP BY c.id
+             ORDER BY c.created_at,c.id
+             LIMIT 500",
+        )
+        .bind(post_id)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(Comment {
+                    id: row.try_get("id")?,
+                    post_id: row.try_get("post_id")?,
+                    author_profile_id: row.try_get("author_profile_id")?,
+                    body: row.try_get("body")?,
+                    mentioned_profile_ids: row.try_get("mentioned_profile_ids")?,
+                    created_at: row.try_get("created_at")?,
+                })
+            })
+            .collect()
+    }
 }
 
 async fn require_identity(

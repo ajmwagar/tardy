@@ -268,7 +268,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             post(summon_social_agent),
         )
         .route("/v1/social/posts", post(publish_social_post))
-        .route("/v1/social/posts/{id}/comments", post(create_post_comment))
+        .route(
+            "/v1/social/posts/{id}/comments",
+            get(list_post_comments).post(create_post_comment),
+        )
         .route("/v1/audio/releases", post(create_audio_release))
         .route("/v1/audio/releases/{id}/tracks", post(add_audio_track))
         .route("/v1/social/posts/{id}/audio", post(attach_post_audio))
@@ -645,10 +648,26 @@ const LOCAL_MEDIA: [(&str, &str, u64); 7] = [
 ];
 
 const DEV_BRAGS: [(&str, &str, u64); 4] = [
-    ("10000000-0000-0000-0000-000000000001", "2026-10-01-brainrot-week", 32_000),
-    ("10000000-0000-0000-0000-000000000002", "2026-10-01-clankercast-ep1", 32_600),
-    ("10000000-0000-0000-0000-000000000003", "2026-10-01-launch-ad-bank", 22_700),
-    ("10000000-0000-0000-0000-000000000004", "2026-10-01-launch-open-in-tardy", 20_000),
+    (
+        "10000000-0000-0000-0000-000000000001",
+        "2026-10-01-brainrot-week",
+        32_000,
+    ),
+    (
+        "10000000-0000-0000-0000-000000000002",
+        "2026-10-01-clankercast-ep1",
+        32_600,
+    ),
+    (
+        "10000000-0000-0000-0000-000000000003",
+        "2026-10-01-launch-ad-bank",
+        22_700,
+    ),
+    (
+        "10000000-0000-0000-0000-000000000004",
+        "2026-10-01-launch-open-in-tardy",
+        20_000,
+    ),
 ];
 
 fn local_blob_url(state: &AppState, name: &str) -> Option<String> {
@@ -1326,6 +1345,18 @@ pub(crate) struct CreatePostComment {
     mentioned_profile_ids: Vec<Uuid>,
 }
 
+async fn list_post_comments(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<Comment>>, ApiError> {
+    Ok(Json(
+        social_store(&state)?
+            .comments(authenticated_actor(&state, &headers).await?, id)
+            .await?,
+    ))
+}
+
 async fn create_post_comment(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
@@ -1772,7 +1803,11 @@ async fn reels_feed(
     localize_posts(&state, &mut items);
     // Reels is a video-only surface. Home may truthfully mix photo and video posts,
     // but passing photos to the reel client produces an intentionally empty black canvas.
-    items.retain(|post| post.media.first().is_some_and(|media| media["type"] == "video"));
+    items.retain(|post| {
+        post.media
+            .first()
+            .is_some_and(|media| media["type"] == "video")
+    });
     Ok(Json(serde_json::json!({"items":items,"next_cursor":null})))
 }
 
@@ -1846,7 +1881,13 @@ async fn local_blob(
     }
     let root = std::env::var_os("TARDY_LOCAL_BLOB_DIR")
         .ok_or_else(|| ApiError::not_found("local blobs are disabled"))?;
-    serve_local_file(std::path::Path::new(&root).join(&name), &name, method, headers).await
+    serve_local_file(
+        std::path::Path::new(&root).join(&name),
+        &name,
+        method,
+        headers,
+    )
+    .await
 }
 
 async fn local_brag(
