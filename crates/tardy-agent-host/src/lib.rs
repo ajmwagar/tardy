@@ -51,6 +51,10 @@ pub struct HostData {
     pub queue: VecDeque<QueuedEvent>,
     #[serde(default)]
     pub pending_replies: BTreeMap<String, PendingReply>,
+    #[serde(default)]
+    pub paused_conversations: BTreeSet<String>,
+    #[serde(default)]
+    pub last_results: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -72,6 +76,45 @@ pub struct WorkActivation {
     pub context_from_sequence: Option<i64>,
     pub sequence: Option<i64>,
     pub legacy_dm: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AgentCommand {
+    Status,
+    Stop,
+    Resume,
+    ResetSession,
+    NewWorktree,
+    Tardy,
+}
+
+impl AgentCommand {
+    pub fn parse(body: &str) -> Result<Option<Self>, &'static str> {
+        let body = body.trim();
+        if !body.starts_with('/') {
+            return Ok(None);
+        }
+        match body {
+            "/status" => Ok(Some(Self::Status)),
+            "/stop" => Ok(Some(Self::Stop)),
+            "/resume" => Ok(Some(Self::Resume)),
+            "/reset" | "/reset-session" => Ok(Some(Self::ResetSession)),
+            "/new-worktree" => Ok(Some(Self::NewWorktree)),
+            "/tardy" => Ok(Some(Self::Tardy)),
+            _ => Err(
+                "Unknown agent command. Use /status, /stop, /resume, /reset-session, /new-worktree, or /tardy.",
+            ),
+        }
+    }
+
+    pub fn parse_for_agent(body: &str, handle: &str) -> Result<Option<Self>, &'static str> {
+        if let result @ (Ok(Some(_)) | Err(_)) = Self::parse(body) {
+            return result;
+        }
+        let normalized = body.trim().trim_end_matches(['.', '!', '?']).to_lowercase();
+        let summon = format!("@{} turn this into a tardy", handle.to_lowercase());
+        Ok((normalized == summon).then_some(Self::Tardy))
+    }
 }
 
 impl WorkActivation {
@@ -109,6 +152,28 @@ impl WorkActivation {
                 .unwrap_or(false),
         })
     }
+}
+
+pub fn dispatchable_deliveries(
+    queue: &VecDeque<QueuedEvent>,
+    active_keys: &BTreeSet<String>,
+    paused_conversations: &BTreeSet<String>,
+    capacity: usize,
+) -> Vec<String> {
+    let mut selected_keys = active_keys.clone();
+    queue
+        .iter()
+        .filter_map(|queued| {
+            let activation = WorkActivation::from_event(&queued.event)?;
+            if paused_conversations.contains(&activation.conversation_id)
+                || !selected_keys.insert(activation.key)
+            {
+                return None;
+            }
+            Some(queued.delivery_id.clone())
+        })
+        .take(capacity.saturating_sub(active_keys.len()))
+        .collect()
 }
 
 pub fn verify_signature(secret: &str, body: &[u8], supplied: &str) -> bool {
@@ -305,6 +370,7 @@ impl CodexRunner {
         command.stdin(std::process::Stdio::piped());
         command.stdout(std::process::Stdio::piped());
         command.stderr(std::process::Stdio::piped());
+        command.kill_on_drop(true);
         let mut child = command.spawn()?;
         child
             .stdin
@@ -481,6 +547,55 @@ mod tests {
         let activation = WorkActivation::from_event(&event).unwrap();
         assert!(activation.legacy_dm);
         assert!(activation.message_id.is_empty());
+    }
+
+    #[test]
+    fn parses_only_exact_allowlisted_agent_commands() {
+        assert_eq!(
+            AgentCommand::parse(" /status "),
+            Ok(Some(AgentCommand::Status))
+        );
+        assert_eq!(
+            AgentCommand::parse("/reset"),
+            Ok(Some(AgentCommand::ResetSession))
+        );
+        assert!(AgentCommand::parse("please stop").unwrap().is_none());
+        assert!(AgentCommand::parse("/status; rm -rf nope").is_err());
+        assert!(AgentCommand::parse("/deploy production").is_err());
+        assert_eq!(
+            AgentCommand::parse_for_agent("@BuildBot turn this into a Tardy!", "buildbot"),
+            Ok(Some(AgentCommand::Tardy))
+        );
+    }
+
+    #[test]
+    fn schedules_distinct_conversations_without_reordering_each_one() {
+        let event = |id, conversation: &str| QueuedEvent {
+            delivery_id: format!("d{id}"),
+            event: InboxEvent {
+                id,
+                kind: "work_message".into(),
+                payload: serde_json::json!({
+                    "conversation_id": conversation,
+                    "message_id": format!("m{id}"),
+                    "body": "work"
+                }),
+            },
+        };
+        let queue = VecDeque::from([event(1, "a"), event(2, "a"), event(3, "b"), event(4, "c")]);
+        assert_eq!(
+            dispatchable_deliveries(&queue, &BTreeSet::new(), &BTreeSet::new(), 2),
+            ["d1", "d3"]
+        );
+        assert_eq!(
+            dispatchable_deliveries(
+                &queue,
+                &BTreeSet::from(["conversation:a".into()]),
+                &BTreeSet::from(["b".into()]),
+                4,
+            ),
+            ["d4"]
+        );
     }
 
     #[test]

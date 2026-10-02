@@ -99,7 +99,8 @@ function MessageText({ text, mine }: { text: string; mine: boolean }) {
 function LinkCard({ id, url }: { id: string; url: string }) {
   // A failed preview read leaves the plain card: the link itself still opens.
   const { link } = useSharedLink(id);
-  return <LinkPreview url={url} link={link} width={LINK_CARD_WIDTH} />;
+  if (!link && !isUrl(url)) return <SkeletonBlock style={{ width: LINK_CARD_WIDTH, height: 150 }} />;
+  return <LinkPreview url={link?.canonicalUrl ?? url} link={link} width={LINK_CARD_WIDTH} />;
 }
 
 const Bubble = memo(function Bubble({
@@ -140,9 +141,8 @@ const Bubble = memo(function Bubble({
       <View style={[styles.bubbleColumn, mine && styles.bubbleColumnMine]}>
         {showName && !mine && sender && <Text style={styles.senderName}>{sender.handle}</Text>}
         {row.sharedPost && <SharedPostCard message={row} />}
-        {row.sharedLinkId && !row.sharedPost && isUrl(row.text) ? (
-          <LinkCard id={row.sharedLinkId} url={row.text} />
-        ) : row.text ? (
+        {row.sharedLinkId && !row.sharedPost ? <LinkCard id={row.sharedLinkId} url={isUrl(row.text) ? row.text : ''} /> : null}
+        {row.text && !(row.sharedLinkId && isUrl(row.text)) ? (
           <Pressable
             ref={bubbleRef}
             onPress={row.failed ? () => onRetry(row) : undefined}

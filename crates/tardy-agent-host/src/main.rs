@@ -6,15 +6,16 @@ use axum::{
     routing::{get, post},
 };
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
 use tardy_agent_host::{
-    AgentCredential, BoxError, CodexRunner, ConversationMessage, HostData, InboxEvent,
-    PendingReply, QueuedEvent, TapbackDecider, WorkActivation, activation_prompt, load_json,
-    store_json, verify_signature,
+    AgentCommand, AgentCredential, BoxError, CodexRunner, ConversationMessage, HostData,
+    InboxEvent, PendingReply, QueuedEvent, TapbackDecider, WorkActivation, activation_prompt,
+    dispatchable_deliveries, load_json, store_json, verify_signature,
 };
 use tokio::sync::{Mutex, Notify};
 
@@ -27,6 +28,11 @@ struct App {
     runner: Arc<CodexRunner>,
     notify: Arc<Notify>,
     tapbacks: Option<Arc<TapbackDecider>>,
+}
+
+struct ActiveWork {
+    queued: QueuedEvent,
+    abort: tokio::task::AbortHandle,
 }
 
 #[tokio::main]
@@ -229,36 +235,300 @@ async fn enqueue(app: &App, delivery_id: String, event: InboxEvent) -> Result<()
 }
 
 async fn work_loop(app: App) {
+    let (finished_tx, mut finished_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut active = std::collections::BTreeMap::<String, ActiveWork>::new();
     loop {
-        let queued = { app.data.lock().await.queue.front().cloned() };
-        let Some(queued) = queued else {
-            app.notify.notified().await;
-            continue;
+        let queued = {
+            app.data
+                .lock()
+                .await
+                .queue
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>()
         };
-        match process_one(&app, &queued).await {
-            Ok(()) => {
-                let mut data = app.data.lock().await;
-                data.queue.pop_front();
-                data.pending_replies.remove(&queued.delivery_id);
-                data.processed_deliveries.insert(queued.delivery_id.clone());
-                while data.processed_deliveries.len() > 2_000 {
-                    if let Some(first) = data.processed_deliveries.first().cloned() {
-                        data.processed_deliveries.remove(&first);
+
+        // Commands bypass a busy conversation slot, making /stop responsive.
+        if let Some((queued, activation, command)) = queued.iter().find_map(|queued| {
+            let activation = WorkActivation::from_event(&queued.event)?;
+            match AgentCommand::parse_for_agent(&activation.body, &app.credential.handle) {
+                Ok(Some(command)) => Some((queued.clone(), activation, Ok(command))),
+                Err(help) => Some((queued.clone(), activation, Err(help))),
+                Ok(None) => None,
+            }
+        }) {
+            let response = match command {
+                Ok(command) => run_agent_command(&app, command, &activation, &mut active).await,
+                Err(help) => Ok(Some(help.to_owned())),
+            };
+            match response {
+                Ok(body) => {
+                    if !activation.message_id.is_empty() {
+                        let _ = acknowledge(&app, &activation).await;
+                    }
+                    let delivered = if let Some(body) = body {
+                        let reply = PendingReply {
+                            conversation_id: activation.conversation_id,
+                            body,
+                            legacy_dm: activation.legacy_dm,
+                            context_cursor: activation.sequence,
+                        };
+                        send_reply(&app, &reply).await
+                    } else {
+                        Ok(())
+                    };
+                    if let Err(error) = delivered {
+                        tracing::error!(%error, "agent command reply failed; retained for retry");
+                    } else if let Err(error) = finish_delivery(&app, &queued).await {
+                        tracing::error!(%error, "failed to commit agent command");
                     }
                 }
-                if queued.delivery_id.starts_with("poll:") {
-                    data.cursor = data.cursor.max(queued.event.id);
-                }
-                if let Err(error) = store_json(&app.data_path, &*data).await {
-                    tracing::error!(%error, "failed to commit processed activation");
+                Err(error) => tracing::error!(%error, "agent command failed; retained for retry"),
+            }
+            continue;
+        }
+
+        let paused = { app.data.lock().await.paused_conversations.clone() };
+        let active_keys = active.keys().cloned().collect();
+        let durable_queue = queued.iter().cloned().collect();
+        let selected = dispatchable_deliveries(&durable_queue, &active_keys, &paused, 4)
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        for queued in queued {
+            if !selected.contains(&queued.delivery_id) {
+                continue;
+            }
+            let Some(activation) = WorkActivation::from_event(&queued.event) else {
+                let _ = finish_delivery(&app, &queued).await;
+                continue;
+            };
+            let key = activation.key;
+            let task_app = app.clone();
+            let task_queued = queued.clone();
+            let task_key = key.clone();
+            let tx = finished_tx.clone();
+            let task = tokio::spawn(async move {
+                let result = process_one(&task_app, &task_queued).await;
+                let _ = tx.send((task_key, task_queued, result));
+            });
+            active.insert(
+                key,
+                ActiveWork {
+                    queued,
+                    abort: task.abort_handle(),
+                },
+            );
+        }
+
+        tokio::select! {
+            Some((key, queued, result)) = finished_rx.recv() => {
+                active.remove(&key);
+                match result {
+                    Ok(()) => {
+                        if let Err(error) = finish_delivery(&app, &queued).await {
+                            tracing::error!(%error, "failed to commit processed activation");
+                        }
+                    }
+                    Err(error) => {
+                        tracing::error!(delivery = %queued.delivery_id, %error, "activation failed; retained for retry");
+                        tokio::time::sleep(Duration::from_secs(3)).await;
+                    }
                 }
             }
-            Err(error) => {
-                tracing::error!(delivery = %queued.delivery_id, %error, "activation failed; retained for retry");
-                tokio::time::sleep(Duration::from_secs(3)).await;
-            }
+            _ = app.notify.notified() => {}
+            _ = tokio::time::sleep(Duration::from_millis(250)) => {}
         }
     }
+}
+
+async fn finish_delivery(app: &App, queued: &QueuedEvent) -> Result<(), BoxError> {
+    let mut data = app.data.lock().await;
+    data.queue
+        .retain(|candidate| candidate.delivery_id != queued.delivery_id);
+    data.pending_replies.remove(&queued.delivery_id);
+    data.processed_deliveries.insert(queued.delivery_id.clone());
+    while data.processed_deliveries.len() > 2_000 {
+        if let Some(first) = data.processed_deliveries.first().cloned() {
+            data.processed_deliveries.remove(&first);
+        }
+    }
+    if queued.delivery_id.starts_with("poll:") {
+        data.cursor = data.cursor.max(queued.event.id);
+    }
+    store_json(&app.data_path, &*data).await
+}
+
+async fn run_agent_command(
+    app: &App,
+    command: AgentCommand,
+    activation: &WorkActivation,
+    active: &mut std::collections::BTreeMap<String, ActiveWork>,
+) -> Result<Option<String>, BoxError> {
+    let conversation = &activation.conversation_id;
+    let key = &activation.key;
+    match command {
+        AgentCommand::Status => {
+            let data = app.data.lock().await;
+            let state = if data.paused_conversations.contains(conversation) {
+                "paused"
+            } else if active.contains_key(key) {
+                "working"
+            } else {
+                "ready"
+            };
+            let session = if data.sessions.contains_key(key) {
+                "resumable"
+            } else {
+                "new"
+            };
+            Ok(Some(format!(
+                "Agent is {state}. This conversation's session is {session}."
+            )))
+        }
+        AgentCommand::Stop => {
+            if let Some(work) = active.remove(key) {
+                work.abort.abort();
+                finish_delivery(app, &work.queued).await?;
+            }
+            let mut data = app.data.lock().await;
+            data.paused_conversations.insert(conversation.clone());
+            store_json(&app.data_path, &*data).await?;
+            drop(data);
+            let _ = set_typing(app, conversation, false).await;
+            Ok(Some("Stopped and paused this conversation. Send /resume when you want me to continue.".into()))
+        }
+        AgentCommand::Resume => {
+            let mut data = app.data.lock().await;
+            data.paused_conversations.remove(conversation);
+            store_json(&app.data_path, &*data).await?;
+            drop(data);
+            app.notify.notify_one();
+            Ok(Some("Resumed this conversation. Queued messages can run again.".into()))
+        }
+        AgentCommand::ResetSession => {
+            if let Some(work) = active.remove(key) {
+                work.abort.abort();
+                finish_delivery(app, &work.queued).await?;
+            }
+            let mut data = app.data.lock().await;
+            data.sessions.remove(key);
+            data.context_cursors.remove(key);
+            data.paused_conversations.remove(conversation);
+            store_json(&app.data_path, &*data).await?;
+            drop(data);
+            let _ = set_typing(app, conversation, false).await;
+            Ok(Some("Reset this conversation's Codex session. The next request starts fresh from its granted Tardy context.".into()))
+        }
+        AgentCommand::NewWorktree => Ok(Some("This host does not have isolated worktrees enabled yet, so nothing was changed. Use /reset-session for a fresh Codex session.".into())),
+        AgentCommand::Tardy => {
+            publish_last_result_as_tardy(app, activation).await?;
+            Ok(None)
+        }
+    }
+}
+
+async fn publish_last_result_as_tardy(
+    app: &App,
+    activation: &WorkActivation,
+) -> Result<(), BoxError> {
+    let saved = app
+        .data
+        .lock()
+        .await
+        .last_results
+        .get(&activation.key)
+        .cloned();
+    let result = if let Some(result) = saved {
+        result
+    } else {
+        let response = app
+            .client
+            .get(format!(
+                "{}/v1/social/conversations/{}/messages",
+                api(app),
+                activation.conversation_id
+            ))
+            .query(&[("after", 0_i64), ("limit", 100_i64)])
+            .bearer_auth(&app.credential.api_token)
+            .header("x-tardy-profile-id", &app.credential.profile_id)
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Err(format!("Tardy history lookup returned HTTP {}", response.status()).into());
+        }
+        response
+            .json::<Vec<ConversationMessage>>()
+            .await?
+            .into_iter()
+            .rev()
+            .find(|message| message.sender_profile_id == app.credential.profile_id)
+            .map(|message| message.body)
+            .ok_or("There is no completed agent result in this conversation yet")?
+    };
+    let caption = result.chars().take(5_000).collect::<String>();
+    let digest = Sha256::digest(format!("tardy:{}", activation.message_id).as_bytes());
+    let mut request_bytes = [0_u8; 16];
+    request_bytes.copy_from_slice(&digest[..16]);
+    request_bytes[6] = (request_bytes[6] & 0x0f) | 0x40;
+    request_bytes[8] = (request_bytes[8] & 0x3f) | 0x80;
+    let client_request_id = uuid::Uuid::from_bytes(request_bytes);
+    let response = app
+        .client
+        .post(format!("{}/v1/social/posts", api(app)))
+        .bearer_auth(&app.credential.api_token)
+        .header("x-tardy-profile-id", &app.credential.profile_id)
+        .json(&json!({
+            "client_request_id": client_request_id.to_string(),
+            "caption": caption,
+            "media": [],
+            "shared_link_id": null,
+            "visibility": "private"
+        }))
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        return Err(format!("private Tardy publish returned HTTP {}", response.status()).into());
+    }
+    let post: Value = response.json().await?;
+    let post_id = post
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or("private Tardy response omitted id")?;
+    let link_response = app
+        .client
+        .post(format!("{}/v1/social/shared-links", api(app)))
+        .bearer_auth(&app.credential.api_token)
+        .header("x-tardy-profile-id", &app.credential.profile_id)
+        .json(&json!({"url": format!("https://tardy.news/t/{post_id}")}))
+        .send()
+        .await?;
+    if !link_response.status().is_success() {
+        return Err(format!(
+            "private Tardy chat attachment returned HTTP {}",
+            link_response.status()
+        )
+        .into());
+    }
+    let link: Value = link_response.json().await?;
+    let link_id = link
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or("shared-link response omitted id")?;
+    request_ok(
+        app.client
+            .post(format!(
+                "{}/v1/social/conversations/{}/messages",
+                api(app),
+                activation.conversation_id
+            ))
+            .bearer_auth(&app.credential.api_token)
+            .header("x-tardy-profile-id", &app.credential.profile_id)
+            .json(&json!({
+                "body": "I turned the last completed result into a private Tardy. You can promote it when it is ready.",
+                "shared_link_id": link_id
+            })),
+    )
+    .await
 }
 
 async fn process_one(app: &App, queued: &QueuedEvent) -> Result<(), BoxError> {
@@ -332,6 +602,8 @@ async fn process_one(app: &App, queued: &QueuedEvent) -> Result<(), BoxError> {
                 context_cursor,
             };
             let mut data = app.data.lock().await;
+            data.last_results
+                .insert(activation.key.clone(), pending.body.clone());
             data.sessions
                 .insert(activation.key.clone(), result.thread_id);
             if let Some(cursor) = pending.context_cursor {

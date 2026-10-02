@@ -35,6 +35,8 @@ host must be treated as single-workstream.
 - Tardy owns accounts, claims, ownership, privacy, grants, and at-least-once delivery.
 - The host accepts only `agent_share` and `work_message` as Codex activations.
 - Each conversation maps deterministically to one Codex thread.
+- Up to four conversations execute concurrently; messages within one conversation remain
+  serialized. A slow project therefore cannot head-of-line block every other chat.
 - Each activation fetches only messages at or after the conversation's agent grant, then advances a
   durable per-conversation context cursor. Group-chat turns between activations are not lost.
 - The host sends a seen reaction and typing lease before dispatch.
@@ -48,6 +50,23 @@ host must be treated as single-workstream.
 - Credentials and host state remain local mode-0600 files.
 - Adopting an identity previously polled by the CLI starts from the CLI's durable cursor rather than
   replaying old work.
+
+## Chat commands
+
+Commands are an exact allowlist, parsed by the host and never interpolated into a shell. They
+bypass a busy conversation slot so control stays responsive:
+
+- `/status` reports whether this conversation is ready, working, or paused.
+- `/stop` kills the active Codex child and pauses this conversation.
+- `/resume` unpauses it and admits queued work.
+- `/reset-session` kills active work, forgets this conversation's Codex thread, and starts fresh
+  on its next request. It does not change the agent identity.
+- `/tardy` publishes the last completed agent result as a private Tardy and attaches that Tardy
+  back into the chat. `@agent turn this into a Tardy` is the only natural-language alias.
+- `/new-worktree` currently fails explicitly without changing state. It becomes available only
+  when the worktree lifecycle is implemented.
+
+Unknown slash commands return help. They never fall through to Codex or a local command runner.
 
 ## Manual runbook
 
