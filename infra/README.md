@@ -29,6 +29,53 @@ The control plane must provide:
 
 Do not mint a general FPL long-lived personal API key for CI. Do not put `FPL_TOKEN`, database URLs, R2 keys, or state credentials in tfvars or GitHub repository variables when an FPL workload/CI identity can provide them.
 
+## Remote state and locking
+
+Tardy uses FPL's existing managed-state R2 bucket through OpenTofu's S3
+backend. The checked-in `backend.r2.tfbackend` contains no credentials and is
+shared by every environment. OpenTofu's native S3 lock file serializes plans
+and applies; do not use `-lock=false`.
+
+The protected executor must exchange the project-scoped FPL automation
+identity for short-lived state credentials and export them as
+`AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. They must not be written to a
+backend file, tfvars, OpenTofu state, GitHub variables, or command-line
+arguments. Until that identity exchange is hosted, this root may be validated
+by an operator-owned executor with the existing R2 state environment, but the
+credentials must not be handed to the customer or copied into the repository.
+
+Initialize a clean checkout with a deterministic, project-owned state key:
+
+```sh
+export FPL_PROJECT=tardy-prod
+export TF_CLI_CONFIG_FILE="$PWD/infra/fpl-provider.tfrc"
+test -n "$AWS_ACCESS_KEY_ID" && test -n "$AWS_SECRET_ACCESS_KEY"
+tofu -chdir=infra init -input=false \
+  -backend-config=backend.r2.tfbackend \
+  -backend-config="key=customers/${FPL_PROJECT}/tardy/terraform.tfstate"
+```
+
+The narrow CLI configuration installs only `registry.fpl.dev/fpl/shroud`
+through FPL's official OCI provider mirror. Registry authentication comes from
+the standard Docker credential store populated by FPL sign-in; it is not part
+of the file. Other providers retain OpenTofu's normal direct installation.
+
+Use exactly `customers/<project>/tardy/terraform.tfstate`; the project-scoped
+state credential must be unable to read or write another prefix. A second clean
+machine runs the same initialization and then:
+
+```sh
+tofu -chdir=infra plan -input=false -lock-timeout=5m \
+  -var="project=${FPL_PROJECT}" \
+  -var="api_image=${TARDY_API_IMAGE}" \
+  -out=tardy.tfplan
+```
+
+After the first successful apply, repeating that plan from either machine must
+report no changes. `terraform.tfstate`, `.terraform/`, saved plans, provider
+tokens, and backend credentials remain untracked. A failure to acquire the
+lock is an active writer, not permission to bypass locking.
+
 ## Provider contract
 
 `fpl_storage_bucket.media` returns an opaque binding reference. At deployment, FPL resolves it into `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and `R2_BUCKET` without placing their values in customer state.

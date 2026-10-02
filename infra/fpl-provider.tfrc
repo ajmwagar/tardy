@@ -1,0 +1,12 @@
+# Narrow provider installation rule for the official FPL OCI distribution.
+# Authentication comes from the standard Docker credential store.
+provider_installation {
+  oci_mirror {
+    repository_template = "registry.fpl.dev/opentofu-providers/${namespace}/${type}"
+    include             = ["registry.fpl.dev/fpl/shroud"]
+  }
+
+  direct {
+    exclude = ["registry.fpl.dev/fpl/shroud"]
+  }
+}
