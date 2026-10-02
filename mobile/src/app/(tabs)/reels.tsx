@@ -51,7 +51,11 @@ const Reel = memo(function Reel({ post, active, height }: { post: Post; active: 
 
   return (
     <View style={{ height, backgroundColor: '#000' }}>
-      <DoubleTapLike postId={post.id} onSingleTap={toggleMuted} heartSize={120}>
+      <DoubleTapLike
+        postId={post.id}
+        onSingleTap={toggleMuted}
+        singleTapIcon={muted ? 'speaker.wave.2.fill' : 'speaker.slash.fill'}
+        heartSize={148}>
         <View style={{ height }}>
           {media?.type === 'video' && (
             // Fill when the video's shape is close to the screen's, else show it whole over the blur

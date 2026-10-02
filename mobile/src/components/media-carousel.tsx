@@ -84,7 +84,10 @@ export const MediaCarousel = memo(function MediaCarousel({
   );
 
   return (
-    <DoubleTapLike postId={postId} onSingleTap={hasVideo ? toggleMuted : undefined}>
+    <DoubleTapLike
+      postId={postId}
+      onSingleTap={hasVideo ? toggleMuted : undefined}
+      singleTapIcon={hasVideo ? (muted ? 'speaker.wave.2.fill' : 'speaker.slash.fill') : undefined}>
       {media.length === 1 ? (
         renderItem({ item: media[0], index: 0 })
       ) : (

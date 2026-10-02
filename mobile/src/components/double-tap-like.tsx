@@ -3,6 +3,7 @@ import { StyleSheet, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { useAnimatedStyle, useSharedValue, withSequence, withSpring, withTiming } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
+import type { SFSymbol } from 'expo-symbols';
 
 import { setLiked } from '@/state/store';
 import { colors } from '@/theme';
@@ -16,16 +17,21 @@ import { haptic, Icon } from './ui';
 export function DoubleTapLike({
   postId,
   onSingleTap,
+  singleTapIcon,
   heartSize = 96,
   children,
 }: {
   postId: string;
   onSingleTap?: () => void;
+  /** Icon flashed after the single-tap action, e.g. the resulting audio state. */
+  singleTapIcon?: SFSymbol;
   heartSize?: number;
   children: ReactNode;
 }) {
   const scale = useSharedValue(0);
   const opacity = useSharedValue(0);
+  const feedbackScale = useSharedValue(0);
+  const feedbackOpacity = useSharedValue(0);
 
   const commitLike = () => {
     haptic.impact();
@@ -45,21 +51,36 @@ export function DoubleTapLike({
       scheduleOnRN(commitLike);
     });
   const singleTap = Gesture.Tap().onEnd((_event, success) => {
-    if (success && onSingleTap) scheduleOnRN(onSingleTap);
+    if (!success || !onSingleTap) return;
+    if (singleTapIcon) {
+      feedbackScale.set(0.72);
+      feedbackOpacity.set(0);
+      feedbackScale.set(withSequence(withSpring(1.08, { duration: 180 }), withTiming(1, { duration: 160 })));
+      feedbackOpacity.set(withSequence(withTiming(1, { duration: 70 }), withTiming(1, { duration: 320 }), withTiming(0, { duration: 180 })));
+    }
+    scheduleOnRN(onSingleTap);
   });
   const gesture = Gesture.Exclusive(doubleTap, singleTap);
 
   const heartStyle = useAnimatedStyle(() => ({ opacity: opacity.value, transform: [{ scale: scale.value }] }));
+  const feedbackStyle = useAnimatedStyle(() => ({ opacity: feedbackOpacity.value, transform: [{ scale: feedbackScale.value }] }));
 
   return (
     <GestureDetector gesture={gesture}>
       <View collapsable={false}>
         {children}
-        <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.center]}>
+        <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.center, styles.overlay]}>
           <Animated.View style={[heartStyle, styles.shadow]}>
             <Icon name="hand.thumbsup.fill" size={heartSize} color={colors.primary} />
           </Animated.View>
         </View>
+        {singleTapIcon ? (
+          <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.center, styles.overlay]}>
+            <Animated.View style={[feedbackStyle, styles.audioBubble]}>
+              <Icon name={singleTapIcon} size={36} color="#fff" />
+            </Animated.View>
+          </View>
+        ) : null}
       </View>
     </GestureDetector>
   );
@@ -67,5 +88,7 @@ export function DoubleTapLike({
 
 const styles = StyleSheet.create({
   center: { alignItems: 'center', justifyContent: 'center' },
+  overlay: { zIndex: 40, elevation: 40 },
   shadow: { shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } },
+  audioBubble: { width: 76, height: 76, borderRadius: 38, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.62)' },
 });
