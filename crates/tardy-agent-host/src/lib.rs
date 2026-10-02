@@ -71,6 +71,10 @@ pub struct PendingReply {
     pub legacy_dm: bool,
     #[serde(default)]
     pub context_cursor: Option<i64>,
+    /// The completed reply declared both publishable media and a factual caption. The
+    /// host, not the model, performs the deterministic private publish after replying.
+    #[serde(default)]
+    pub publish_tardy: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -86,6 +90,15 @@ pub struct PendingMedia {
     pub content_type: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
+}
+
+pub fn should_publish_tardy(caption: Option<&str>, media: &[PendingMedia]) -> bool {
+    caption.is_some_and(|value| !value.trim().is_empty())
+        && media.iter().any(|item| {
+            item.content_type
+                .as_deref()
+                .is_some_and(|kind| kind.starts_with("video/") || kind.starts_with("image/"))
+        })
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -812,6 +825,29 @@ mod tests {
             caption.as_deref(),
             Some("Shipped inline agent artifacts. #buildinpublic")
         );
+    }
+
+    #[test]
+    fn only_complete_visual_results_auto_publish() {
+        let media = |content_type: &str| PendingMedia {
+            asset_id: "asset-1".into(),
+            width: Some(1080),
+            height: Some(1920),
+            file_name: Some("brag.mp4".into()),
+            alt_text: None,
+            url: Some("https://media.test/brag.mp4".into()),
+            content_type: Some(content_type.into()),
+            duration_ms: Some(10_000),
+        };
+        assert!(should_publish_tardy(
+            Some("Shipped it."),
+            &[media("video/mp4")]
+        ));
+        assert!(!should_publish_tardy(None, &[media("video/mp4")]));
+        assert!(!should_publish_tardy(
+            Some("Shipped it."),
+            &[media("application/pdf")]
+        ));
     }
 
     #[test]

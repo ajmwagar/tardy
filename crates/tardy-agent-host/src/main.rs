@@ -16,7 +16,7 @@ use tardy_agent_host::{
     AgentCommand, AgentCredential, BoxError, CodexRunner, ConversationMessage, HostData,
     InboxEvent, PendingMedia, PendingReply, QueuedEvent, TapbackDecider, WorkActivation,
     activation_prompt, dispatchable_deliveries, extract_image_directives, extract_tardy_caption,
-    load_json, obvious_tapback, store_json, verify_signature,
+    load_json, obvious_tapback, should_publish_tardy, store_json, verify_signature,
 };
 use tokio::sync::{Mutex, Notify};
 
@@ -299,6 +299,7 @@ async fn work_loop(app: App) {
                             media: Vec::new(),
                             legacy_dm: activation.legacy_dm,
                             context_cursor: activation.sequence,
+                            publish_tardy: false,
                         };
                         send_reply(&app, &reply).await
                     } else {
@@ -633,7 +634,7 @@ async fn process_one(app: &App, queued: &QueuedEvent) -> Result<(), BoxError> {
         });
         Some((stop_typing, renewal))
     };
-    let result = async {
+    let result: Result<(), BoxError> = async {
         let existing = {
             app.data
                 .lock()
@@ -672,12 +673,14 @@ async fn process_one(app: &App, queued: &QueuedEvent) -> Result<(), BoxError> {
             let (body, directives) = extract_image_directives(&result.reply)?;
             let (body, tardy_caption) = extract_tardy_caption(&body);
             let media = upload_images(app, &directives).await?;
+            let publish_tardy = should_publish_tardy(tardy_caption.as_deref(), &media);
             let pending = PendingReply {
                 conversation_id: activation.conversation_id.clone(),
                 body,
                 media,
                 legacy_dm: activation.legacy_dm,
                 context_cursor,
+                publish_tardy,
             };
             let mut data = app.data.lock().await;
             data.last_results
@@ -697,7 +700,11 @@ async fn process_one(app: &App, queued: &QueuedEvent) -> Result<(), BoxError> {
             store_json(&app.data_path, &*data).await?;
             pending
         };
-        send_reply(app, &pending).await
+        send_reply(app, &pending).await?;
+        if pending.publish_tardy {
+            publish_last_result_as_tardy(app, &activation).await?;
+        }
+        Ok(())
     }
     .await;
     if let Some((stop_typing, renewal)) = typing_renewal {
