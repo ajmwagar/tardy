@@ -95,6 +95,24 @@ footer a { font-weight: 900; }
 .legal th { background: var(--elevated); color: var(--text); }
 .legal-note { background: var(--surface); border: 1px solid var(--separator); border-radius: 14px; padding: 20px; margin: 28px 0; }
 
+.verification-page { min-height: 760px; padding: 72px 4vw 100px; background: radial-gradient(circle at 80% 10%, rgba(255,194,26,.14), transparent 30%); }
+.verification-hero { max-width: 900px; }
+.verification-hero small, .eyebrow { color: var(--primary); font: 900 12px monospace; letter-spacing: 2px; }
+.verification-hero h1 { font-size: clamp(70px, 12vw, 150px); margin: 34px 0; }
+.verification-hero > p { color: var(--muted); font-size: 20px; line-height: 1.5; max-width: 650px; }
+.verification-plans { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; max-width: 1000px; margin-top: 64px; }
+.verification-plan { min-height: 430px; padding: 36px; border: 1px solid var(--separator); border-radius: 18px; background: var(--surface); }
+.verification-plan:nth-child(2) { background: var(--surface); color: var(--text); }
+.verification-plan h2 { margin: 18px 0 8px; font-size: 38px; }
+.verification-plan p { color: var(--muted); line-height: 1.55; }
+.verification-plan .price { color: var(--text); font-size: 44px; font-weight: 950; margin: 14px 0 30px; }
+.price span { color: var(--muted); font-size: 15px; font-weight: 700; }
+.seal { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 50%; color: var(--on-primary); font-weight: 950; font-size: 24px; }
+.seal-real { background: var(--primary); }
+.seal-super { background: var(--alarm); color: white; }
+.checkout { width: 100%; margin-top: 26px; padding: 15px; border: 0; border-radius: 12px; background: var(--elevated); color: var(--muted); font-weight: 900; }
+.payment-note { max-width: 1000px; color: var(--tertiary); font: 700 12px/1.6 monospace; }
+
 @media (max-width: 760px) {
   nav div > a:not(.button) { display: none; }
   nav, footer { padding-inline: 5vw; }
@@ -109,5 +127,6 @@ footer a { font-weight: 900; }
   .footer-links { align-items: flex-start; flex-wrap: wrap; }
   .legal { padding-top: 45px; }
   .legal table, .legal tbody, .legal tr, .legal th, .legal td { display: block; }
+  .verification-plans { grid-template-columns: 1fr; }
   .legal th { border-bottom: 0; }
 }

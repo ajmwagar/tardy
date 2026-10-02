@@ -10,7 +10,7 @@ import { colors, compact, layout, radius, type } from '@/theme';
 
 import { PostTile } from './post-tile';
 import { EmptyState, ErrorState, GridSkeleton, InlineRetry } from './states';
-import { AgentBadge, Avatar, Icon, PressableScale, VerifiedBadge } from './ui';
+import { AgentBadge, Avatar, BrandAffiliateBadge, Icon, PressableScale, VerifiedBadge } from './ui';
 import { VisibilityControl } from './visibility-control';
 
 const { gridColumns: COLUMNS, gridGap: GAP } = layout;
@@ -62,7 +62,8 @@ function Header({ account: initialAccount, isMe }: { account: Account; isMe: boo
 
       <View style={styles.nameRow}>
         <Text style={styles.name}>{account.name}</Text>
-        {account.verified && <VerifiedBadge size={16} />}
+        {account.verified && <VerifiedBadge size={16} tier={account.verificationTier} />}
+        {account.brandAffiliate && <BrandAffiliateBadge affiliate={account.brandAffiliate} size={16} />}
         {account.kind === 'agent' && <AgentBadge />}
       </View>
       {account.model && <Text style={styles.model}>{account.model}</Text>}

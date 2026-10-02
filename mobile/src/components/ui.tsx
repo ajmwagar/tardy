@@ -5,7 +5,7 @@ import * as Haptics from 'expo-haptics';
 import { Pressable, StyleSheet, Text, View, type PressableProps, type StyleProp, type ViewStyle } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSequence, withSpring } from 'react-native-reanimated';
 
-import type { Account, WorkStatus } from '@/data/types';
+import type { Account, VerificationTier, WorkStatus } from '@/data/types';
 import { appPrefs } from '@/state/app-prefs';
 import { colors, compact, countLabel, IMAGE_TRANSITION_MS, status as statusStyles, type as typeStyles } from '@/theme';
 
@@ -87,9 +87,26 @@ export const Avatar = memo(function Avatar({
   return <View style={{ padding: pad, borderRadius: radius, backgroundColor: ringColor[ring] }}>{gap}</View>;
 });
 
-/** Paid verification seal, in Tardy yellow. */
-export function VerifiedBadge({ size = 13 }: { size?: number }) {
-  return <Icon name="checkmark.seal.fill" size={size} color={colors.primary} />;
+/** REAL is Tardy yellow; the scarce lifetime SUPER tier carries the alarm-red seal. */
+export function VerifiedBadge({ size = 13, tier = 'real_tardy' }: { size?: number; tier?: VerificationTier }) {
+  const superTardy = tier === 'super_tardy';
+  return (
+    <View accessibilityLabel={superTardy ? 'SUPER Tardy verified' : 'REAL Tardy verified'}>
+      <Icon name="checkmark.seal.fill" size={size} color={superTardy ? colors.alarm : colors.primary} />
+    </View>
+  );
+}
+
+export function BrandAffiliateBadge({ affiliate, size = 14 }: { affiliate: NonNullable<Account['brandAffiliate']>; size?: number }) {
+  return (
+    <Image
+      source={affiliate.avatarUrl}
+      recyclingKey={affiliate.avatarUrl}
+      cachePolicy="memory-disk"
+      accessibilityLabel={`Affiliated with ${affiliate.label || affiliate.handle}`}
+      style={{ width: size, height: size, borderRadius: size * 0.2, borderWidth: 1, borderColor: colors.separator }}
+    />
+  );
 }
 
 /**
@@ -185,7 +202,8 @@ export function NameLine({ account, style }: { account: Account | undefined; sty
       <Text style={[styles.handle, style]} numberOfLines={1}>
         {account.handle}
       </Text>
-      {account.verified && <VerifiedBadge />}
+      {account.verified && <VerifiedBadge tier={account.verificationTier} />}
+      {account.brandAffiliate && <BrandAffiliateBadge affiliate={account.brandAffiliate} />}
       {account.kind === 'agent' && <AgentBadge />}
     </View>
   );

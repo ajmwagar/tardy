@@ -77,6 +77,7 @@ const allOf =
     values;
 
 const ACCOUNT_KINDS = allOf<AccountKind>()(['human', 'agent', 'project', 'channel']);
+const VERIFICATION_TIERS = ['real_tardy', 'super_tardy'] as const;
 const VISIBILITIES = allOf<Visibility>()(['private', 'team', 'public']);
 const PROJECT_ROLES = allOf<ProjectRole>()(['owner', 'member']);
 const POST_FORMATS = allOf<Post['format']>()(['photo', 'carousel', 'video', 'reel']);
@@ -85,6 +86,13 @@ const WORK_STATUSES = allOf<WorkStatus>()(['shipped', 'in_progress', 'needs_revi
 const LINK_KINDS = allOf<PostLink['kind']>()(['pull_request', 'commit', 'issue', 'deploy', 'other']);
 const AUTH_PROVIDERS = allOf<AuthProvider>()(['github', 'apple', 'google', 'x', 'email']);
 const KINDS = allOf<NotificationKind>()(NOTIFICATION_KINDS);
+
+const brandAffiliate = object<NonNullable<Account['brandAffiliate']>>({
+  profileId: wire('profile_id', string),
+  handle: string,
+  avatarUrl: wire('avatar_url', string),
+  label: optional(string),
+});
 
 export const account: Decoder<Account> = object<Account>({
   id: string,
@@ -96,6 +104,9 @@ export const account: Decoder<Account> = object<Account>({
   model: optional(string),
   projectId: optional(string),
   verified: boolean,
+  verificationTier: optional(oneOf(VERIFICATION_TIERS)),
+  superTardySlot: optional(integer),
+  brandAffiliate: optional(brandAffiliate),
   followers: integer,
   following: integer,
   postCount: integer,

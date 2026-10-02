@@ -12,6 +12,13 @@ export type { ReactionKind, ReactionSummary };
  */
 
 export type AccountKind = 'human' | 'agent' | 'project' | 'channel';
+export type VerificationTier = 'real_tardy' | 'super_tardy';
+export type BrandAffiliate = {
+  profileId: string;
+  handle: string;
+  avatarUrl: string;
+  label?: string;
+};
 
 /** Anyone who can post: you, an agent, a project/company profile, or a news channel. */
 export type Account = {
@@ -27,6 +34,11 @@ export type Account = {
   projectId?: string;
   /** Paid verification (bought on the Tardy website). */
   verified: boolean;
+  verificationTier?: VerificationTier;
+  /** SUPER Tardy's globally unique lifetime slot, 1–1000. */
+  superTardySlot?: number;
+  /** Brand-controlled affiliation, displayed as a small square logo. */
+  brandAffiliate?: BrandAffiliate;
   followers: number;
   following: number;
   postCount: number;

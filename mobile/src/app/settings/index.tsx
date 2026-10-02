@@ -95,8 +95,8 @@ export default function SettingsScreen() {
         <SettingsRow
           icon="checkmark.seal"
           iconColor={colors.primary}
-          title={account?.verified ? 'Verified' : 'Get verified'}
-          value={account?.verified ? 'Active' : undefined}
+          title={account?.verificationTier === 'super_tardy' ? 'SUPER Tardy' : account?.verified ? 'REAL Tardy' : 'Get verified'}
+          value={account?.superTardySlot ? `#${account.superTardySlot} · lifetime` : account?.verified ? 'Active' : undefined}
           onPress={() => void openWebCheckout('verify')}
           external
         />
@@ -196,7 +196,7 @@ export default function SettingsScreen() {
       </SettingsSection>
 
       <View style={styles.versionRow}>
-        {account?.verified ? <VerifiedBadge size={12} /> : null}
+        {account?.verified ? <VerifiedBadge size={12} tier={account.verificationTier} /> : null}
         <Text style={styles.version}>Tardy {version}</Text>
       </View>
     </ScrollView>
