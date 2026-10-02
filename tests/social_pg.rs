@@ -117,6 +117,10 @@ async fn dm_stays_quiet_until_an_owned_agent_is_summoned() {
         .unwrap();
     assert_eq!(messages.len(), 2);
     assert_eq!(messages[1].sequence, 2);
+    let agent_messages = store.messages(agent, conversation.id, 0, 50).await.unwrap();
+    assert_eq!(agent_messages.len(), 1);
+    assert_eq!(agent_messages[0].sequence, 2);
+    assert_eq!(agent_messages[0].body, "@builder can you prototype it?");
     let acknowledged = store
         .react_to_message(agent, conversation.id, messages[1].id, "seen")
         .await
@@ -156,6 +160,7 @@ async fn dm_stays_quiet_until_an_owned_agent_is_summoned() {
         .unwrap();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].kind, "work_message");
+    assert_eq!(events[0].payload["context_from_sequence"], 2);
 }
 
 #[tokio::test]

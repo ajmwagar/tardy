@@ -1063,6 +1063,19 @@ impl PgSocialStore {
         if !allowed {
             return Err(SocialError::Forbidden);
         }
+        // Agent grants are the privacy boundary, regardless of the cursor supplied by a client.
+        // Human participants have no grant row and retain the normal conversation history.
+        let grant_from: Option<i64> = sqlx::query_scalar(
+            "SELECT context_from_sequence FROM conversation_agent_grants
+             WHERE conversation_id=$1 AND agent_profile_id=$2",
+        )
+        .bind(conversation_id)
+        .bind(actor)
+        .fetch_optional(&self.pool)
+        .await?;
+        let effective_after = grant_from
+            .map(|sequence| after.max(sequence - 1))
+            .unwrap_or(after);
         let rows = sqlx::query("SELECT m.id,m.conversation_id,m.sequence,m.sender_profile_id,m.body,m.shared_link_id,m.created_at,
                     (SELECT COALESCE(jsonb_agg(jsonb_build_object('kind',r.kind,'account_ids',r.account_ids) ORDER BY r.sort), '[]'::jsonb)
                      FROM (SELECT kind,array_agg(reactor_profile_id ORDER BY reactor_profile_id) account_ids,
@@ -1074,7 +1087,7 @@ impl PgSocialStore {
                             AND p.last_read_sequence>=m.sequence
                           ORDER BY p.profile_id) AS read_by
              FROM conversation_messages m WHERE m.conversation_id=$1 AND m.sequence>$2 ORDER BY m.sequence LIMIT $3")
-            .bind(conversation_id).bind(after).bind(limit).fetch_all(&self.pool).await?;
+            .bind(conversation_id).bind(effective_after).bind(limit).fetch_all(&self.pool).await?;
         rows.into_iter().map(|row| message_from_row(&row)).collect()
     }
 
@@ -1196,10 +1209,10 @@ impl PgSocialStore {
         let id = Uuid::new_v4();
         let row = sqlx::query("INSERT INTO conversation_messages (id,conversation_id,sequence,sender_profile_id,body,shared_link_id) VALUES ($1,$2,$3,$4,$5,$6) RETURNING created_at")
             .bind(id).bind(conversation_id).bind(sequence).bind(actor).bind(body).bind(shared_link_id).fetch_one(&mut *tx).await?;
-        let agents: Vec<Uuid> = sqlx::query_scalar("SELECT agent_profile_id FROM conversation_agent_grants WHERE conversation_id=$1 AND can_reply AND agent_profile_id<>$2 AND context_from_sequence<=$3")
+        let agents: Vec<(Uuid, i64)> = sqlx::query_as("SELECT agent_profile_id,context_from_sequence FROM conversation_agent_grants WHERE conversation_id=$1 AND can_reply AND agent_profile_id<>$2 AND context_from_sequence<=$3")
             .bind(conversation_id).bind(actor).bind(sequence).fetch_all(&mut *tx).await?;
-        for agent in agents {
-            emit_agent_event(&mut tx, "work_message", id, agent, serde_json::json!({"conversation_id": conversation_id, "message_id": id, "sequence": sequence, "body": body, "shared_link_id": shared_link_id})).await?;
+        for (agent, context_from_sequence) in agents {
+            emit_agent_event(&mut tx, "work_message", id, agent, serde_json::json!({"conversation_id": conversation_id, "message_id": id, "sequence": sequence, "context_from_sequence": context_from_sequence, "body": body, "shared_link_id": shared_link_id})).await?;
         }
         let sender: String =
             sqlx::query_scalar("SELECT handle FROM social_identities WHERE profile_id=$1")

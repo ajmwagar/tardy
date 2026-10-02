@@ -12,8 +12,9 @@ use std::{
     time::Duration,
 };
 use tardy_agent_host::{
-    AgentCredential, BoxError, CodexRunner, HostData, InboxEvent, PendingReply, QueuedEvent,
-    WorkActivation, activation_prompt, load_json, store_json, verify_signature,
+    AgentCredential, BoxError, CodexRunner, ConversationMessage, HostData, InboxEvent,
+    PendingReply, QueuedEvent, WorkActivation, activation_prompt, load_json, store_json,
+    verify_signature,
 };
 use tokio::sync::{Mutex, Notify};
 
@@ -33,11 +34,15 @@ async fn main() -> Result<(), BoxError> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
     let command = std::env::args().nth(1).unwrap_or_else(|| "run".into());
+    if matches!(command.as_str(), "help" | "--help" | "-h") {
+        print_help();
+        return Ok(());
+    }
     if command == "doctor" {
         return doctor().await;
     }
     if command != "run" {
-        return Err(format!("unknown command {command}; expected run or doctor").into());
+        return Err(format!("unknown command {command}; expected run, doctor, or help").into());
     }
     let credential_path = expand_path(&env_or("TARDY_STATE_PATH", "~/.config/tardy/agent.json"));
     let data_path = expand_path(&env_or(
@@ -50,7 +55,14 @@ async fn main() -> Result<(), BoxError> {
     if credential.subscription_id.is_none() {
         return Err("Tardy inbox is not configured; run `tardy subscribe --mode poll` or configure a webhook".into());
     }
-    let data = load_json::<HostData>(&data_path).await?;
+    let data_exists = tokio::fs::try_exists(&data_path).await?;
+    let mut data = load_json::<HostData>(&data_path).await?;
+    if !data_exists {
+        // The CLI owns inbox consumption until the host is installed. Start at its durable
+        // cursor so adopting an existing identity cannot replay already handled work.
+        data.cursor = credential.cursor;
+        store_json(&data_path, &data).await?;
+    }
     let runner = CodexRunner::new(
         workspace,
         env_or("TARDY_CODEX_SANDBOX", "workspace-write"),
@@ -94,10 +106,26 @@ async fn doctor() -> Result<(), BoxError> {
     if !codex.status.success() {
         return Err("Codex CLI is installed but unhealthy".into());
     }
+    let workspace = std::fs::canonicalize(env_or("TARDY_AGENT_WORKSPACE", "."))?;
+    let response = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()?
+        .get(format!(
+            "{}/v1/feed-subscriptions/{subscription}/events",
+            credential.api.trim_end_matches('/')
+        ))
+        .query(&[("after", credential.cursor), ("limit", 1_i64)])
+        .bearer_auth(&credential.api_token)
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        return Err(format!("Tardy inbox is unhealthy: HTTP {}", response.status()).into());
+    }
     println!(
-        "@{} is ready; subscription={}, {}",
+        "@{} is ready; subscription={}, workspace={}, {}",
         credential.handle,
         subscription,
+        workspace.display(),
         String::from_utf8_lossy(&codex.stdout).trim()
     );
     Ok(())
@@ -268,21 +296,41 @@ async fn process_one(app: &App, queued: &QueuedEvent) -> Result<(), BoxError> {
             pending
         } else {
             let thread_id = { app.data.lock().await.sessions.get(&activation.key).cloned() };
+            let context_after = {
+                let data = app.data.lock().await;
+                data.context_cursors
+                    .get(&activation.key)
+                    .copied()
+                    .unwrap_or_else(|| activation.context_from_sequence.unwrap_or(1) - 1)
+            };
+            let context = if activation.legacy_dm {
+                Vec::new()
+            } else {
+                fetch_context(app, &activation, context_after).await?
+            };
+            let context_cursor = context
+                .last()
+                .map(|message| message.sequence)
+                .or(activation.sequence);
             let result = app
                 .runner
                 .dispatch(
                     thread_id.as_deref(),
-                    &activation_prompt(&app.credential.handle, &activation),
+                    &activation_prompt(&app.credential.handle, &activation, &context),
                 )
                 .await?;
             let pending = PendingReply {
                 conversation_id: activation.conversation_id.clone(),
                 body: result.reply,
                 legacy_dm: activation.legacy_dm,
+                context_cursor,
             };
             let mut data = app.data.lock().await;
             data.sessions
                 .insert(activation.key.clone(), result.thread_id);
+            if let Some(cursor) = pending.context_cursor {
+                data.context_cursors.insert(activation.key.clone(), cursor);
+            }
             data.pending_replies
                 .insert(queued.delivery_id.clone(), pending.clone());
             store_json(&app.data_path, &*data).await?;
@@ -303,6 +351,38 @@ async fn process_one(app: &App, queued: &QueuedEvent) -> Result<(), BoxError> {
     result?;
     typing_result?;
     Ok(())
+}
+
+async fn fetch_context(
+    app: &App,
+    activation: &WorkActivation,
+    after: i64,
+) -> Result<Vec<ConversationMessage>, BoxError> {
+    let response = app
+        .client
+        .get(format!(
+            "{}/v1/social/conversations/{}/messages",
+            api(app),
+            activation.conversation_id
+        ))
+        .query(&[("after", after), ("limit", 100_i64)])
+        .bearer_auth(&app.credential.api_token)
+        .header("x-tardy-profile-id", &app.credential.profile_id)
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "Tardy context fetch returned HTTP {}: {}",
+            response.status(),
+            response.text().await?.chars().take(500).collect::<String>()
+        )
+        .into());
+    }
+    let mut messages = response.json::<Vec<ConversationMessage>>().await?;
+    if let Some(through) = activation.sequence {
+        messages.retain(|message| message.sequence <= through);
+    }
+    Ok(messages)
 }
 
 async fn acknowledge(app: &App, activation: &WorkActivation) -> Result<(), BoxError> {
@@ -399,6 +479,12 @@ fn header<'a>(headers: &'a HeaderMap, name: &str) -> Result<&'a str, (StatusCode
 }
 fn internal(error: BoxError) -> (StatusCode, String) {
     (StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
+}
+
+fn print_help() {
+    println!(
+        "Tardy agent host\n\nUsage:\n  tardy-agent-host doctor\n  tardy-agent-host run\n\nEnvironment:\n  TARDY_STATE_PATH         Agent credential from `tardy onboard`\n  TARDY_AGENT_WORKSPACE    Workspace this agent may access\n  TARDY_AGENT_HOST_STATE   Durable session and outbox state\n  TARDY_AGENT_DELIVERY     poll (default) or webhook\n  TARDY_CODEX_SANDBOX      read-only or workspace-write (default)\n  TARDY_AGENT_BIND         Webhook bind address"
+    );
 }
 
 #[allow(dead_code)]

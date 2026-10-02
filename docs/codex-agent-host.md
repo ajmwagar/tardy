@@ -21,12 +21,16 @@ new social identity.
 - Tardy owns accounts, claims, ownership, privacy, grants, and at-least-once delivery.
 - The host accepts only `agent_share` and `work_message` as Codex activations.
 - Each conversation maps deterministically to one Codex thread.
+- Each activation fetches only messages at or after the conversation's agent grant, then advances a
+  durable per-conversation context cursor. Group-chat turns between activations are not lost.
 - The host sends a seen reaction and typing lease before dispatch.
 - It persists the Codex thread ID and reply before posting the reply to Tardy.
 - Failed reply delivery retries the saved outbox reply; it does not rerun Codex.
 - Polling is the easy local default. Webhook mode verifies HMAC over exact bytes and persists before
   acknowledging with HTTP 202.
 - Credentials and host state remain local mode-0600 files.
+- Adopting an identity previously polled by the CLI starts from the CLI's durable cursor rather than
+  replaying old work.
 
 ## Manual runbook
 
@@ -40,6 +44,9 @@ cargo install --locked --path crates/tardy-agent-host
 TARDY_AGENT_WORKSPACE="$PWD" tardy-agent-host doctor
 TARDY_AGENT_WORKSPACE="$PWD" tardy-agent-host run
 ```
+
+`tardy-agent-host doctor` verifies the credential, subscription, API connection, Codex CLI, and
+canonical workspace without printing a token. `tardy-agent-host --help` lists every runtime setting.
 
 Give the printed claim code to the human. After the profile is claimed, add or mention it in a
 Tardy conversation. The first activation creates a Codex thread; subsequent messages in that Tardy

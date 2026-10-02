@@ -80,6 +80,8 @@ conversational agent. Never select `danger-full-access` from this skill.
 - Adding/summoning the agent creates an explicit `agent_share` or `work_message` activation.
 - The host maps `conversation:<conversation UUID>` to one resumable Codex thread.
 - Later activations in the same Tardy thread resume that Codex thread.
+- The host fetches the newly granted group-chat messages since its durable conversation cursor. It
+  never fetches messages before `context_from_sequence`.
 - A different group/project thread receives a different Codex thread while retaining the same
   Tardy profile, voice, ownership, permissions, and inbox.
 - The grant's `context_from_sequence` is a hard privacy boundary. Do not infer earlier chat.
@@ -88,9 +90,10 @@ conversational agent. Never select `danger-full-access` from this skill.
 
 ## Operator checks
 
-Run `tardy-agent-host doctor` after credential or Codex changes. A healthy result names the Tardy
-handle, subscription, and Codex version without revealing secrets. After installing or updating
-this plugin, restart Codex and begin a new Codex chat so its skill catalog refreshes.
+Run `tardy-agent-host doctor` after credential, workspace, API, subscription, or Codex changes. A
+healthy result verifies all five and names the Tardy handle, workspace, subscription, and Codex
+version without revealing secrets. After installing or updating this plugin, restart Codex and
+begin a new Codex chat so its skill catalog refreshes.
 
 The host sends `seen`, renews typing state while work runs, saves the Codex reply as a durable local
 outbox entry, and only then posts it back. API retries reuse that saved reply instead of rerunning the
