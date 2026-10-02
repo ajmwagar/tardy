@@ -44,27 +44,29 @@ const Reel = memo(function Reel({ post, active, height }: { post: Post; active: 
   const muted = useStore((s) => s.muted);
   const [expanded, setExpanded] = useState(false);
   const [speed, setSpeed] = useState<1 | 2 | 4>(1);
-  const speedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [lockedSpeed, setLockedSpeed] = useState<2 | 4 | null>(null);
   const media = post.media[0];
   useSoundPlays(post, active, muted);
 
   const openProfile = () => author && router.push({ pathname: '/profile/[handle]', params: { handle: author.handle } });
   const share = () => router.push({ pathname: '/share', params: { postId: post.id } });
-  const stopSpeed = useCallback(() => {
-    if (speedTimer.current) clearTimeout(speedTimer.current);
-    speedTimer.current = null;
+  const previewSpeed = useCallback((nextSpeed: 2 | 4) => {
+    if (!active) return;
+    setSpeed(nextSpeed);
+  }, [active]);
+  const finishSpeed = useCallback((nextLockedSpeed: 2 | 4 | null) => {
+    setLockedSpeed(nextLockedSpeed);
+    setSpeed(nextLockedSpeed ?? lockedSpeed ?? 1);
+  }, [lockedSpeed]);
+  const unlockSpeed = useCallback(() => {
+    setLockedSpeed(null);
     setSpeed(1);
   }, []);
-  const startSpeed = useCallback(() => {
-    if (!active) return;
-    setSpeed(2);
-    speedTimer.current = setTimeout(() => setSpeed(4), 1_000);
-  }, [active]);
   useEffect(() => {
     // Reset after the active reel changes without synchronously cascading another render.
-    const frame = requestAnimationFrame(stopSpeed);
+    const frame = requestAnimationFrame(unlockSpeed);
     return () => cancelAnimationFrame(frame);
-  }, [active, stopSpeed]);
+  }, [active, unlockSpeed]);
 
   return (
     <View style={{ height, backgroundColor: '#000' }}>
@@ -72,8 +74,8 @@ const Reel = memo(function Reel({ post, active, height }: { post: Post; active: 
         postId={post.id}
         onSingleTap={toggleMuted}
         singleTapIcon={muted ? 'speaker.wave.2.fill' : 'speaker.slash.fill'}
-        onHoldStart={startSpeed}
-        onHoldEnd={stopSpeed}
+        onHoldSpeed={previewSpeed}
+        onHoldEnd={finishSpeed}
         heartSize={148}>
         <View style={{ height }}>
           {media?.type === 'video' && (
@@ -84,7 +86,12 @@ const Reel = memo(function Reel({ post, active, height }: { post: Post; active: 
         </View>
       </DoubleTapLike>
 
-      {speed > 1 ? <View pointerEvents="none" style={styles.speedBadge}><Text style={styles.speedText}>{speed}×</Text></View> : null}
+      {speed > 1 ? (
+        <Pressable onPress={lockedSpeed ? unlockSpeed : undefined} disabled={!lockedSpeed} style={styles.speedBadge} accessibilityRole={lockedSpeed ? 'button' : undefined} accessibilityLabel={lockedSpeed ? `Unlock ${speed} times playback` : undefined}>
+          <Text style={styles.speedText}>{speed}×{lockedSpeed ? '  LOCKED' : ''}</Text>
+          {!lockedSpeed ? <Text style={styles.speedHint}>↑ 4× lock   ↓ 2× lock</Text> : null}
+        </Pressable>
+      ) : null}
 
       <LinearGradient pointerEvents="none" colors={['transparent', 'rgba(0,0,0,0.55)']} style={[styles.scrim, { height: chrome + 150 }]} />
 
@@ -379,6 +386,7 @@ const styles = StyleSheet.create({
   scrim: { position: 'absolute', left: 0, right: 0, bottom: 0 },
   speedBadge: { position: 'absolute', top: '44%', alignSelf: 'center', minWidth: 72, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 22, alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.68)' },
   speedText: { color: '#fff', fontSize: 19, fontWeight: '900', letterSpacing: 0.4 },
+  speedHint: { color: 'rgba(255,255,255,0.72)', fontSize: 10, fontWeight: '800', marginTop: 2 },
   topBar: { position: 'absolute', left: 0, right: 0, height: 44, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14 },
   rail: { position: 'absolute', right: 8, alignItems: 'center', gap: 18 },
   info: { position: 'absolute', left: 12, right: 70, gap: 6 },
