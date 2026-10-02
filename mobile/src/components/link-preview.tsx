@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import * as WebBrowser from 'expo-web-browser';
-import { useState } from 'react';
+import { router } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type { SharedLink } from '@/data/types';
@@ -8,7 +8,6 @@ import { colors, IMAGE_TRANSITION_MS, radius } from '@/theme';
 
 import { SkeletonBlock } from './states';
 import { Icon } from './ui';
-import { VideoSurface } from './video-surface';
 
 const COMPACT_THUMB = 76;
 
@@ -46,7 +45,6 @@ export function LinkPreview({
   /** Thumbnail beside the text instead of above it: for tight spaces like the share sheet. */
   compact?: boolean;
 }) {
-  const [playing, setPlaying] = useState(false);
   const target = link?.canonicalUrl ?? url;
   const ready = link?.status === 'ready';
   const status = error ? `Can't share this link: ${error}` : link?.status ? STATUS[link.status] : 'Saving…';
@@ -54,29 +52,14 @@ export function LinkPreview({
   if (!compact && link?.mediaUrl) {
     return (
       <View style={[styles.card, { width }]}>
-        <View style={[styles.video, { width, height: width * 1.25 }]}>
-          <VideoSurface
-            media={{
-              type: 'video',
-              url: link.mediaUrl,
-              posterUrl: link.thumbnailUrl ?? '',
-              width: 720,
-              height: 1280,
-              durationMs: 0,
-            }}
-            active={playing}
-            contentFit="cover"
-          />
-          {!playing ? (
-            <Pressable
-              style={styles.playOverlay}
-              onPress={() => setPlaying(true)}
-              accessibilityRole="button"
-              accessibilityLabel={`Play ${link.title ?? 'shared video'} in Tardy`}>
-              <View style={styles.playGlyph}><Icon name="play.fill" size={24} color="#fff" /></View>
-            </Pressable>
-          ) : null}
-        </View>
+        <Pressable
+          style={[styles.video, { width, height: width * 1.25 }]}
+          onPress={() => router.push({ pathname: '/shared-reel/[id]', params: { id: link.id } })}
+          accessibilityRole="button"
+          accessibilityLabel={`Open ${link.title ?? 'shared reel'} in Tardy`}>
+          <Image source={link.thumbnailUrl} style={StyleSheet.absoluteFill} contentFit="cover" cachePolicy="memory-disk" />
+          <View style={styles.playOverlay}><View style={styles.playGlyph}><Icon name="play.fill" size={24} color="#fff" /></View></View>
+        </Pressable>
         <View style={styles.body}>
           {link.title ? <Text style={styles.title} numberOfLines={2}>{link.title}</Text> : null}
           {link.caption ? <Text style={styles.caption} numberOfLines={3}>{link.caption}</Text> : null}
