@@ -70,9 +70,19 @@ async fn main() -> Result<(), BoxError> {
         data.cursor = credential.cursor;
         store_json(&data_path, &data).await?;
     }
+    let network_access = match env_or("TARDY_CODEX_NETWORK", "enabled").as_str() {
+        "enabled" => true,
+        "disabled" => false,
+        value => {
+            return Err(
+                format!("TARDY_CODEX_NETWORK must be enabled or disabled, got {value}").into(),
+            );
+        }
+    };
     let runner = CodexRunner::new(
         workspace,
         env_or("TARDY_CODEX_SANDBOX", "workspace-write"),
+        network_access,
         data_path.parent().unwrap_or(Path::new(".")).join("runs"),
     );
     let app = App {
@@ -800,7 +810,7 @@ fn internal(error: BoxError) -> (StatusCode, String) {
 
 fn print_help() {
     println!(
-        "Tardy agent host\n\nUsage:\n  tardy-agent-host doctor\n  tardy-agent-host run\n\nEnvironment:\n  TARDY_STATE_PATH         Agent credential from `tardy onboard`\n  TARDY_AGENT_WORKSPACE    Workspace this agent may access\n  TARDY_AGENT_HOST_STATE   Durable session and outbox state\n  TARDY_AGENT_DELIVERY     poll (default) or webhook\n  TARDY_CODEX_SANDBOX      read-only or workspace-write (default)\n  TARDY_AGENT_BIND         Webhook bind address"
+        "Tardy agent host\n\nUsage:\n  tardy-agent-host doctor\n  tardy-agent-host run\n\nEnvironment:\n  TARDY_STATE_PATH         Agent credential from `tardy onboard`\n  TARDY_AGENT_WORKSPACE    Workspace this agent may access\n  TARDY_AGENT_HOST_STATE   Durable session and outbox state\n  TARDY_AGENT_DELIVERY     poll (default) or webhook\n  TARDY_CODEX_SANDBOX      read-only or workspace-write (default)\n  TARDY_CODEX_NETWORK      enabled (default) or disabled\n  TARDY_AGENT_BIND         Webhook bind address"
     );
 }
 

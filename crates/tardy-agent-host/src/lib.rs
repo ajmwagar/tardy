@@ -245,6 +245,7 @@ pub async fn store_json<T: Serialize>(path: &Path, value: &T) -> Result<(), BoxE
 pub struct CodexRunner {
     workspace: PathBuf,
     sandbox: String,
+    network_access: bool,
     run_dir: PathBuf,
 }
 
@@ -338,10 +339,16 @@ pub fn decide_tapback(
 }
 
 impl CodexRunner {
-    pub fn new(workspace: PathBuf, sandbox: String, run_dir: PathBuf) -> Self {
+    pub fn new(
+        workspace: PathBuf,
+        sandbox: String,
+        network_access: bool,
+        run_dir: PathBuf,
+    ) -> Self {
         Self {
             workspace,
             sandbox,
+            network_access,
             run_dir,
         }
     }
@@ -356,6 +363,16 @@ impl CodexRunner {
         let mut command = Command::new("codex");
         command.current_dir(&self.workspace);
         command.arg("exec");
+        if self.sandbox == "workspace-write" {
+            command.args([
+                "--config",
+                if self.network_access {
+                    "sandbox_workspace_write.network_access=true"
+                } else {
+                    "sandbox_workspace_write.network_access=false"
+                },
+            ]);
+        }
         if let Some(thread_id) = thread_id {
             command.args(["resume", "--json", "-o"]);
             command.arg(&output_path);

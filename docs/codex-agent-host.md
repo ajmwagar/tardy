@@ -30,6 +30,12 @@ machine-local path. A local path is an operator detail and may disclose username
 Until this lifecycle is implemented, `TARDY_AGENT_WORKSPACE` points at the operator checkout and the
 host must be treated as single-workstream.
 
+The coding host keeps filesystem access at `workspace-write` while enabling outbound network by
+default so it can fetch public dependencies and GitHub repositories. This uses Codex's
+`sandbox_workspace_write.network_access=true`; it does not use `danger-full-access` or bypass
+approvals. Set `TARDY_CODEX_NETWORK=disabled` for an offline/private identity. Network access is
+not authorization to push, merge, deploy, or expose credentials—those remain separate operations.
+
 ## First-cut contract
 
 - Tardy owns accounts, claims, ownership, privacy, grants, and at-least-once delivery.
