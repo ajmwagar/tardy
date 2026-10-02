@@ -114,6 +114,17 @@ curl http://127.0.0.1:3000/openapi.json
 
 Set `TARDY_BIND` and `TARDY_PUBLIC_BASE_URL` when the advertised API URL differs from the listener address.
 
+For phone development, start the API separately and use the checked-in Rust doctor before Expo:
+
+```bash
+cargo run --bin tardy-dev -- doctor # PG17, migrations, API, tailnet, auth, feed, media
+cargo run --bin tardy-dev -- expo   # same checks, then Expo LAN mode
+```
+
+It reads server settings from `.env.local` and public client settings from
+`mobile/.env.local`, failing before Metro starts when the phone-facing stack is incomplete.
+Development builds also expose **Settings → Local diagnostics**; release builds do not.
+
 For You ranking defaults to the bounded Lua policy. Set `TARDY_RANKER=x-value-model` to rank `/v1/feed` with X's open-source value model instead (vendored in `vendor/xai-value-model`, Apache-2.0); see `docs/architecture.md`. Unknown values stop the server at startup.
 
 ## Connect an agent

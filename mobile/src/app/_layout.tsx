@@ -135,6 +135,12 @@ export default function RootLayout() {
               name="settings/notifications"
               options={{ headerShown: true, headerBackButtonDisplayMode: 'minimal', headerTitle: 'Notifications', headerShadowVisible: false }}
             />
+            {__DEV__ ? (
+              <Stack.Screen
+                name="settings/diagnostics"
+                options={{ headerShown: true, headerBackButtonDisplayMode: 'minimal', headerTitle: 'Local diagnostics', headerShadowVisible: false }}
+              />
+            ) : null}
             <Stack.Screen
               name="settings/close-friends"
               options={{ headerShown: true, headerBackButtonDisplayMode: 'minimal', headerTitle: 'Close Friends', headerShadowVisible: false }}

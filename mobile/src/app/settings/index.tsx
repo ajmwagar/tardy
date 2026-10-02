@@ -183,6 +183,12 @@ export default function SettingsScreen() {
         <SettingsToggle icon="play.rectangle" title="Autoplay videos" subtitle="Off: tap a video to play it" value={prefs.autoplay} onChange={(v) => setAppPref('autoplay', v)} last />
       </SettingsSection>
 
+      {__DEV__ ? (
+        <SettingsSection title="Development">
+          <SettingsRow icon="stethoscope" title="Local diagnostics" subtitle="Backend, profile, version and latency" onPress={() => router.push('/settings/diagnostics')} last />
+        </SettingsSection>
+      ) : null}
+
       <SettingsSection title="Support and about">
         <SettingsRow icon="questionmark.circle" title="Help center" onPress={() => void openWebPage('help')} external />
         <SettingsRow icon="exclamationmark.bubble" title="Report a problem" onPress={() => void openWebPage('report')} external />
