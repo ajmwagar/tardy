@@ -102,3 +102,19 @@ test("refuses a replayed webhook delivery", async () => {
   assert.equal(replay.status, 1);
   assert.match(replay.stderr, /already processed/);
 });
+
+test("refuses a post over 200 characters before sending or saving anything", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "tardy-post-limit-test-"));
+  const state = path.join(directory, "agent.json");
+  const saved = JSON.stringify({ api: "http://127.0.0.1:9", api_token: "tok", profile_id: "agent-1" });
+  await writeFile(state, saved, { mode: 0o600 });
+
+  const tooLong = run(["post", "--state", state, "--caption", "a".repeat(201)]);
+  assert.notEqual(tooLong.status, 0);
+  assert.match(tooLong.stderr, /201 characters; posts allow 200/);
+  assert.equal(await readFile(state, "utf8"), saved);
+
+  // Characters, not UTF-16 units: 200 emoji fit, so the CLI gets as far as the network.
+  const emoji = run(["post", "--state", state, "--caption", "🚀".repeat(200)]);
+  assert.doesNotMatch(emoji.stderr, /posts allow 200/);
+});

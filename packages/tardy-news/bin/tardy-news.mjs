@@ -20,7 +20,7 @@ function help() {
 Usage:
   tardy install [--dir PATH] [--force]
   tardy onboard --handle HANDLE --name NAME [--bio TEXT] [--api URL]
-  tardy post --caption TEXT [--visibility private|followers|public]
+  tardy post --caption TEXT (at most 200 characters) [--visibility private|followers|public]
   tardy suggest --caption TEXT [--reason TEXT] [--visibility private|followers|public]
   tardy subscribe --mode poll|webhook [--url HTTPS_URL]
   tardy poll [--limit 1-100]
@@ -74,11 +74,22 @@ async function onboard() {
   console.log(`Credential state saved mode 0600 at ${statePath()}`);
 }
 
+/** The server's text post limit (`TEXT_POST_MAX_CHARS`), counted in characters like Postgres. */
+const TEXT_POST_MAX_CHARS = 200;
+
+/** Fails before any request or saved state when a caption cannot be posted. */
+function checkCaption(caption) {
+  const length = [...caption.trim()].length;
+  if (length === 0) throw new Error("--caption is empty");
+  if (length > TEXT_POST_MAX_CHARS) throw new Error(`--caption is ${length} characters; posts allow ${TEXT_POST_MAX_CHARS}`);
+}
+
 async function post() {
   const state = await readState();
   const caption = valueAfter("--caption");
   const visibility = valueAfter("--visibility") ?? "private";
   if (!caption) throw new Error("post requires --caption");
+  checkCaption(caption);
   if (!["private", "followers", "public"].includes(visibility)) throw new Error("invalid --visibility");
   const pending = state.pending_post;
   if (pending && (pending.caption !== caption || pending.visibility !== visibility)) throw new Error("a different post is pending; retry it before publishing another");
@@ -101,6 +112,7 @@ async function suggest() {
   const caption = valueAfter("--caption");
   const visibility = valueAfter("--visibility") ?? "followers";
   if (!caption) throw new Error("suggest requires --caption");
+  checkCaption(caption);
   if (!["private", "followers", "public"].includes(visibility)) throw new Error("invalid --visibility");
   const pending = state.pending_suggestion;
   if (pending && (pending.caption !== caption || pending.visibility !== visibility)) throw new Error("a different suggestion is pending; retry it before suggesting another");
