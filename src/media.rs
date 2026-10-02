@@ -3,6 +3,7 @@ use rusty_s3::{Bucket, Credentials, S3Action, UrlStyle};
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
 use std::collections::{BTreeMap, HashMap};
+use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use utoipa::ToSchema;
@@ -189,6 +190,87 @@ pub struct R2ObjectStore {
     client: reqwest::Client,
 }
 
+/// Development object store backed by `TARDY_LOCAL_BLOB_DIR`. Uploads still travel
+/// through the same authorize -> PUT -> complete contract as R2, so local dogfood
+/// exercises the production boundary instead of inventing a second client flow.
+pub struct LocalObjectStore {
+    root: PathBuf,
+    public_base_url: String,
+}
+
+impl LocalObjectStore {
+    fn from_env() -> Option<Self> {
+        Some(Self {
+            root: std::env::var_os("TARDY_LOCAL_BLOB_DIR")?.into(),
+            public_base_url: std::env::var("TARDY_PUBLIC_BASE_URL").ok()?,
+        })
+    }
+
+    fn path(&self, key: &str) -> Result<PathBuf, MediaError> {
+        if key
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
+        {
+            return Err(MediaError::Forbidden);
+        }
+        Ok(self.root.join("uploads").join(key))
+    }
+}
+
+#[async_trait]
+impl ObjectStore for LocalObjectStore {
+    async fn presign_put(
+        &self,
+        key: &str,
+        content_type: &str,
+        byte_length: u64,
+        sha256_base64: Option<&str>,
+        _expires: Duration,
+    ) -> Result<(String, String, BTreeMap<String, String>), MediaError> {
+        let mut headers = BTreeMap::from([
+            ("content-type".into(), content_type.into()),
+            ("content-length".into(), byte_length.to_string()),
+        ]);
+        if let Some(checksum) = sha256_base64 {
+            headers.insert("x-tardy-checksum-sha256".into(), checksum.into());
+        }
+        Ok((
+            "PUT".into(),
+            format!(
+                "{}/v1/dev/uploads/{key}",
+                self.public_base_url.trim_end_matches('/')
+            ),
+            headers,
+        ))
+    }
+
+    async fn head(&self, key: &str) -> Result<ObjectMetadata, MediaError> {
+        let path = self.path(key)?;
+        let metadata = tokio::fs::metadata(&path)
+            .await
+            .map_err(|error| MediaError::ObjectStore(error.to_string()))?;
+        let content_type = tokio::fs::read_to_string(path.with_extension("tardy-content-type"))
+            .await
+            .map_err(|error| MediaError::ObjectStore(error.to_string()))?;
+        let sha256_base64 = tokio::fs::read_to_string(path.with_extension("tardy-sha256"))
+            .await
+            .ok();
+        Ok(ObjectMetadata {
+            content_type: Some(content_type),
+            byte_length: metadata.len(),
+            sha256_base64,
+        })
+    }
+
+    async fn presign_get(&self, key: &str, _expires: Duration) -> Result<String, MediaError> {
+        self.path(key)?;
+        Ok(format!(
+            "{}/v1/dev/uploads/{key}",
+            self.public_base_url.trim_end_matches('/')
+        ))
+    }
+}
+
 impl R2ObjectStore {
     pub fn from_env() -> Result<Option<Self>, MediaError> {
         let Some(account_id) = std::env::var("R2_ACCOUNT_ID").ok() else {
@@ -335,9 +417,12 @@ impl MediaService {
         }
     }
     pub fn from_env() -> Result<Self, MediaError> {
-        Ok(Self::new(
-            R2ObjectStore::from_env()?.map(|store| Arc::new(store) as Arc<dyn ObjectStore>),
-        ))
+        let store = R2ObjectStore::from_env()?
+            .map(|store| Arc::new(store) as Arc<dyn ObjectStore>)
+            .or_else(|| {
+                LocalObjectStore::from_env().map(|store| Arc::new(store) as Arc<dyn ObjectStore>)
+            });
+        Ok(Self::new(store))
     }
 
     pub fn from_env_with_pool(pool: PgPool) -> Result<Self, MediaError> {
@@ -426,7 +511,7 @@ impl MediaService {
         now_ms: u64,
     ) -> Result<MediaAsset, MediaError> {
         let session = if let Some(pool) = &self.pool {
-            let row = sqlx::query("SELECT id,profile_id,kind,object_key,content_type,byte_length,sha256_base64,extract(epoch from expires_at)*1000 AS expires_at_ms,completed_asset_id FROM media_upload_sessions WHERE id=$1")
+            let row = sqlx::query("SELECT id,profile_id,kind,object_key,content_type,byte_length,sha256_base64,(extract(epoch from expires_at)*1000)::double precision AS expires_at_ms,completed_asset_id FROM media_upload_sessions WHERE id=$1")
                 .bind(id).fetch_optional(pool).await
                 .map_err(|error| MediaError::ObjectStore(format!("read upload: {error}")))?
                 .ok_or(MediaError::NotFound)?;
@@ -689,7 +774,10 @@ mod tests {
             byte_length: 42,
             sha256_base64: None,
         };
-        assert!(matches!(service.authorize(profile, executable, 3).await, Err(MediaError::UnsupportedType)));
+        assert!(matches!(
+            service.authorize(profile, executable, 3).await,
+            Err(MediaError::UnsupportedType)
+        ));
     }
 
     #[tokio::test]

@@ -31,6 +31,7 @@ use crate::subscriptions::{
     FeedEvent, NewSubscription, PgSubscriptionStore, Subscription, SubscriptionError,
 };
 use crate::web_billing::{BillingError, PgWebBillingStore, WEB_SESSION_COOKIE};
+use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -288,6 +289,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/engagements", post(record_app_engagements))
         .route("/v1/stories", get(stories))
         .route("/v1/dev/blobs/{name}", get(local_blob))
+        .route(
+            "/v1/dev/uploads/{*key}",
+            get(local_upload).head(local_upload).put(put_local_upload),
+        )
         .route("/v1/dev/brags/{slug}/{name}", get(local_brag))
         .route("/v1/feed/hyper-tardy", get(hyper_tardy_feed))
         .route("/v1/agent-handoffs", post(agent_handoff))
@@ -2566,6 +2571,79 @@ async fn local_blob(
         headers,
     )
     .await
+}
+
+fn local_upload_path(key: &str) -> Result<std::path::PathBuf, ApiError> {
+    if key
+        .split('/')
+        .any(|part| part.is_empty() || part == "." || part == "..")
+    {
+        return Err(ApiError::bad_request("invalid upload key"));
+    }
+    let root = std::env::var_os("TARDY_LOCAL_BLOB_DIR")
+        .ok_or_else(|| ApiError::not_found("local uploads are disabled"))?;
+    Ok(std::path::Path::new(&root).join("uploads").join(key))
+}
+
+async fn put_local_upload(
+    Path(key): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<StatusCode, ApiError> {
+    let path = local_upload_path(&key)?;
+    let declared = headers
+        .get(header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<usize>().ok())
+        .ok_or_else(|| ApiError::bad_request("content-length is required"))?;
+    if declared != body.len() {
+        return Err(ApiError::bad_request("content-length does not match body"));
+    }
+    let content_type = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(|| ApiError::bad_request("content-type is required"))?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| ApiError::bad_request("invalid upload key"))?;
+    tokio::fs::create_dir_all(parent)
+        .await
+        .map_err(|error| ApiError::internal(format!("create local upload directory: {error}")))?;
+    tokio::fs::write(&path, &body)
+        .await
+        .map_err(|error| ApiError::internal(format!("write local upload: {error}")))?;
+    tokio::fs::write(path.with_extension("tardy-content-type"), content_type)
+        .await
+        .map_err(|error| ApiError::internal(format!("write local upload metadata: {error}")))?;
+    if let Some(checksum) = headers
+        .get("x-tardy-checksum-sha256")
+        .and_then(|value| value.to_str().ok())
+    {
+        tokio::fs::write(path.with_extension("tardy-sha256"), checksum)
+            .await
+            .map_err(|error| ApiError::internal(format!("write local checksum: {error}")))?;
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn local_upload(
+    Path(key): Path<String>,
+    method: Method,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let path = local_upload_path(&key)?;
+    let content_type = tokio::fs::read_to_string(path.with_extension("tardy-content-type"))
+        .await
+        .map_err(|_| ApiError::not_found("upload not found"))?;
+    let name = key.rsplit('/').next().unwrap_or("upload");
+    let mut response = serve_local_file(path, name, method, headers).await?;
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        content_type
+            .parse()
+            .map_err(|_| ApiError::internal("invalid stored content type"))?,
+    );
+    Ok(response)
 }
 
 async fn local_brag(

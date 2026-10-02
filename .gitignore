@@ -45,3 +45,5 @@ content/**/assets/fonts/SF*
 content/**/snapshots/
 mobile/assets/reels/shared-*.mp4
 mobile/assets/reels/shared-*-thumb.jpg
+# Local object-store payloads created by the development upload adapter.
+mobile/assets/reels/uploads/
