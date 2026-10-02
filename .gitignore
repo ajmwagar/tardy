@@ -3,6 +3,7 @@
 debug
 target
 .wrangler/
+.agents/
 
 # OpenTofu working data and local state. Production state belongs in FPL's
 # managed encrypted backend, never in this repository.
