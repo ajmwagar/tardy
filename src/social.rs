@@ -636,7 +636,15 @@ impl PgSocialStore {
                                 AND author_owner.profile_id=p.author_profile_id)
                     OR (p.visibility='followers' AND EXISTS (
                         SELECT 1 FROM profile_follows f
-                        WHERE f.follower_profile_id=$1 AND f.followed_profile_id=p.author_profile_id)))",
+                        WHERE f.follower_profile_id=$1 AND f.followed_profile_id=p.author_profile_id))
+                    OR EXISTS (
+                        SELECT 1 FROM conversation_messages m
+                        JOIN conversation_participants participant
+                          ON participant.conversation_id=m.conversation_id
+                        JOIN shared_links shared ON shared.id=m.shared_link_id
+                        WHERE participant.profile_id=$1
+                          AND shared.canonical_url=('https://tardy.news/t/' || p.id::text)
+                    ))",
         )
         .bind(viewer)
         .bind(id)
