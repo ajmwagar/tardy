@@ -39,6 +39,16 @@ variable "api_domain" {
   description = "Verified public domain routed through FPL ingress."
 }
 
+variable "apple_client_id" {
+  type        = string
+  default     = "dev.fpl.tardy"
+  description = "Sign in with Apple audience. For the native app this is the immutable iOS bundle identifier, not a secret."
+  validation {
+    condition     = length(trimspace(var.apple_client_id)) > 0
+    error_message = "Apple client ID must not be empty."
+  }
+}
+
 variable "api_cpu" {
   type        = number
   default     = 1

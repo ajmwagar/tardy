@@ -113,6 +113,7 @@ resource "fpl_shroud_service" "api" {
     TARDY_BIND                  = "0.0.0.0:3000"
     TARDY_PUBLIC_BASE_URL       = "https://${var.api_domain}"
     TARDY_WEB_BASE_URL          = "https://tardy.news"
+    APPLE_CLIENT_ID             = var.apple_client_id
     STRIPE_REAL_TARDY_PRICE_ID  = var.stripe_real_tardy_price_id
     STRIPE_SUPER_TARDY_PRICE_ID = var.stripe_super_tardy_price_id
     RUST_LOG                    = "info"
