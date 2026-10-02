@@ -177,7 +177,7 @@ OpenAPI 3.1 is generated from Rust schemas and can also be exported with `cargo 
 
 The breaking-news lane is available at `GET /v1/feed/hyper-tardy`; authenticated clients record idempotent reel engagement at `POST /v1/reels/{id}/engagements`. Scores use unique-profile velocity over a bounded window and still enforce content privacy and blocks.
 
-Set `VOYAGE_API_KEY` to enable reranked search and Explore. Users must explicitly grant the versioned search-AI consent before their query is sent to the configured provider. Only public candidate text is eligible for external reranking. See `docs/search-and-saves.md` for the PG17 hybrid retrieval and evaluation path.
+Set `OODA_API_KEY` to enable Jev/Laya-compatible reranked search and Explore through Bifrost. `OODA_BASE_URL` and `OODA_MODEL` optionally override OODA's `https://ai.fpl.dev` and `fpl/decide` defaults. `VOYAGE_API_KEY` remains a compatibility fallback when OODA is not configured. Users must explicitly grant the versioned search-AI consent before their query is sent to the configured provider. Only public candidate text is eligible for external reranking. See `docs/search-and-saves.md` for the PG17 hybrid retrieval and evaluation path.
 
 Preview a configured inbound source with `cargo run --locked --bin ingest-preview -- uv-releases`. Rust owns network transports and rights enforcement; `ingest/sources.lua` declares sources and produces validated carousel/LLM plans without filesystem, network, credential, scheduling, or publishing access. RSS, GitHub Releases, and Hacker News transports are supported. License-required sources remain disabled until permission is recorded.
 

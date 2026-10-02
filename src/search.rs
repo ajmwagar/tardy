@@ -1,5 +1,6 @@
 use crate::domain::{FeedItem, Visibility};
 use async_trait::async_trait;
+use ooda::{Client as OodaClient, HttpClient as OodaHttpClient, Question, Request};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
@@ -60,6 +61,11 @@ impl SearchService {
     }
 
     pub fn from_env() -> Result<Self, SearchError> {
+        if std::env::var_os(ooda::API_KEY_ENV).is_some() {
+            return Ok(Self {
+                reranker: Some(Arc::new(OodaReranker::from_env()?)),
+            });
+        }
         let Ok(api_key) = std::env::var("VOYAGE_API_KEY") else {
             return Ok(Self::disabled());
         };
@@ -138,6 +144,109 @@ impl SearchService {
             })
             .collect()
     }
+}
+
+/// A Jev/Laya-compatible second-stage reranker through OODA/Bifrost.
+///
+/// PostgreSQL remains responsible for candidate retrieval. This adapter asks one
+/// bounded relevance question per candidate in a single decision request, then
+/// sorts the calibrated probabilities. It never lets the model choose control
+/// flow or introduce candidates that were not supplied by the caller.
+pub struct OodaReranker {
+    client: Arc<dyn OodaClient + Send + Sync>,
+}
+
+impl OodaReranker {
+    pub fn from_env() -> Result<Self, SearchError> {
+        let client = OodaHttpClient::from_env()
+            .map_err(|error| SearchError::Provider(error.to_string()))?
+            .with_timeout(std::time::Duration::from_secs(5))
+            .map_err(|error| SearchError::Provider(error.to_string()))?
+            .with_max_attempts(1);
+        Ok(Self::new(Arc::new(client)))
+    }
+
+    pub fn new(client: Arc<dyn OodaClient + Send + Sync>) -> Self {
+        Self { client }
+    }
+}
+
+#[async_trait]
+impl Reranker for OodaReranker {
+    fn provider(&self) -> &'static str {
+        "ooda"
+    }
+
+    async fn rerank(
+        &self,
+        query: &str,
+        documents: &[SearchDocument],
+        limit: usize,
+    ) -> Result<Vec<RankedDocument>, SearchError> {
+        if query.trim().is_empty() {
+            return Err(SearchError::EmptyQuery);
+        }
+        if documents.is_empty() || limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let observation = serde_json::json!({
+            "search_query": query,
+            "candidates": documents
+                .iter()
+                .enumerate()
+                .map(|(index, document)| serde_json::json!({
+                    "candidate": candidate_name(index),
+                    "text": document.text,
+                }))
+                .collect::<Vec<_>>(),
+        });
+        let mut request = Request::new(observation);
+        for index in 0..documents.len() {
+            let name = candidate_name(index);
+            request = request.with(
+                name.clone(),
+                Question::noul_with_context(
+                    format!(
+                        "Is {name} relevant and useful for the supplied search_query? Judge only the supplied candidate."
+                    ),
+                    "The candidate directly helps answer or explore the search query",
+                    "The candidate is unrelated or provides no useful information",
+                ),
+            );
+        }
+
+        let client = Arc::clone(&self.client);
+        let outcome = tokio::task::spawn_blocking(move || client.decide(&request))
+            .await
+            .map_err(|error| SearchError::Provider(error.to_string()))?
+            .map_err(|error| SearchError::Provider(error.to_string()))?;
+        let mut ranked = (0..documents.len())
+            .map(|index| {
+                let score = outcome
+                    .answer(&candidate_name(index))
+                    .map_err(|error| SearchError::Provider(error.to_string()))?
+                    .noul()
+                    .ok_or(SearchError::InvalidResult)?;
+                if !score.is_finite() || !(0.0..=1.0).contains(&score) {
+                    return Err(SearchError::InvalidResult);
+                }
+                Ok(RankedDocument { index, score })
+            })
+            .collect::<Result<Vec<_>, SearchError>>()?;
+        ranked.sort_by(|left, right| {
+            right
+                .score
+                .total_cmp(&left.score)
+                .then_with(|| left.index.cmp(&right.index))
+        });
+        ranked.truncate(limit.min(ranked.len()));
+        Ok(ranked)
+    }
+}
+
+fn candidate_name(index: usize) -> String {
+    format!("candidate_{index:03}")
 }
 
 fn document_text(item: &FeedItem) -> String {
@@ -245,6 +354,7 @@ impl Reranker for VoyageReranker {
 mod tests {
     use super::*;
     use crate::domain::Reel;
+    use ooda::ScriptedClient;
 
     fn reel(caption: &str, visibility: Visibility, published_at_ms: u64) -> FeedItem {
         FeedItem::Reel(Reel {
@@ -339,5 +449,71 @@ mod tests {
                 score: 0.9
             }]
         );
+    }
+
+    #[tokio::test]
+    async fn ooda_adapter_batches_bounded_relevance_questions_and_sorts_scores() {
+        let client = Arc::new(ScriptedClient::new([serde_json::json!({
+            "answers": {
+                "candidate_000": {"type": "boolean", "probability": 0.25},
+                "candidate_001": {"type": "boolean", "probability": 0.95},
+                "candidate_002": {"type": "boolean", "probability": 0.60}
+            }
+        })
+        .to_string()]));
+        let reranker = OodaReranker::new(client.clone());
+        let documents = ["one", "two", "three"]
+            .into_iter()
+            .map(|text| SearchDocument {
+                id: Uuid::new_v4(),
+                text: text.into(),
+            })
+            .collect::<Vec<_>>();
+
+        let ranked = reranker.rerank("rust agents", &documents, 2).await.unwrap();
+
+        assert_eq!(
+            ranked,
+            vec![
+                RankedDocument {
+                    index: 1,
+                    score: 0.95,
+                },
+                RankedDocument {
+                    index: 2,
+                    score: 0.60,
+                },
+            ]
+        );
+        let requests = client.requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0]["state"]["search_query"], "rust agents");
+        assert_eq!(
+            requests[0]["state"]["candidates"].as_array().unwrap().len(),
+            3
+        );
+        assert_eq!(requests[0]["questions"]["candidate_001"]["type"], "boolean");
+    }
+
+    #[tokio::test]
+    async fn ooda_adapter_rejects_missing_or_non_probability_answers() {
+        let client = Arc::new(ScriptedClient::new([serde_json::json!({
+            "answers": {
+                "candidate_000": {"type": "score", "score": 1, "confidence": 0.9}
+            }
+        })
+        .to_string()]));
+        let reranker = OodaReranker::new(client);
+        let result = reranker
+            .rerank(
+                "query",
+                &[SearchDocument {
+                    id: Uuid::new_v4(),
+                    text: "candidate".into(),
+                }],
+                1,
+            )
+            .await;
+        assert!(matches!(result, Err(SearchError::InvalidResult)));
     }
 }
