@@ -171,6 +171,14 @@ pub struct SharedLink {
     pub canonical_url: String,
     pub provider: String,
     pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thumbnail_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub caption: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub media_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -1020,21 +1028,60 @@ impl PgSocialStore {
         let (canonical_url, provider) = canonicalize_url(raw_url)?;
         let id = Uuid::new_v4();
         let mut tx = self.pool.begin().await?;
-        let row = sqlx::query("INSERT INTO shared_links (id,canonical_url,provider) VALUES ($1,$2,$3) ON CONFLICT (canonical_url) DO UPDATE SET canonical_url=excluded.canonical_url RETURNING id,canonical_url,provider,status")
+        let row = sqlx::query("INSERT INTO shared_links (id,canonical_url,provider) VALUES ($1,$2,$3) ON CONFLICT (canonical_url) DO UPDATE SET canonical_url=excluded.canonical_url RETURNING id,canonical_url,provider,status,metadata,media_r2_key")
             .bind(id).bind(&canonical_url).bind(&provider).fetch_one(&mut *tx).await?;
         let stored_id: Uuid = row.try_get("id")?;
         if stored_id == id {
             sqlx::query("INSERT INTO outbox (id,topic,aggregate_type,aggregate_id,payload,available_at,created_at) VALUES ($1,'shared_link.enrichment_requested.v1','shared_link',$2,$3,now(),now()) ON CONFLICT DO NOTHING")
                 .bind(Uuid::new_v4()).bind(id.to_string()).bind(serde_json::json!({"shared_link_id": id, "canonical_url": canonical_url, "provider": provider})).execute(&mut *tx).await?;
         }
+        let metadata: serde_json::Value = row.try_get("metadata")?;
         let link = SharedLink {
             id: stored_id,
             canonical_url: row.try_get("canonical_url")?,
             provider: row.try_get("provider")?,
             status: row.try_get("status")?,
+            title: metadata
+                .get("title")
+                .and_then(|v| v.as_str())
+                .map(str::to_owned),
+            thumbnail_url: metadata
+                .get("thumbnail_url")
+                .and_then(|v| v.as_str())
+                .map(str::to_owned),
+            caption: metadata
+                .get("caption")
+                .and_then(|v| v.as_str())
+                .map(str::to_owned),
+            media_url: row.try_get::<Option<String>, _>("media_r2_key")?,
         };
         tx.commit().await?;
         Ok(link)
+    }
+
+    pub async fn shared_link(&self, id: Uuid) -> Result<SharedLink, SocialError> {
+        let row = sqlx::query("SELECT id,canonical_url,provider,status,metadata,media_r2_key FROM shared_links WHERE id=$1")
+            .bind(id).fetch_optional(&self.pool).await?.ok_or(SocialError::NotFound)?;
+        let metadata: serde_json::Value = row.try_get("metadata")?;
+        Ok(SharedLink {
+            id: row.try_get("id")?,
+            canonical_url: row.try_get("canonical_url")?,
+            provider: row.try_get("provider")?,
+            status: row.try_get("status")?,
+            title: metadata
+                .get("title")
+                .and_then(|v| v.as_str())
+                .map(str::to_owned),
+            thumbnail_url: metadata
+                .get("thumbnail_url")
+                .and_then(|v| v.as_str())
+                .map(str::to_owned),
+            caption: metadata
+                .get("caption")
+                .and_then(|v| v.as_str())
+                .map(str::to_owned),
+            media_url: row.try_get("media_r2_key")?,
+        })
     }
 
     pub async fn send_message(

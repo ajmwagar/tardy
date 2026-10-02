@@ -1,5 +1,6 @@
 import { Image } from 'expo-image';
 import * as WebBrowser from 'expo-web-browser';
+import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type { SharedLink } from '@/data/types';
@@ -7,6 +8,7 @@ import { colors, IMAGE_TRANSITION_MS, radius } from '@/theme';
 
 import { SkeletonBlock } from './states';
 import { Icon } from './ui';
+import { VideoSurface } from './video-surface';
 
 const COMPACT_THUMB = 76;
 
@@ -44,10 +46,47 @@ export function LinkPreview({
   /** Thumbnail beside the text instead of above it: for tight spaces like the share sheet. */
   compact?: boolean;
 }) {
+  const [playing, setPlaying] = useState(false);
   const target = link?.canonicalUrl ?? url;
   const ready = link?.status === 'ready';
   const status = error ? `Can't share this link: ${error}` : link?.status ? STATUS[link.status] : 'Saving…';
   const thumb = compact ? { width: COMPACT_THUMB, height: COMPACT_THUMB } : { width, height: width * 0.52 };
+  if (!compact && link?.mediaUrl) {
+    return (
+      <View style={[styles.card, { width }]}>
+        <View style={[styles.video, { width, height: width * 1.25 }]}>
+          <VideoSurface
+            media={{
+              type: 'video',
+              url: link.mediaUrl,
+              posterUrl: link.thumbnailUrl ?? '',
+              width: 720,
+              height: 1280,
+              durationMs: 0,
+            }}
+            active={playing}
+            contentFit="cover"
+          />
+          {!playing ? (
+            <Pressable
+              style={styles.playOverlay}
+              onPress={() => setPlaying(true)}
+              accessibilityRole="button"
+              accessibilityLabel={`Play ${link.title ?? 'shared video'} in Tardy`}>
+              <View style={styles.playGlyph}><Icon name="play.fill" size={24} color="#fff" /></View>
+            </Pressable>
+          ) : null}
+        </View>
+        <View style={styles.body}>
+          {link.title ? <Text style={styles.title} numberOfLines={2}>{link.title}</Text> : null}
+          {link.caption ? <Text style={styles.caption} numberOfLines={3}>{link.caption}</Text> : null}
+          <Pressable onPress={() => void WebBrowser.openBrowserAsync(target)} accessibilityRole="link">
+            <Text style={styles.source}>View original · {hostOf(target)}</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
   return (
     <Pressable
       style={[styles.card, { width }, compact && styles.compact]}
@@ -95,4 +134,9 @@ const styles = StyleSheet.create({
   host: { color: colors.textSecondary, fontSize: 12.5 },
   status: { color: colors.textTertiary, fontSize: 12 },
   error: { color: colors.alarm, fontSize: 12 },
+  video: { position: 'relative', backgroundColor: '#000' },
+  playOverlay: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center' },
+  playGlyph: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.55)' },
+  caption: { color: colors.textSecondary, fontSize: 13, lineHeight: 18 },
+  source: { color: colors.primary, fontSize: 12.5, fontWeight: '600', paddingTop: 3 },
 });

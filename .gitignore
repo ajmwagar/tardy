@@ -40,3 +40,5 @@ brag-output*/work/frames/
 # Apple's SF Rounded is copied in locally for renders, never committed
 content/**/assets/fonts/SF*
 content/**/snapshots/
+mobile/assets/reels/shared-*.mp4
+mobile/assets/reels/shared-*-thumb.jpg

@@ -302,6 +302,8 @@ export type SharedLink = {
   title?: string;
   /** Wire: `thumbnail_url`. */
   thumbnailUrl?: string;
+  caption?: string;
+  mediaUrl?: string;
 };
 
 /** Who `openThread` needs to know about: the server routes agents and people differently. */

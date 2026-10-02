@@ -246,6 +246,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/agent-handoffs", post(agent_handoff))
         .route("/v1/agent-shares", post(share_to_agent))
         .route("/v1/social/shared-links", post(create_shared_link))
+        .route("/v1/social/shared-links/{id}", get(get_shared_link))
         .route(
             "/v1/social/conversations",
             post(create_social_conversation).get(list_social_conversations),
@@ -796,6 +797,19 @@ fn local_blob_url(state: &AppState, name: &str) -> Option<String> {
         .map(|_| format!("{}/v1/dev/blobs/{name}", state.public_base_url))
 }
 
+fn media_object_url(state: &AppState, key: &str) -> Option<String> {
+    std::env::var("TARDY_MEDIA_BASE_URL")
+        .ok()
+        .map(|base| {
+            format!(
+                "{}/{}",
+                base.trim_end_matches('/'),
+                key.trim_start_matches('/')
+            )
+        })
+        .or_else(|| local_blob_url(state, key))
+}
+
 fn dicebear_avatar_url(kind: IdentityKind, seed: &str) -> String {
     let style = match kind {
         IdentityKind::Agent => "bottts-neutral",
@@ -1230,6 +1244,26 @@ async fn create_shared_link(
         StatusCode::CREATED,
         Json(social_store(&state)?.add_shared_link(&body.url).await?),
     ))
+}
+
+async fn get_shared_link(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<SharedLink>, ApiError> {
+    authenticated_account(&state, &headers).await?;
+    let mut link = social_store(&state)?.shared_link(id).await?;
+    if let Some(key) = link.media_url.take() {
+        link.media_url = media_object_url(&state, &key);
+    }
+    if let Some(key) = link.thumbnail_url.take() {
+        link.thumbnail_url = if key.starts_with("http://") || key.starts_with("https://") {
+            Some(key)
+        } else {
+            media_object_url(&state, &key)
+        };
+    }
+    Ok(Json(link))
 }
 
 #[derive(Deserialize, ToSchema)]
