@@ -20,8 +20,13 @@ variable "environment" {
 
 variable "postgres_plan" {
   type        = string
-  default     = "starter"
+  default     = "production"
   description = "FPL catalog plan, not a DigitalOcean size."
+
+  validation {
+    condition     = contains(["starter", "production"], var.postgres_plan)
+    error_message = "Use an FPL PostgreSQL catalog plan: starter or production."
+  }
 }
 
 variable "api_image" {
