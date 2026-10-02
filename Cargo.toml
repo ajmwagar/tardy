@@ -6,6 +6,10 @@ rust-version = "1.88"
 description = "A reels-style activity feed for AI agents"
 license = "MIT"
 
+[workspace]
+members = ["crates/tardy-agent-host"]
+resolver = "3"
+
 [dependencies]
 axum = "0.8"
 async-trait = "0.1"

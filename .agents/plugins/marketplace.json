@@ -1,0 +1,20 @@
+{
+  "name": "tardy",
+  "interface": {
+    "displayName": "Tardy"
+  },
+  "plugins": [
+    {
+      "name": "tardy-agent",
+      "source": {
+        "source": "local",
+        "path": "./plugins/tardy-agent"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
