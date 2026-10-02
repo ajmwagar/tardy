@@ -15,7 +15,7 @@ use std::{
 use tardy_agent_host::{
     AgentCommand, AgentCredential, BoxError, CodexRunner, ConversationMessage, HostData,
     InboxEvent, PendingReply, QueuedEvent, TapbackDecider, WorkActivation, activation_prompt,
-    dispatchable_deliveries, load_json, store_json, verify_signature,
+    dispatchable_deliveries, load_json, obvious_tapback, store_json, verify_signature,
 };
 use tokio::sync::{Mutex, Notify};
 
@@ -43,6 +43,18 @@ async fn main() -> Result<(), BoxError> {
     let command = std::env::args().nth(1).unwrap_or_else(|| "run".into());
     if matches!(command.as_str(), "help" | "--help" | "-h") {
         print_help();
+        return Ok(());
+    }
+    if command == "tapback" {
+        let body = std::env::args().skip(2).collect::<Vec<_>>().join(" ");
+        if body.trim().is_empty() {
+            return Err("tapback requires a message to classify".into());
+        }
+        let decision = tokio::task::spawn_blocking(move || {
+            TapbackDecider::from_env()?.decide("host-doctor", &body)
+        })
+        .await??;
+        println!("{}", decision.as_api_kind().unwrap_or("none"));
         return Ok(());
     }
     if command == "doctor" {
@@ -85,6 +97,13 @@ async fn main() -> Result<(), BoxError> {
         network_access,
         data_path.parent().unwrap_or(Path::new(".")).join("runs"),
     );
+    let tapbacks = if std::env::var("TARDY_TAPBACK_RLCD").as_deref() == Ok("yes") {
+        Some(Arc::new(
+            tokio::task::spawn_blocking(TapbackDecider::from_env).await??,
+        ))
+    } else {
+        None
+    };
     let app = App {
         credential,
         data: Arc::new(Mutex::new(data)),
@@ -94,11 +113,7 @@ async fn main() -> Result<(), BoxError> {
             .build()?,
         runner: Arc::new(runner),
         notify: Arc::new(Notify::new()),
-        tapbacks: if std::env::var("TARDY_TAPBACK_RLCD").as_deref() == Ok("yes") {
-            Some(Arc::new(TapbackDecider::from_env()?))
-        } else {
-            None
-        },
+        tapbacks,
     };
     let worker = tokio::spawn(work_loop(app.clone()));
     let mode = env_or("TARDY_AGENT_DELIVERY", "poll");
@@ -695,23 +710,29 @@ async fn fetch_context(
 }
 
 async fn acknowledge(app: &App, activation: &WorkActivation) -> Result<(), BoxError> {
-    let kind = if let Some(decider) = app.tapbacks.as_ref() {
+    let obvious = obvious_tapback(&activation.body);
+    let kind = if obvious.is_some() {
+        obvious.and_then(|tapback| tapback.as_api_kind())
+    } else if let Some(decider) = app.tapbacks.as_ref() {
         let decider = Arc::clone(decider);
         let handle = app.credential.handle.clone();
         let body = activation.body.clone();
         match tokio::task::spawn_blocking(move || decider.decide(&handle, &body)).await {
             Ok(Ok(tapback)) => tapback.as_api_kind(),
             Ok(Err(error)) => {
-                tracing::warn!(%error, "RLCD tapback failed; using seen");
-                "seen"
+                tracing::warn!(%error, "RLCD tapback failed; adding no reaction");
+                None
             }
             Err(error) => {
-                tracing::warn!(%error, "RLCD tapback task failed; using seen");
-                "seen"
+                tracing::warn!(%error, "RLCD tapback task failed; adding no reaction");
+                None
             }
         }
     } else {
-        "seen"
+        obvious_tapback(&activation.body).and_then(|tapback| tapback.as_api_kind())
+    };
+    let Some(kind) = kind else {
+        return Ok(());
     };
     request_ok(
         app.client
@@ -810,7 +831,7 @@ fn internal(error: BoxError) -> (StatusCode, String) {
 
 fn print_help() {
     println!(
-        "Tardy agent host\n\nUsage:\n  tardy-agent-host doctor\n  tardy-agent-host run\n\nEnvironment:\n  TARDY_STATE_PATH         Agent credential from `tardy onboard`\n  TARDY_AGENT_WORKSPACE    Workspace this agent may access\n  TARDY_AGENT_HOST_STATE   Durable session and outbox state\n  TARDY_AGENT_DELIVERY     poll (default) or webhook\n  TARDY_CODEX_SANDBOX      read-only or workspace-write (default)\n  TARDY_CODEX_NETWORK      enabled (default) or disabled\n  TARDY_AGENT_BIND         Webhook bind address"
+        "Tardy agent host\n\nUsage:\n  tardy-agent-host doctor\n  tardy-agent-host tapback <message>\n  tardy-agent-host run\n\nEnvironment:\n  TARDY_STATE_PATH         Agent credential from `tardy onboard`\n  TARDY_AGENT_WORKSPACE    Workspace this agent may access\n  TARDY_AGENT_HOST_STATE   Durable session and outbox state\n  TARDY_AGENT_DELIVERY     poll (default) or webhook\n  TARDY_CODEX_SANDBOX      read-only or workspace-write (default)\n  TARDY_CODEX_NETWORK      enabled (default) or disabled\n  TARDY_AGENT_BIND         Webhook bind address"
     );
 }
 

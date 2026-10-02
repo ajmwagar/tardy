@@ -257,6 +257,8 @@ pub struct CodexResult {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, ooda::Choice, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Tapback {
+    /// No social reaction is appropriate; do not add a tap-back.
+    None,
     /// Neutral acknowledgement: the agent received the message and will handle it.
     Seen,
     /// Positive acknowledgement or agreement.
@@ -272,14 +274,15 @@ pub enum Tapback {
 }
 
 impl Tapback {
-    pub fn as_api_kind(self) -> &'static str {
+    pub fn as_api_kind(self) -> Option<&'static str> {
         match self {
-            Self::Seen => "seen",
-            Self::Like => "like",
-            Self::Love => "love",
-            Self::Laugh => "laugh",
-            Self::Emphasize => "emphasize",
-            Self::Question => "question",
+            Self::None => None,
+            Self::Seen => Some("seen"),
+            Self::Like => Some("like"),
+            Self::Love => Some("love"),
+            Self::Laugh => Some("laugh"),
+            Self::Emphasize => Some("emphasize"),
+            Self::Question => Some("question"),
         }
     }
 }
@@ -330,12 +333,60 @@ pub fn decide_tapback(
         client,
         serde_json::json!({"agent_handle": handle, "message": body}),
         "tapback",
-        "Choose the single immediate social tapback this agent should apply before doing the work. Prefer seen for ordinary requests and acknowledgements. Use expressive reactions only when the supplied message clearly warrants one. Question means the agent is confused, not merely that the message asks a question.",
+        "Choose whether this agent should apply one immediate social tapback before doing the work. Match ordinary human chat: like for thanks, approval, agreement, or a solid suggestion (for example 'Thanks!', 'nice', 'sounds good', or a thumbs-up sentiment); love for affection, strong excitement, celebration, or 'love it'; laugh for a clear joke, playful teasing, or something intentionally funny; emphasize for genuinely urgent or striking news; question only when the agent itself is genuinely confused, not merely because the person asked a question. Use seen specifically to acknowledge neutral work pickup such as 'please inspect this'. Choose none when a reaction would add noise: ambiguous chatter, corrections, sensitive or negative messages, routine back-and-forth that does not need acknowledgement, or anything you are not confident how to react to. Do not overreact.",
     )?;
     if decision.confidence < minimum_confidence {
-        return Ok(Tapback::Seen);
+        return Ok(Tapback::None);
     }
     Ok(decision.answer)
+}
+
+/// Cheap, deterministic reactions for obvious chat signals and a conservative offline fallback.
+/// `None` means no tap-back, not "ask a larger model".
+pub fn obvious_tapback(body: &str) -> Option<Tapback> {
+    let text = body.trim().to_lowercase();
+    let padded = format!(" {text} ");
+    if text.contains('😂')
+        || text.contains('🤣')
+        || [" lol ", " lmao ", " haha ", " hahaha "]
+            .iter()
+            .any(|needle| padded.contains(needle))
+    {
+        return Some(Tapback::Laugh);
+    }
+    if text.contains("love it")
+        || text.contains("i love this")
+        || text.contains("❤️")
+        || text.contains('❤')
+    {
+        return Some(Tapback::Love);
+    }
+    if text.contains("thank you")
+        || text.contains("thanks")
+        || matches!(
+            text.trim_end_matches(['!', '.', ' ']),
+            "nice" | "perfect" | "great" | "sounds good" | "awesome"
+        )
+    {
+        return Some(Tapback::Like);
+    }
+    let work_request = text.starts_with('/')
+        || [
+            "please ",
+            "can you ",
+            "could you ",
+            "would you ",
+            "fix ",
+            "build ",
+            "check ",
+            "look at ",
+            "take a look ",
+            "run ",
+            "ship ",
+        ]
+        .iter()
+        .any(|prefix| text.starts_with(prefix));
+    work_request.then_some(Tapback::Seen)
 }
 
 impl CodexRunner {
@@ -666,7 +717,23 @@ mod tests {
         ]);
         assert_eq!(
             decide_tapback(&uncertain, "buildbot", "maybe a joke", 0.55).unwrap(),
-            Tapback::Seen
+            Tapback::None
         );
+    }
+
+    #[test]
+    fn obvious_social_tapbacks_are_fast_and_conservative() {
+        assert_eq!(obvious_tapback("Thanks!"), Some(Tapback::Like));
+        assert_eq!(obvious_tapback("Love it."), Some(Tapback::Love));
+        assert_eq!(
+            obvious_tapback("The compiler chose violence 😂"),
+            Some(Tapback::Laugh)
+        );
+        assert_eq!(
+            obvious_tapback("Please inspect the failing test"),
+            Some(Tapback::Seen)
+        );
+        assert_eq!(obvious_tapback("Change the name on line 12."), None);
+        assert_eq!(obvious_tapback("I'm worried this leaked data."), None);
     }
 }

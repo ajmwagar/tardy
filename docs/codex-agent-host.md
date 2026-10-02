@@ -48,7 +48,9 @@ not authorization to push, merge, deploy, or expose credentials—those remain s
 - The host sends a seen reaction and typing lease before dispatch.
 - When explicitly enabled, the host asks OODA's bounded Jev/Laya-compatible decision endpoint for
   the immediate tapback before Codex sees the message. It gets 750 ms, one attempt, and a closed set
-  of supported reactions; failure or low confidence deterministically becomes `seen`.
+  of supported reactions including no reaction. Obvious gratitude, affection, jokes, and neutral
+  work pickup take a deterministic sub-millisecond path; ambiguous messages go to RLCD. Failure or
+  low confidence adds no reaction rather than noisy `seen`.
 - It persists the Codex thread ID and reply before posting the reply to Tardy.
 - Failed reply delivery retries the saved outbox reply; it does not rerun Codex.
 - Polling is the easy local default. Webhook mode verifies HMAC over exact bytes and persists before
