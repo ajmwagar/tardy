@@ -347,10 +347,11 @@ impl PgSocialStore {
                 let visible: bool = sqlx::query_scalar(
                     "SELECT EXISTS(SELECT 1 FROM tardy_posts p WHERE p.id=$1 AND
                      (p.visibility='public' OR p.author_profile_id=$2 OR
-                      EXISTS(SELECT 1 FROM social_identities viewer_owner
-                             JOIN social_identities author_owner USING (account_id)
-                             WHERE viewer_owner.profile_id=$2
-                               AND author_owner.profile_id=p.author_profile_id) OR
+                      EXISTS(SELECT 1 FROM social_identities viewer_identity
+                             JOIN profile_ownership owned
+                               ON owned.owner_account_id=viewer_identity.account_id
+                             WHERE viewer_identity.profile_id=$2
+                               AND owned.profile_id=p.author_profile_id) OR
                       (p.visibility='followers' AND EXISTS(SELECT 1 FROM profile_follows f
                        WHERE f.follower_profile_id=$2 AND f.followed_profile_id=p.author_profile_id))))",
                 )
@@ -408,10 +409,11 @@ impl PgSocialStore {
         let visible: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM tardy_posts p WHERE p.id=$1 AND
              (p.visibility='public' OR p.author_profile_id=$2 OR
-              EXISTS(SELECT 1 FROM social_identities viewer_owner
-                     JOIN social_identities author_owner USING (account_id)
-                     WHERE viewer_owner.profile_id=$2
-                       AND author_owner.profile_id=p.author_profile_id) OR
+              EXISTS(SELECT 1 FROM social_identities viewer_identity
+                     JOIN profile_ownership owned
+                       ON owned.owner_account_id=viewer_identity.account_id
+                     WHERE viewer_identity.profile_id=$2
+                       AND owned.profile_id=p.author_profile_id) OR
               (p.visibility='followers' AND EXISTS(SELECT 1 FROM profile_follows f
                WHERE f.follower_profile_id=$2 AND f.followed_profile_id=p.author_profile_id))))",
         )
@@ -480,10 +482,11 @@ impl PgSocialStore {
         let visible: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM tardy_posts p WHERE p.id=$1 AND
              (p.visibility='public' OR p.author_profile_id=$2 OR
-              EXISTS(SELECT 1 FROM social_identities viewer_owner
-                     JOIN social_identities author_owner USING (account_id)
-                     WHERE viewer_owner.profile_id=$2
-                       AND author_owner.profile_id=p.author_profile_id) OR
+              EXISTS(SELECT 1 FROM social_identities viewer_identity
+                     JOIN profile_ownership owned
+                       ON owned.owner_account_id=viewer_identity.account_id
+                     WHERE viewer_identity.profile_id=$2
+                       AND owned.profile_id=p.author_profile_id) OR
               (p.visibility='followers' AND EXISTS(SELECT 1 FROM profile_follows f
                WHERE f.follower_profile_id=$2 AND f.followed_profile_id=p.author_profile_id))))",
         )
@@ -528,10 +531,11 @@ impl PgSocialStore {
              LEFT JOIN shared_links l ON l.id=p.shared_link_id
              WHERE p.visibility='public'
                 OR p.author_profile_id=$1
-                OR EXISTS(SELECT 1 FROM social_identities viewer_owner
-                          JOIN social_identities author_owner USING (account_id)
-                          WHERE viewer_owner.profile_id=$1
-                            AND author_owner.profile_id=p.author_profile_id)
+                OR EXISTS(SELECT 1 FROM social_identities viewer_identity
+                          JOIN profile_ownership owned
+                            ON owned.owner_account_id=viewer_identity.account_id
+                          WHERE viewer_identity.profile_id=$1
+                            AND owned.profile_id=p.author_profile_id)
                 OR (p.visibility='followers' AND EXISTS (
                     SELECT 1 FROM profile_follows f
                     WHERE f.follower_profile_id=$1 AND f.followed_profile_id=p.author_profile_id))
@@ -595,10 +599,11 @@ impl PgSocialStore {
              WHERE ($2::uuid IS NULL OR p.author_profile_id=$2)
                AND (p.visibility='public'
                     OR p.author_profile_id=$1
-                    OR EXISTS(SELECT 1 FROM social_identities viewer_owner
-                              JOIN social_identities author_owner USING (account_id)
-                              WHERE viewer_owner.profile_id=$1
-                                AND author_owner.profile_id=p.author_profile_id)
+                    OR EXISTS(SELECT 1 FROM social_identities viewer_identity
+                              JOIN profile_ownership owned
+                                ON owned.owner_account_id=viewer_identity.account_id
+                              WHERE viewer_identity.profile_id=$1
+                                AND owned.profile_id=p.author_profile_id)
                     OR (p.visibility='followers' AND EXISTS (
                         SELECT 1 FROM profile_follows f
                         WHERE f.follower_profile_id=$1 AND f.followed_profile_id=p.author_profile_id)))
@@ -630,10 +635,11 @@ impl PgSocialStore {
              LEFT JOIN shared_links l ON l.id=p.shared_link_id
              WHERE p.id=$2 AND (p.visibility='public'
                     OR p.author_profile_id=$1
-                    OR EXISTS(SELECT 1 FROM social_identities viewer_owner
-                              JOIN social_identities author_owner USING (account_id)
-                              WHERE viewer_owner.profile_id=$1
-                                AND author_owner.profile_id=p.author_profile_id)
+                    OR EXISTS(SELECT 1 FROM social_identities viewer_identity
+                              JOIN profile_ownership owned
+                                ON owned.owner_account_id=viewer_identity.account_id
+                              WHERE viewer_identity.profile_id=$1
+                                AND owned.profile_id=p.author_profile_id)
                     OR (p.visibility='followers' AND EXISTS (
                         SELECT 1 FROM profile_follows f
                         WHERE f.follower_profile_id=$1 AND f.followed_profile_id=p.author_profile_id))
@@ -685,10 +691,11 @@ impl PgSocialStore {
              CROSS JOIN q
              WHERE (p.visibility='public'
                     OR p.author_profile_id=$1
-                    OR EXISTS(SELECT 1 FROM social_identities viewer_owner
-                              JOIN social_identities author_owner USING (account_id)
-                              WHERE viewer_owner.profile_id=$1
-                                AND author_owner.profile_id=p.author_profile_id)
+                    OR EXISTS(SELECT 1 FROM social_identities viewer_identity
+                              JOIN profile_ownership owned
+                                ON owned.owner_account_id=viewer_identity.account_id
+                              WHERE viewer_identity.profile_id=$1
+                                AND owned.profile_id=p.author_profile_id)
                     OR (p.visibility='followers' AND EXISTS (
                         SELECT 1 FROM profile_follows f
                         WHERE f.follower_profile_id=$1 AND f.followed_profile_id=p.author_profile_id)))
@@ -761,7 +768,11 @@ impl PgSocialStore {
         .await?
         .ok_or(SocialError::NotFound)?;
         let ids: Vec<Uuid> = sqlx::query_scalar(
-            "SELECT profile_id FROM social_identities WHERE account_id=$1 AND kind='agent' ORDER BY created_at,profile_id",
+            "SELECT agent.profile_id
+             FROM profile_ownership owned
+             JOIN social_identities agent ON agent.profile_id=owned.profile_id
+             WHERE owned.owner_account_id=$1 AND agent.kind='agent'
+             ORDER BY owned.created_at,agent.profile_id",
         )
         .bind(account_id)
         .fetch_all(&self.pool)
@@ -806,7 +817,10 @@ impl PgSocialStore {
                  display_name=COALESCE($4,display_name),
                  bio=COALESCE($5,bio),
                  avatar_url=COALESCE($6,avatar_url)
-             WHERE profile_id=$1 AND account_id=$2 AND kind='agent'",
+             WHERE profile_id=$1 AND kind='agent'
+               AND EXISTS(SELECT 1 FROM profile_ownership owned
+                          WHERE owned.profile_id=social_identities.profile_id
+                            AND owned.owner_account_id=$2)",
         )
         .bind(profile_id)
         .bind(owner_account_id)
@@ -840,7 +854,8 @@ impl PgSocialStore {
             .map(|account| account.id)
             .collect::<Vec<_>>();
         let owned: Vec<Uuid> = sqlx::query_scalar(
-            "SELECT profile_id FROM social_identities WHERE account_id=$1 AND profile_id=ANY($2)",
+            "SELECT profile_id FROM profile_ownership
+             WHERE owner_account_id=$1 AND profile_id=ANY($2)",
         )
         .bind(viewer_account)
         .bind(&ids)
@@ -934,13 +949,18 @@ impl PgSocialStore {
                     (SELECT count(*) FROM profile_follows f WHERE f.followed_profile_id=i.profile_id)::bigint AS followers,
                     (SELECT count(*) FROM profile_follows f WHERE f.follower_profile_id=i.profile_id)::bigint AS following,
                     (SELECT count(*) FROM tardy_posts p WHERE p.author_profile_id=i.profile_id)::bigint AS post_count,
-                    i.account_id=$1 AS owned_by_viewer
+                    EXISTS(SELECT 1 FROM profile_ownership owned
+                           WHERE owned.owner_account_id=$1
+                             AND owned.profile_id=i.profile_id) AS owned_by_viewer
              FROM social_identities i
              LEFT JOIN human_profiles h ON h.profile_id=i.profile_id
              LEFT JOIN source_channels s ON i.kind='channel' AND i.handle='source-'||s.id
              LEFT JOIN active_profile_badges badges ON badges.profile_id=i.profile_id
              WHERE $2='' OR i.handle ILIKE $3 OR COALESCE(NULLIF(i.display_name,''),h.display_name,s.display_name,i.handle) ILIKE $3
-             ORDER BY (i.account_id=$1 AND i.kind='agent') DESC,
+             ORDER BY (EXISTS(SELECT 1 FROM profile_ownership owned
+                              WHERE owned.owner_account_id=$1
+                                AND owned.profile_id=i.profile_id)
+                       AND i.kind='agent') DESC,
                       (lower(i.handle)=$2) DESC,
                       (i.handle ILIKE $4) DESC,
                       i.handle
