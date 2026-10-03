@@ -190,6 +190,42 @@ pub struct R2ObjectStore {
     client: reqwest::Client,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct R2Config {
+    endpoint: String,
+    access_key: String,
+    secret_key: String,
+    bucket: String,
+    region: String,
+}
+
+impl R2Config {
+    fn from_lookup(
+        mut lookup: impl FnMut(&str) -> Option<String>,
+    ) -> Result<Option<Self>, MediaError> {
+        let endpoint = match lookup("AWS_ENDPOINT_URL_S3") {
+            Some(endpoint) => endpoint,
+            None => match lookup("R2_ACCOUNT_ID") {
+                Some(account_id) => format!("https://{account_id}.r2.cloudflarestorage.com"),
+                None => return Ok(None),
+            },
+        };
+        let required = |primary, legacy, lookup: &mut dyn FnMut(&str) -> Option<String>| {
+            lookup(primary)
+                .or_else(|| lookup(legacy))
+                .ok_or(MediaError::Unconfigured)
+        };
+
+        Ok(Some(Self {
+            endpoint,
+            access_key: required("AWS_ACCESS_KEY_ID", "R2_ACCESS_KEY_ID", &mut lookup)?,
+            secret_key: required("AWS_SECRET_ACCESS_KEY", "R2_SECRET_ACCESS_KEY", &mut lookup)?,
+            bucket: required("S3_BUCKET", "R2_BUCKET", &mut lookup)?,
+            region: lookup("AWS_REGION").unwrap_or_else(|| "auto".into()),
+        }))
+    }
+}
+
 /// Development object store backed by `TARDY_LOCAL_BLOB_DIR`. Uploads still travel
 /// through the same authorize -> PUT -> complete contract as R2, so local dogfood
 /// exercises the production boundary instead of inventing a second client flow.
@@ -273,20 +309,18 @@ impl ObjectStore for LocalObjectStore {
 
 impl R2ObjectStore {
     pub fn from_env() -> Result<Option<Self>, MediaError> {
-        let Some(account_id) = std::env::var("R2_ACCOUNT_ID").ok() else {
+        let Some(config) = R2Config::from_lookup(|key| std::env::var(key).ok())? else {
             return Ok(None);
         };
-        let access_key = std::env::var("R2_ACCESS_KEY_ID").map_err(|_| MediaError::Unconfigured)?;
-        let secret = std::env::var("R2_SECRET_ACCESS_KEY").map_err(|_| MediaError::Unconfigured)?;
-        let bucket_name = std::env::var("R2_BUCKET").map_err(|_| MediaError::Unconfigured)?;
-        let endpoint = format!("https://{account_id}.r2.cloudflarestorage.com")
+        let endpoint = config
+            .endpoint
             .parse()
             .map_err(|error| MediaError::ObjectStore(format!("invalid R2 endpoint: {error}")))?;
-        let bucket = Bucket::new(endpoint, UrlStyle::Path, bucket_name, "auto")
+        let bucket = Bucket::new(endpoint, UrlStyle::Path, config.bucket, config.region)
             .map_err(|error| MediaError::ObjectStore(format!("invalid R2 bucket: {error}")))?;
         Ok(Some(Self {
             bucket,
-            credentials: Credentials::new(access_key, secret),
+            credentials: Credentials::new(config.access_key, config.secret_key),
             client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(10))
                 .build()
@@ -834,5 +868,49 @@ mod tests {
             headers.get("content-type").map(String::as_str),
             Some("application/json")
         );
+    }
+
+    #[test]
+    fn r2_config_accepts_standard_s3_binding() {
+        let values = BTreeMap::from([
+            (
+                "AWS_ENDPOINT_URL_S3",
+                "https://account.r2.cloudflarestorage.com",
+            ),
+            ("AWS_ACCESS_KEY_ID", "access"),
+            ("AWS_SECRET_ACCESS_KEY", "secret"),
+            ("AWS_REGION", "auto"),
+            ("S3_BUCKET", "media"),
+        ]);
+        let config = R2Config::from_lookup(|key| values.get(key).map(|value| (*value).into()))
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(config.endpoint, values["AWS_ENDPOINT_URL_S3"]);
+        assert_eq!(config.access_key, values["AWS_ACCESS_KEY_ID"]);
+        assert_eq!(config.secret_key, values["AWS_SECRET_ACCESS_KEY"]);
+        assert_eq!(config.bucket, values["S3_BUCKET"]);
+        assert_eq!(config.region, values["AWS_REGION"]);
+    }
+
+    #[test]
+    fn r2_config_keeps_legacy_environment_compatible() {
+        let values = BTreeMap::from([
+            ("R2_ACCOUNT_ID", "account"),
+            ("R2_ACCESS_KEY_ID", "access"),
+            ("R2_SECRET_ACCESS_KEY", "secret"),
+            ("R2_BUCKET", "media"),
+        ]);
+        let config = R2Config::from_lookup(|key| values.get(key).map(|value| (*value).into()))
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(config.endpoint, "https://account.r2.cloudflarestorage.com");
+        assert_eq!(config.region, "auto");
+    }
+
+    #[test]
+    fn r2_config_is_absent_without_an_endpoint_or_account() {
+        assert_eq!(R2Config::from_lookup(|_| None).unwrap(), None);
     }
 }
