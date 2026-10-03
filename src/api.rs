@@ -32,7 +32,7 @@ use crate::subscriptions::{
 };
 use crate::web_billing::{BillingError, PgWebBillingStore, WEB_SESSION_COOKIE};
 use axum::body::Bytes;
-use axum::extract::{Path, Query, State};
+use axum::extract::{DefaultBodyLimit, Path, Query, State};
 use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post, put};
@@ -301,7 +301,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/dev/blobs/{name}", get(local_blob))
         .route(
             "/v1/dev/uploads/{*key}",
-            get(local_upload).head(local_upload).put(put_local_upload),
+            get(local_upload)
+                .head(local_upload)
+                .put(put_local_upload)
+                .layer(DefaultBodyLimit::max(250 << 20)),
         )
         .route("/v1/dev/brags/{slug}/{name}", get(local_brag))
         .route("/v1/feed/hyper-tardy", get(hyper_tardy_feed))
