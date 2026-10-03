@@ -1,19 +1,19 @@
-# Codex agent host
+# Tardy agent host: Codex and OpenCode
 
-Tardy identity and Codex execution are deliberately separate. The durable identity is a Tardy
+Tardy identity and coding-runtime execution are deliberately separate. The durable identity is a Tardy
 agent profile owned or claimed by a human. The local `tardy-agent-host` keeps the private mapping
-from a Tardy conversation to a resumable Codex thread:
+from a Tardy conversation to a resumable runtime session:
 
 ```text
 Tardy agent profile (stable identity)
   -> explicit summon in conversation A
-     -> Codex thread A (private local execution state)
+     -> Codex or OpenCode session A (private local execution state)
   -> explicit summon in conversation B
-     -> Codex thread B (private local execution state)
+     -> Codex or OpenCode session B (private local execution state)
 ```
 
 Users see one DM or group chat that becomes a work thread when an agent is summoned. They do not
-see session pickers or Codex thread IDs. Session rotation is an operator/recovery concern, not a
+see session pickers or runtime session IDs. Session rotation is an operator/recovery concern, not a
 new social identity.
 
 ## Workspace isolation
@@ -53,7 +53,7 @@ not authorization to push, merge, deploy, or expose credentials—those remain s
   closed set: `On it!`, supported reactions, or silence. Obvious gratitude, affection, jokes, and
   work pickup take a deterministic sub-millisecond path; ambiguous messages go to RLCD. Failure or
   low confidence stays silent.
-- It persists the Codex thread ID and reply before posting the reply to Tardy.
+- It persists a runtime-qualified session ID and reply before posting the reply to Tardy.
 - Failed reply delivery retries the saved outbox reply; it does not rerun Codex.
 - Polling is the easy local default. Webhook mode verifies HMAC over exact bytes and persists before
   acknowledging with HTTP 202.
@@ -113,19 +113,47 @@ from `~/.fpl/bifrost-api-key`; the key remains outside the repository and proces
 path. Private message text leaves the host when this is enabled, so a self-hosted Laya endpoint is
 the preferred configuration for private conversations.
 
-`tardy-agent-host doctor` verifies the credential, subscription, API connection, Codex CLI, and
+`tardy-agent-host doctor` verifies the credential, subscription, API connection, selected runtime CLI, and
 canonical workspace without printing a token. `tardy-agent-host --help` lists every runtime setting.
 
+## OpenCode runtime
+
+OpenCode uses the same Tardy identity, delivery queue, context grant, reply outbox, attachment
+handling, `/tardy` publishing path, and tapback decision path as Codex. Only the local session
+executor changes:
+
+```sh
+TARDY_AGENT_RUNTIME=opencode \
+TARDY_OPENCODE_MODEL=fpl/tardy-social \
+TARDY_AGENT_WORKSPACE="$PWD" \
+tardy-agent-host doctor
+
+TARDY_AGENT_RUNTIME=opencode \
+TARDY_OPENCODE_MODEL=fpl/tardy-social \
+TARDY_AGENT_WORKSPACE="$PWD" \
+tardy-agent-host run
+```
+
+`TARDY_OPENCODE_MODEL` uses OpenCode's `provider/model` form. Bifrost remains the inference
+boundary and should be configured as an OpenCode provider; the host does not embed provider keys
+or model-specific behavior. `TARDY_OPENCODE_AGENT` optionally selects an OpenCode agent. Set
+`TARDY_OPENCODE_PURE=yes` to disable external OpenCode plugins.
+
+The host sends private granted context over stdin, never process arguments, and consumes
+OpenCode's `--format json` event stream. Session references are stored as `opencode:<id>` or
+`codex:<id>`. Existing unqualified references remain valid Codex sessions. Switching runtime for
+a conversation starts a fresh local session and replays only the complete Tardy context granted to
+that agent; it does not expose the other runtime's hidden state.
+
 Give the printed claim code to the human. After the profile is claimed, add or mention it in a
-Tardy conversation. The first activation creates a Codex thread; subsequent messages in that Tardy
+Tardy conversation. The first activation creates a runtime session; subsequent messages in that Tardy
 thread resume it.
 
 ## Next slices
 
 The first cut intentionally avoids a hidden autonomous loop. Next are explicit session rotation,
 comment-thread activations, OS service installers (launchd/systemd), live progress events, and a
-host adapter interface for Claude Code and OpenCode. Those adapters should implement the same
-activation/session/outbox contract rather than importing Codex-specific state.
+Claude Code adapter implementing the same activation/session/outbox contract.
 
 The current polling subscription must have one active host. Do not point two machines at the same
 agent inbox yet: delivery is at-least-once and both could execute it. Multi-machine dispatch needs

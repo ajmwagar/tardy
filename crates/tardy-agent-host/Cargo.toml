@@ -3,7 +3,7 @@ name = "tardy-agent-host"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
-description = "Durable local bridge between a Tardy identity and Codex sessions"
+description = "Durable local bridge between a Tardy identity and coding-agent sessions"
 license = "MIT"
 
 [dependencies]

@@ -14,9 +14,10 @@ use std::{
 };
 use tardy_agent_host::{
     AgentCommand, AgentCredential, BoxError, CodexRunner, ConversationMessage, HostData,
-    InboxEvent, PendingMedia, PendingReply, QueuedEvent, TapbackDecider, WorkActivation,
-    activation_prompt, dispatchable_deliveries, extract_image_directives, extract_tardy_caption,
-    load_json, obvious_tapback, should_publish_tardy, store_json, verify_signature,
+    InboxEvent, OpenCodeRunner, PendingMedia, PendingReply, QueuedEvent, RuntimeKind,
+    RuntimeRunner, TapbackDecider, WorkActivation, activation_prompt, dispatchable_deliveries,
+    extract_image_directives, extract_tardy_caption, load_json, obvious_tapback,
+    should_publish_tardy, store_json, verify_signature,
 };
 use tokio::sync::{Mutex, Notify};
 
@@ -26,7 +27,7 @@ struct App {
     data: Arc<Mutex<HostData>>,
     data_path: PathBuf,
     client: reqwest::Client,
-    runner: Arc<CodexRunner>,
+    runner: Arc<RuntimeRunner>,
     notify: Arc<Notify>,
     tapbacks: Option<Arc<TapbackDecider>>,
 }
@@ -83,21 +84,45 @@ async fn main() -> Result<(), BoxError> {
         data.cursor = credential.cursor;
         store_json(&data_path, &data).await?;
     }
-    let network_access = match env_or("TARDY_CODEX_NETWORK", "enabled").as_str() {
-        "enabled" => true,
-        "disabled" => false,
-        value => {
-            return Err(
-                format!("TARDY_CODEX_NETWORK must be enabled or disabled, got {value}").into(),
-            );
+    let runtime = RuntimeKind::parse(&env_or("TARDY_AGENT_RUNTIME", "codex"))?;
+    let runner = match runtime {
+        RuntimeKind::Codex => {
+            let network_access = match env_or("TARDY_CODEX_NETWORK", "enabled").as_str() {
+                "enabled" => true,
+                "disabled" => false,
+                value => {
+                    return Err(format!(
+                        "TARDY_CODEX_NETWORK must be enabled or disabled, got {value}"
+                    )
+                    .into());
+                }
+            };
+            RuntimeRunner::Codex(CodexRunner::new(
+                workspace,
+                env_or("TARDY_CODEX_SANDBOX", "workspace-write"),
+                network_access,
+                data_path.parent().unwrap_or(Path::new(".")).join("runs"),
+            ))
+        }
+        RuntimeKind::OpenCode => {
+            let pure = match env_or("TARDY_OPENCODE_PURE", "no").as_str() {
+                "yes" => true,
+                "no" => false,
+                value => {
+                    return Err(
+                        format!("TARDY_OPENCODE_PURE must be yes or no, got {value}").into(),
+                    );
+                }
+            };
+            RuntimeRunner::OpenCode(OpenCodeRunner::new(
+                workspace,
+                PathBuf::from(env_or("TARDY_OPENCODE_BIN", "opencode")),
+                optional_env("TARDY_OPENCODE_MODEL"),
+                optional_env("TARDY_OPENCODE_AGENT"),
+                pure,
+            ))
         }
     };
-    let runner = CodexRunner::new(
-        workspace,
-        env_or("TARDY_CODEX_SANDBOX", "workspace-write"),
-        network_access,
-        data_path.parent().unwrap_or(Path::new(".")).join("runs"),
-    );
     let tapbacks = if std::env::var("TARDY_TAPBACK_RLCD").as_deref() == Ok("yes") {
         Some(Arc::new(
             tokio::task::spawn_blocking(TapbackDecider::from_env).await??,
@@ -137,12 +162,17 @@ async fn doctor() -> Result<(), BoxError> {
         .subscription_id
         .as_deref()
         .ok_or("Tardy inbox is missing; run `tardy subscribe --mode poll`")?;
-    let codex = tokio::process::Command::new("codex")
+    let runtime = RuntimeKind::parse(&env_or("TARDY_AGENT_RUNTIME", "codex"))?;
+    let binary = match runtime {
+        RuntimeKind::Codex => "codex".to_owned(),
+        RuntimeKind::OpenCode => env_or("TARDY_OPENCODE_BIN", "opencode"),
+    };
+    let runtime_version = tokio::process::Command::new(&binary)
         .arg("--version")
         .output()
         .await?;
-    if !codex.status.success() {
-        return Err("Codex CLI is installed but unhealthy".into());
+    if !runtime_version.status.success() {
+        return Err(format!("{} CLI is installed but unhealthy", runtime.as_str()).into());
     }
     let workspace = std::fs::canonicalize(env_or("TARDY_AGENT_WORKSPACE", "."))?;
     let response = reqwest::Client::builder()
@@ -164,7 +194,7 @@ async fn doctor() -> Result<(), BoxError> {
         credential.handle,
         subscription,
         workspace.display(),
-        String::from_utf8_lossy(&codex.stdout).trim()
+        String::from_utf8_lossy(&runtime_version.stdout).trim()
     );
     Ok(())
 }
@@ -445,9 +475,9 @@ async fn run_agent_command(
             store_json(&app.data_path, &*data).await?;
             drop(data);
             let _ = set_typing(app, conversation, false).await;
-            Ok(Some("Reset this conversation's Codex session. The next request starts fresh from its granted Tardy context.".into()))
+            Ok(Some("Reset this conversation's agent session. The next request starts fresh from its granted Tardy context.".into()))
         }
-        AgentCommand::NewWorktree => Ok(Some("This host does not have isolated worktrees enabled yet, so nothing was changed. Use /reset-session for a fresh Codex session.".into())),
+        AgentCommand::NewWorktree => Ok(Some("This host does not have isolated worktrees enabled yet, so nothing was changed. Use /reset-session for a fresh agent session.".into())),
         AgentCommand::Tardy => {
             publish_last_result_as_tardy(app, activation).await?;
             Ok(None)
@@ -647,12 +677,20 @@ async fn process_one(app: &App, queued: &QueuedEvent) -> Result<(), BoxError> {
             pending
         } else {
             let thread_id = { app.data.lock().await.sessions.get(&activation.key).cloned() };
+            let resumes_selected_runtime = app.runner.accepts_session(thread_id.as_deref());
             let context_after = {
                 let data = app.data.lock().await;
-                data.context_cursors
-                    .get(&activation.key)
-                    .copied()
-                    .unwrap_or_else(|| activation.context_from_sequence.unwrap_or(1) - 1)
+                if resumes_selected_runtime {
+                    data.context_cursors
+                        .get(&activation.key)
+                        .copied()
+                        .unwrap_or_else(|| activation.context_from_sequence.unwrap_or(1) - 1)
+                } else {
+                    // A runtime switch creates a fresh local session. Replay the complete
+                    // granted Tardy context so the new runtime does not inherit a false
+                    // assumption that it can see the previous runtime's private state.
+                    activation.context_from_sequence.unwrap_or(1) - 1
+                }
             };
             let context = if activation.legacy_dm {
                 Vec::new()
@@ -690,8 +728,7 @@ async fn process_one(app: &App, queued: &QueuedEvent) -> Result<(), BoxError> {
             if let Some(caption) = tardy_caption {
                 data.last_captions.insert(activation.key.clone(), caption);
             }
-            data.sessions
-                .insert(activation.key.clone(), result.thread_id);
+            data.sessions.insert(activation.key.clone(), result.session);
             if let Some(cursor) = pending.context_cursor {
                 data.context_cursors.insert(activation.key.clone(), cursor);
             }
@@ -1071,6 +1108,12 @@ fn api(app: &App) -> &str {
 fn env_or(name: &str, default: &str) -> String {
     std::env::var(name).unwrap_or_else(|_| default.into())
 }
+fn optional_env(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+}
 fn expand_path(value: &str) -> PathBuf {
     if let Some(rest) = value.strip_prefix("~/") {
         if let Some(home) = std::env::var_os("HOME") {
@@ -1091,7 +1134,7 @@ fn internal(error: BoxError) -> (StatusCode, String) {
 
 fn print_help() {
     println!(
-        "Tardy agent host\n\nUsage:\n  tardy-agent-host doctor\n  tardy-agent-host tapback <message>\n  tardy-agent-host run\n\nEnvironment:\n  TARDY_STATE_PATH         Agent credential from `tardy onboard`\n  TARDY_AGENT_WORKSPACE    Workspace this agent may access\n  TARDY_AGENT_HOST_STATE   Durable session and outbox state\n  TARDY_AGENT_DELIVERY     poll (default) or webhook\n  TARDY_CODEX_SANDBOX      read-only or workspace-write (default)\n  TARDY_CODEX_NETWORK      enabled (default) or disabled\n  TARDY_AGENT_BIND         Webhook bind address"
+        "Tardy agent host\n\nUsage:\n  tardy-agent-host doctor\n  tardy-agent-host tapback <message>\n  tardy-agent-host run\n\nEnvironment:\n  TARDY_STATE_PATH         Agent credential from `tardy onboard`\n  TARDY_AGENT_WORKSPACE    Workspace this agent may access\n  TARDY_AGENT_HOST_STATE   Durable session and outbox state\n  TARDY_AGENT_DELIVERY     poll (default) or webhook\n  TARDY_AGENT_RUNTIME      codex (default) or opencode\n  TARDY_CODEX_SANDBOX      read-only or workspace-write (default)\n  TARDY_CODEX_NETWORK      enabled (default) or disabled\n  TARDY_OPENCODE_BIN       OpenCode executable (default: opencode)\n  TARDY_OPENCODE_MODEL     Optional provider/model routed by OpenCode\n  TARDY_OPENCODE_AGENT     Optional OpenCode agent name\n  TARDY_OPENCODE_PURE      yes disables external OpenCode plugins\n  TARDY_AGENT_BIND         Webhook bind address"
     );
 }
 
