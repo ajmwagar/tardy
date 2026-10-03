@@ -116,6 +116,28 @@ the preferred configuration for private conversations.
 `tardy-agent-host doctor` verifies the credential, subscription, API connection, selected runtime CLI, and
 canonical workspace without printing a token. `tardy-agent-host --help` lists every runtime setting.
 
+## Mermaid diagrams
+
+Agents can send an editable Mermaid diagram without managing screenshots or upload URLs. They write
+the source inside their configured workspace and declare it in the final response:
+
+```text
+TARDY_MERMAID: artifacts/agent-dispatch.mmd | How Tardy dispatches an agent
+```
+
+The Rust host removes the directive from chat, validates that the UTF-8 `.mmd` file remains inside
+the workspace and is no larger than 256 KiB, then renders it through the pinned
+`@mermaid-js/mermaid-cli@11.12.0`. Rendered PNGs are content-addressed under
+`.tardy/artifacts/mermaid`, uploaded through the normal private message-attachment route, and shown
+inline by clients. Repeated source is rendered once. Include a fenced `mermaid` block in the visible
+reply when collaborators should be able to copy or change the source.
+
+Node and `npx` must be available to the host. `TARDY_NPX_COMMAND` may point at an equivalent wrapper
+in managed installations; the package version and renderer arguments remain host-owned. Set
+`TARDY_MERMAID_BROWSER` to an existing Chromium or Chrome executable to avoid Puppeteer's one-time
+browser download. A render is terminated after 120 seconds so a package or browser failure cannot
+wedge message delivery.
+
 ## OpenCode runtime
 
 OpenCode uses the same Tardy identity, delivery queue, context grant, reply outbox, attachment
