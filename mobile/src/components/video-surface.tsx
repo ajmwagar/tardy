@@ -2,12 +2,13 @@ import { useEvent } from 'expo';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { TardyVideoView } from '../../modules/tardy-video';
 import type { MediaItem } from '@/data/types';
+import { claimPlayback, releasePlayback } from '@/media/playback-coordinator';
 import { useAppPrefs } from '@/state/app-prefs';
 import { logEngagement, useStore } from '@/state/store';
 import { IMAGE_TRANSITION_MS } from '@/theme';
@@ -56,7 +57,7 @@ export function VideoSurface({
   const [tapped, setTapped] = useState(false);
   const waitingForTap = !!postId && !autoplay && !tapped;
   const playing = active && !waitingForTap;
-  const source = { uri: media.url, useCaching: !media.url.endsWith('.m3u8') };
+  const source = useMemo(() => ({ uri: media.url, useCaching: !media.url.endsWith('.m3u8') }), [media.url]);
   const player = useVideoPlayer(source, (p) => {
     p.loop = true;
     p.muted = true;
@@ -68,16 +69,30 @@ export function VideoSurface({
   useEffect(() => {
     // The player is an imperative native handle; writing to it is the API.
     // eslint-disable-next-line react-hooks/immutability
-    player.muted = muted;
-  }, [player, muted]);
+    player.muted = playing ? muted : true;
+  }, [player, playing, muted]);
 
   useEffect(() => {
     if (status === 'readyToPlay') onReady?.();
   }, [status, onReady]);
 
   useEffect(() => {
-    if (playing) player.play();
-    else player.pause();
+    if (playing) {
+      claimPlayback(player);
+      player.play();
+    } else {
+      releasePlayback(player);
+      // Mute first: AVPlayer pause crosses the JS/native boundary and is not guaranteed to
+      // take effect in the same frame during a fast swipe.
+      // eslint-disable-next-line react-hooks/immutability
+      player.muted = true;
+      player.pause();
+    }
+    return () => {
+      releasePlayback(player);
+      player.muted = true;
+      player.pause();
+    };
   }, [player, playing]);
 
   useEffect(() => {
@@ -132,7 +147,11 @@ export function VideoSurface({
           detail={error?.message ?? media.url}
           onRetry={() => {
             void player.replaceAsync(source).then(() => {
-              if (playing) player.play();
+              if (playing) {
+                claimPlayback(player);
+                player.muted = muted;
+                player.play();
+              }
             });
           }}
         />
