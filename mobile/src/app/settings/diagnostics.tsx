@@ -19,7 +19,10 @@ export default function DiagnosticsScreen() {
       .then(({ latencyMs, serverVersion }) => setProbe({ state: 'ready', latencyMs, version: serverVersion }))
       .catch((error: unknown) => setProbe({ state: 'error', message: error instanceof Error ? error.message : String(error) }));
   }, []);
-  useEffect(refresh, [refresh]);
+  useEffect(() => {
+    const task = setTimeout(refresh, 0);
+    return () => clearTimeout(task);
+  }, [refresh]);
   const signedIn = auth.status === 'signed_in' || auth.status === 'onboarding' ? auth.signedIn : null;
 
   return (

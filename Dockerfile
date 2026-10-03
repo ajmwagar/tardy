@@ -5,6 +5,7 @@ RUN apk add --no-cache build-base cmake perl
 WORKDIR /build
 
 COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
 COPY src ./src
 COPY ingest ./ingest
 COPY policies ./policies

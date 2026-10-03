@@ -22,7 +22,7 @@ async fn direct_threads_reuse_while_groups_keep_their_own_identity() {
         (friend_owner, third, "thread-third"),
     ] {
         store
-            .register_identity(account, profile, handle, IdentityKind::Human)
+            .register_identity(account, profile, handle, IdentityKind::Human, handle, "")
             .await
             .unwrap();
     }
@@ -78,15 +78,22 @@ async fn dm_stays_quiet_until_an_owned_agent_is_summoned() {
     let friend = Uuid::new_v4();
     let agent = Uuid::new_v4();
     store
-        .register_identity(owner, human, "avery", IdentityKind::Human)
+        .register_identity(owner, human, "avery", IdentityKind::Human, "Avery", "")
         .await
         .unwrap();
     store
-        .register_identity(friend_owner, friend, "james", IdentityKind::Human)
+        .register_identity(
+            friend_owner,
+            friend,
+            "james",
+            IdentityKind::Human,
+            "James",
+            "",
+        )
         .await
         .unwrap();
     store
-        .register_identity(owner, agent, "builder", IdentityKind::Agent)
+        .register_identity(owner, agent, "builder", IdentityKind::Agent, "Builder", "")
         .await
         .unwrap();
 
@@ -235,11 +242,18 @@ async fn links_posts_and_agent_mentions_are_idempotent_and_deliverable() {
     let human = Uuid::new_v4();
     let agent = Uuid::new_v4();
     store
-        .register_identity(account, human, "avery", IdentityKind::Human)
+        .register_identity(account, human, "avery", IdentityKind::Human, "Avery", "")
         .await
         .unwrap();
     store
-        .register_identity(account, agent, "shipper", IdentityKind::Agent)
+        .register_identity(
+            account,
+            agent,
+            "shipper",
+            IdentityKind::Agent,
+            "Shipper",
+            "",
+        )
         .await
         .unwrap();
     let first = store
@@ -316,11 +330,18 @@ async fn private_reel_keeps_media_when_the_owner_promotes_it() {
     let human = Uuid::new_v4();
     let agent = Uuid::new_v4();
     store
-        .register_identity(account, human, "owner", IdentityKind::Human)
+        .register_identity(account, human, "owner", IdentityKind::Human, "Owner", "")
         .await
         .unwrap();
     store
-        .register_identity(account, agent, "reelbot", IdentityKind::Agent)
+        .register_identity(
+            account,
+            agent,
+            "reelbot",
+            IdentityKind::Agent,
+            "Reelbot",
+            "",
+        )
         .await
         .unwrap();
     let media = PostMedia {
@@ -381,7 +402,7 @@ async fn human_group_notifies_members_then_becomes_work_when_an_agent_is_summone
         (owner_account, agent, "builder-group", IdentityKind::Agent),
     ] {
         store
-            .register_identity(account, profile, handle, kind)
+            .register_identity(account, profile, handle, kind, handle, "")
             .await
             .unwrap();
     }
@@ -461,7 +482,7 @@ async fn social_actions_create_deduplicated_durable_notifications() {
         (mentioned_account, mentioned, "mentioned-notify"),
     ] {
         store
-            .register_identity(account, profile, handle, IdentityKind::Human)
+            .register_identity(account, profile, handle, IdentityKind::Human, handle, "")
             .await
             .unwrap();
     }

@@ -21,21 +21,9 @@ import { colors, radius } from "@/theme";
 export default function EditAgentScreen() {
   const { agentId } = useLocalSearchParams<{ agentId: string }>();
   const cached = useAccount(agentId);
-  const [name, setName] = useState(cached?.name ?? "");
-  const [handle, setHandle] = useState(cached?.handle ?? "");
-  const [bio, setBio] = useState(cached?.bio ?? "");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     if (!cached) void ensureAccounts([agentId]);
   }, [agentId, cached]);
-  useEffect(() => {
-    if (cached) {
-      setName(cached.name);
-      setHandle(cached.handle);
-      setBio(cached.bio);
-    }
-  }, [cached]);
 
   if (!cached)
     return (
@@ -44,6 +32,15 @@ export default function EditAgentScreen() {
         style={{ marginTop: 40 }}
       />
     );
+  return <EditAgentForm key={cached.id} agentId={agentId} cached={cached} />;
+}
+
+function EditAgentForm({ agentId, cached }: { agentId: string; cached: NonNullable<ReturnType<typeof useAccount>> }) {
+  const [name, setName] = useState(cached.name);
+  const [handle, setHandle] = useState(cached.handle);
+  const [bio, setBio] = useState(cached.bio);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const nextHandle = normalizeHandle(handle);
   const patch = normalizeProfilePatch({
     ...(name.trim() !== cached.name && { name }),

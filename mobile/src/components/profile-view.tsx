@@ -172,7 +172,9 @@ export function ProfileView({ account, isMe }: { account: Account; isMe: boolean
   }, [account.id]);
 
   useEffect(() => {
-    if (account.kind === 'human') void loadAgents();
+    if (account.kind !== 'human') return;
+    const task = setTimeout(() => void loadAgents(), 0);
+    return () => clearTimeout(task);
   }, [account.kind, loadAgents]);
 
   const renderItem = useCallback(

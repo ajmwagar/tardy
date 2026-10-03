@@ -7,7 +7,6 @@ import type {
   Notification,
   Post,
   PostLink,
-  PostStyle,
   ProjectMembership,
   Story,
   Thread,
