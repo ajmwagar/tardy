@@ -18,7 +18,9 @@ final class AppModel {
     var search = ""
     var errorMessage: String?
     var isSending = false
-    var destination: AppDestination = .reels
+    var destination: AppDestination = .reels {
+        didSet { destinationChanged() }
+    }
     var reels: [TardyPost] = []
     var selectedPostId: UUID?
     var comments: [PostComment] = []
@@ -26,9 +28,14 @@ final class AppModel {
     var selectedProfile: Account?
     var profilePosts: [TardyPost] = []
     var isLoadingContent = false
+    var isLoadingComments = false
+    var isLoadingProfile = false
 
     let api: TardyAPI
     private var messageTask: Task<Void, Never>?
+    private var postDetailsTask: Task<Void, Never>?
+    private var profileTask: Task<Void, Never>?
+    private var typingTask: Task<Void, Never>?
 
     init() {
         let configured = ProcessInfo.processInfo.environment["TARDY_API_URL"] ?? "http://127.0.0.1:3300"
@@ -83,6 +90,9 @@ final class AppModel {
 
     func signOut() {
         messageTask?.cancel()
+        postDetailsTask?.cancel()
+        profileTask?.cancel()
+        typingTask?.cancel()
         KeychainStore.clear()
         Task { await api.authenticate(token: nil, profileId: nil) }
         account = nil
@@ -96,76 +106,112 @@ final class AppModel {
         guard let account else { return }
         do {
             let rows = try await api.conversations()
+            conversations = rows.sorted {
+                ($0.lastMessage?.timestamp ?? .distantPast) > ($1.lastMessage?.timestamp ?? .distantPast)
+            }
+            if selectedConversationId == nil { select(conversations.first?.id) }
             let ids = Set(rows.flatMap(\.participants)).subtracting(accounts.keys)
             if !ids.isEmpty {
                 let profiles = try await api.profiles(ids: Array(ids))
                 profiles.forEach { accounts[$0.id] = $0 }
             }
             accounts[account.id] = account
-            conversations = rows.sorted {
-                ($0.lastMessage?.timestamp ?? .distantPast) > ($1.lastMessage?.timestamp ?? .distantPast)
-            }
-            if selectedConversationId == nil { select(conversations.first?.id) }
         } catch { show(error) }
     }
 
     func refreshReels() async {
         isLoadingContent = true
-        defer { isLoadingContent = false }
         do {
-            reels = try await api.reels().items
-            if selectedPostId == nil { await selectPost(reels.first?.id) }
+            let page = try await api.reels()
+            reels = page.items
+            isLoadingContent = false
+            if selectedPostId == nil || !reels.contains(where: { $0.id == selectedPostId }) {
+                selectPost(reels.first?.id)
+            }
+            prefetchPosters(in: reels)
             let ids = Set(reels.map(\.authorId)).subtracting(accounts.keys)
             if !ids.isEmpty {
                 let profiles = try await api.profiles(ids: Array(ids))
                 profiles.forEach { accounts[$0.id] = $0 }
             }
-        } catch { show(error) }
+        } catch {
+            isLoadingContent = false
+            show(error)
+        }
     }
 
-    func selectPost(_ id: UUID?) async {
+    func selectPost(_ id: UUID?) {
+        guard selectedPostId != id else { return }
+        postDetailsTask?.cancel()
         selectedPostId = id
         comments = []
+        isLoadingComments = id != nil
         guard let post = selectedPost else { return }
-        do {
-            async let loadedComments = api.comments(post: post.id)
-            async let author = api.profile(id: post.authorId)
-            let (newComments, profile) = try await (loadedComments, author)
-            comments = newComments
-            accounts[profile.id] = profile
-            let missing = Set(newComments.map(\.authorProfileId)).subtracting(accounts.keys)
-            if !missing.isEmpty {
-                let profiles = try await api.profiles(ids: Array(missing))
-                profiles.forEach { accounts[$0.id] = $0 }
+        postDetailsTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                async let loadedComments = api.comments(post: post.id)
+                async let author = api.profile(id: post.authorId)
+                let (newComments, profile) = try await (loadedComments, author)
+                try Task.checkCancellation()
+                guard selectedPostId == post.id else { return }
+                comments = newComments
+                accounts[profile.id] = profile
+                isLoadingComments = false
+                let missing = Set(newComments.map(\.authorProfileId)).subtracting(accounts.keys)
+                if !missing.isEmpty {
+                    let profiles = try await api.profiles(ids: Array(missing))
+                    try Task.checkCancellation()
+                    guard selectedPostId == post.id else { return }
+                    profiles.forEach { accounts[$0.id] = $0 }
+                }
+            } catch is CancellationError {
+            } catch {
+                guard selectedPostId == post.id else { return }
+                isLoadingComments = false
+                show(error)
             }
-        } catch { show(error) }
+        }
     }
 
-    func advancePost(by delta: Int) async {
+    func advancePost(by delta: Int) {
         guard !reels.isEmpty else { return }
         let current = reels.firstIndex { $0.id == selectedPostId } ?? 0
         let next = min(max(current + delta, 0), reels.count - 1)
         guard next != current else { return }
-        await selectPost(reels[next].id)
+        selectPost(reels[next].id)
     }
 
-    func openProfile(_ id: UUID) async {
+    func openProfile(_ id: UUID) {
         destination = .profile
-        isLoadingContent = true
-        defer { isLoadingContent = false }
-        do {
-            async let profile = api.profile(id: id)
-            async let posts = api.posts(profile: id)
-            selectedProfile = try await profile
-            profilePosts = try await posts.items
-            if let selectedProfile { accounts[selectedProfile.id] = selectedProfile }
-        } catch { show(error) }
+        profileTask?.cancel()
+        selectedProfile = accounts[id]
+        profilePosts = []
+        isLoadingProfile = true
+        profileTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                async let profile = api.profile(id: id)
+                async let posts = api.posts(profile: id)
+                let (loadedProfile, page) = try await (profile, posts)
+                try Task.checkCancellation()
+                selectedProfile = loadedProfile
+                profilePosts = page.items
+                accounts[loadedProfile.id] = loadedProfile
+                isLoadingProfile = false
+                prefetchPosters(in: page.items)
+            } catch is CancellationError {
+            } catch {
+                isLoadingProfile = false
+                show(error)
+            }
+        }
     }
 
-    func openPost(_ post: TardyPost) async {
+    func openPost(_ post: TardyPost) {
         if !reels.contains(where: { $0.id == post.id }) { reels.insert(post, at: 0) }
         destination = .reels
-        await selectPost(post.id)
+        selectPost(post.id)
     }
 
     func addComment() async {
@@ -218,6 +264,12 @@ final class AppModel {
         typingProfileIds = []
         messageTask?.cancel()
         guard let id else { return }
+        guard destination == .messages else { return }
+        startMessagePolling(id)
+    }
+
+    private func startMessagePolling(_ id: UUID) {
+        messageTask?.cancel()
         messageTask = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.refreshConversation(id)
@@ -227,16 +279,21 @@ final class AppModel {
     }
 
     func refreshConversation(_ id: UUID) async {
+        guard destination == .messages, selectedConversationId == id else { return }
         do {
             let after = messages.last?.sequence ?? 0
-            let fresh = try await api.messages(conversation: id, after: after)
+            async let messageRequest = api.messages(conversation: id, after: after)
+            async let typingRequest = api.typing(conversation: id)
+            let (fresh, typing) = try await (messageRequest, typingRequest)
+            try Task.checkCancellation()
+            guard destination == .messages, selectedConversationId == id else { return }
             if !fresh.isEmpty {
                 messages.append(contentsOf: fresh.filter { message in !messages.contains { $0.id == message.id } })
                 if let last = messages.last {
                     try? await api.markRead(conversation: id, through: last.id)
                 }
             }
-            typingProfileIds = try await api.typing(conversation: id)
+            typingProfileIds = typing
         } catch is CancellationError {
         } catch { show(error) }
     }
@@ -262,7 +319,12 @@ final class AppModel {
     func composerChanged() {
         guard let id = selectedConversationId else { return }
         let active = !composer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        Task { try? await api.setTyping(conversation: id, active: active) }
+        typingTask?.cancel()
+        typingTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(200))
+            guard !Task.isCancelled, let self, destination == .messages else { return }
+            try? await api.setTyping(conversation: id, active: active)
+        }
     }
 
     func react(_ kind: Tapback?, to message: Message) async {
@@ -298,17 +360,38 @@ final class AppModel {
         // Authentication is enough to render the shell. Each surface owns its loading state,
         // so a slow feed, inbox, or agent lookup never holds the whole window hostage.
         phase = .ready
-        async let agents = api.ownedAgents(ownerProfileId: envelope.account.id)
-        async let inbox: Void = refreshInbox()
-        async let content: Void = refreshReels()
-        ownedAgents = try await agents
-        _ = await inbox
-        _ = await content
+        Task { [weak self] in
+            guard let self else { return }
+            do { ownedAgents = try await api.ownedAgents(ownerProfileId: envelope.account.id) }
+            catch { show(error) }
+        }
+        Task { [weak self] in await self?.refreshInbox() }
+        Task { [weak self] in await self?.refreshReels() }
     }
 
     private func updatePost(_ id: UUID, _ mutation: (inout TardyPost) -> Void) {
         if let index = reels.firstIndex(where: { $0.id == id }) { mutation(&reels[index]) }
         if let index = profilePosts.firstIndex(where: { $0.id == id }) { mutation(&profilePosts[index]) }
+    }
+
+    private func destinationChanged() {
+        if destination == .messages, let id = selectedConversationId {
+            startMessagePolling(id)
+        } else {
+            messageTask?.cancel()
+            messageTask = nil
+        }
+    }
+
+    private func prefetchPosters(in posts: [TardyPost]) {
+        let urls = posts.prefix(8).compactMap { $0.primaryMedia?.posterURL }
+        Task {
+            await withTaskGroup(of: Void.self) { group in
+                for url in urls {
+                    group.addTask { _ = try? await URLSession.shared.data(from: url) }
+                }
+            }
+        }
     }
 
     private func show(_ error: Error) {
