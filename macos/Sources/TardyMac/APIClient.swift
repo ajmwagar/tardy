@@ -40,6 +40,38 @@ actor TardyAPI {
         try await request("/v1/social/conversations")
     }
 
+    func reels() async throws -> PostPage {
+        try await request("/v1/feed/reels?limit=50")
+    }
+
+    func profile(id: UUID) async throws -> Account {
+        try await request("/v1/profiles/by-id/\(id.uuidString)")
+    }
+
+    func posts(profile id: UUID) async throws -> PostPage {
+        try await request("/v1/profiles/by-id/\(id.uuidString)/posts")
+    }
+
+    func comments(post id: UUID) async throws -> [PostComment] {
+        try await request("/v1/social/posts/\(id.uuidString)/comments")
+    }
+
+    func addComment(post id: UUID, body: String) async throws -> PostComment {
+        try await request(
+            "/v1/social/posts/\(id.uuidString)/comments",
+            method: "POST",
+            body: AddCommentRequest(body: body, mentionedProfileIds: [])
+        )
+    }
+
+    func setLiked(post id: UUID, liked: Bool) async throws {
+        try await requestEmpty("/v1/posts/\(id.uuidString)/like", method: liked ? "PUT" : "DELETE")
+    }
+
+    func setSaved(post id: UUID, saved: Bool) async throws {
+        try await requestEmpty("/v1/saved-posts/\(id.uuidString)", method: saved ? "PUT" : "DELETE")
+    }
+
     func messages(conversation: UUID, after: Int = 0) async throws -> [Message] {
         try await request("/v1/social/conversations/\(conversation.uuidString)/messages?after=\(after)&limit=100")
     }
