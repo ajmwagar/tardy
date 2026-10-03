@@ -329,6 +329,14 @@ async fn private_reel_keeps_media_when_the_owner_promotes_it() {
     let account = Uuid::new_v4();
     let human = Uuid::new_v4();
     let agent = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO durable_accounts (id,email,kind,temporary) VALUES ($1,$2,'human',false)",
+    )
+    .bind(account)
+    .bind(format!("owner-{account}@example.test"))
+    .execute(&pool)
+    .await
+    .unwrap();
     store
         .register_identity(account, human, "owner", IdentityKind::Human, "Owner", "")
         .await
