@@ -1,0 +1,396 @@
+import SwiftUI
+
+private enum Brand {
+    static let yellow = Color(red: 1.0, green: 0.79, blue: 0.06)
+    static let background = Color(red: 0.035, green: 0.035, blue: 0.045)
+    static let panel = Color(red: 0.075, green: 0.075, blue: 0.09)
+    static let raised = Color(red: 0.11, green: 0.11, blue: 0.13)
+    static let muted = Color.white.opacity(0.58)
+}
+
+struct ContentView: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        Group {
+            switch model.phase {
+            case .loading: ProgressView("Getting current…").controlSize(.large)
+            case .signedOut: SignInView()
+            case .ready: MessengerView()
+            }
+        }
+        .frame(minWidth: 980, minHeight: 640)
+        .background(Brand.background)
+    }
+}
+
+private struct SignInView: View {
+    @Environment(AppModel.self) private var model
+    @State private var email = "orangej20@gmail.com"
+
+    var body: some View {
+        VStack(spacing: 22) {
+            Image(systemName: "alarm.waves.left.and.right.fill")
+                .font(.system(size: 68, weight: .black))
+                .foregroundStyle(Brand.yellow)
+            Text("TARDY").font(.system(size: 42, weight: .black, design: .rounded))
+            Text("Don't be late.").font(.title3).foregroundStyle(Brand.muted)
+            TextField("Development email", text: $email)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 320)
+            Button("Preview with local account") {
+                Task { await model.developmentSignIn(email: email) }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Brand.yellow)
+            .foregroundStyle(.black)
+            Text("Sign in with Apple will use the same session endpoint in signed builds.")
+                .font(.caption).foregroundStyle(Brand.muted)
+        }
+        .padding(60)
+    }
+}
+
+private struct MessengerView: View {
+    @Environment(AppModel.self) private var model
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
+
+    var body: some View {
+        @Bindable var model = model
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            InboxSidebar()
+                .navigationSplitViewColumnWidth(min: 260, ideal: 310, max: 390)
+        } content: {
+            ChatView()
+                .navigationSplitViewColumnWidth(min: 480, ideal: 640)
+        } detail: {
+            ContextInspector()
+                .navigationSplitViewColumnWidth(min: 250, ideal: 290, max: 360)
+        }
+        .navigationSplitViewStyle(.balanced)
+        .tint(Brand.yellow)
+        .focusedSceneValue(\.sendTardyMessage) { Task { await model.send() } }
+    }
+}
+
+private struct InboxSidebar: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        @Bindable var model = model
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("TARDY").font(.system(size: 20, weight: .black, design: .rounded))
+                    Text("Messages").font(.caption).foregroundStyle(Brand.muted)
+                }
+                Spacer()
+                Button { Task { await model.refreshInbox() } } label: { Image(systemName: "arrow.clockwise") }
+                    .buttonStyle(.plain).help("Refresh")
+            }
+            .padding(16)
+
+            TextField("Search conversations", text: $model.search)
+                .textFieldStyle(.roundedBorder)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 10)
+
+            List(selection: Binding(get: { model.selectedConversationId }, set: { model.select($0) })) {
+                ForEach(model.filteredConversations) { conversation in
+                    ConversationRow(conversation: conversation)
+                        .tag(conversation.id)
+                }
+            }
+            .listStyle(.sidebar)
+
+            if let account = model.account {
+                HStack(spacing: 10) {
+                    Avatar(account: account, size: 30)
+                    Text("@\(account.handle)").font(.caption).lineLimit(1)
+                    Spacer()
+                    Button { model.signOut() } label: { Image(systemName: "rectangle.portrait.and.arrow.right") }
+                        .buttonStyle(.plain).help("Sign out")
+                }
+                .padding(12)
+                .background(Brand.panel)
+            }
+        }
+    }
+}
+
+private struct ConversationRow: View {
+    @Environment(AppModel.self) private var model
+    let conversation: Conversation
+
+    var body: some View {
+        HStack(spacing: 11) {
+            let others = conversation.participants.filter { $0 != model.account?.id }
+            ZStack {
+                ForEach(Array(others.prefix(2).enumerated()), id: \.element) { index, id in
+                    Avatar(account: model.accounts[id], size: 34)
+                        .offset(x: CGFloat(index * 10 - 5))
+                }
+            }
+            .frame(width: 46, height: 40)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack {
+                    Text(conversation.label(accounts: model.accounts, viewer: model.account?.id))
+                        .fontWeight(conversation.unreadCount > 0 ? .bold : .semibold).lineLimit(1)
+                    if conversation.mode == .work {
+                        Image(systemName: "sparkles").font(.caption2).foregroundStyle(Brand.yellow)
+                    }
+                }
+                Text(conversation.lastMessage?.body.isEmpty == false ? conversation.lastMessage!.body : "No messages yet")
+                    .font(.caption).foregroundStyle(Brand.muted).lineLimit(1)
+            }
+            Spacer()
+            if conversation.unreadCount > 0 {
+                Text("\(conversation.unreadCount)").font(.caption2.bold()).foregroundStyle(.black)
+                    .padding(.horizontal, 6).padding(.vertical, 3).background(Brand.yellow, in: Capsule())
+            }
+        }
+        .padding(.vertical, 5)
+    }
+}
+
+private struct ChatView: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        @Bindable var model = model
+        if let conversation = model.selectedConversation {
+            VStack(spacing: 0) {
+                ChatHeader(conversation: conversation)
+                Divider()
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 12) {
+                            ForEach(model.messages) { message in
+                                MessageRow(message: message)
+                                    .id(message.id)
+                            }
+                            if !model.typingProfileIds.isEmpty { TypingRow(ids: model.typingProfileIds) }
+                        }
+                        .padding(20)
+                    }
+                    .onChange(of: model.messages.count) { _, _ in
+                        if let last = model.messages.last { withAnimation { proxy.scrollTo(last.id, anchor: .bottom) } }
+                    }
+                }
+                Divider()
+                ComposerView()
+            }
+            .background(Brand.background)
+        } else {
+            ContentUnavailableView("Choose a conversation", systemImage: "bubble.left.and.bubble.right", description: Text("DMs, groups, and agent work threads stay together."))
+        }
+    }
+}
+
+private struct ChatHeader: View {
+    @Environment(AppModel.self) private var model
+    let conversation: Conversation
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: conversation.mode == .work ? "person.3.sequence.fill" : "bubble.left.and.bubble.right.fill")
+                .foregroundStyle(conversation.mode == .work ? Brand.yellow : .secondary)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(conversation.label(accounts: model.accounts, viewer: model.account?.id)).font(.headline)
+                Text(conversation.mode == .work ? "Shared agent thread" : "Direct messages")
+                    .font(.caption).foregroundStyle(Brand.muted)
+            }
+            Spacer()
+            Text("\(conversation.participants.count) members").font(.caption).foregroundStyle(Brand.muted)
+        }
+        .padding(.horizontal, 18).frame(height: 58)
+        .background(.ultraThinMaterial)
+    }
+}
+
+private struct MessageRow: View {
+    @Environment(AppModel.self) private var model
+    let message: Message
+    private var mine: Bool { message.senderProfileId == model.account?.id }
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 9) {
+            if mine { Spacer(minLength: 90) }
+            if !mine { Avatar(account: model.accounts[message.senderProfileId], size: 28) }
+            VStack(alignment: mine ? .trailing : .leading, spacing: 4) {
+                if !mine {
+                    Text(model.accounts[message.senderProfileId]?.displayName ?? "Tardy")
+                        .font(.caption.bold()).foregroundStyle(Brand.muted)
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    if !message.body.isEmpty {
+                        Text(.init(message.body)).textSelection(.enabled)
+                    }
+                    ForEach(message.media) { media in MessageAttachmentView(media: media) }
+                }
+                .padding(.horizontal, 12).padding(.vertical, 9)
+                .background(mine ? Brand.yellow : Brand.raised, in: RoundedRectangle(cornerRadius: 14))
+                .foregroundStyle(mine ? .black : .white)
+                .contextMenu {
+                    ForEach(Tapback.allCases, id: \.self) { kind in
+                        Button { Task { await model.react(kind, to: message) } } label: {
+                            Label(kind.rawValue.capitalized, systemImage: kind.symbol)
+                        }
+                    }
+                    Divider()
+                    Button("Remove reaction") { Task { await model.react(nil, to: message) } }
+                }
+                if !message.reactions.isEmpty {
+                    HStack(spacing: 4) {
+                        ForEach(message.reactions, id: \.kind) { reaction in
+                            if let kind = Tapback(rawValue: reaction.kind) {
+                                Label("\(reaction.accountIds.count)", systemImage: kind.symbol)
+                                    .font(.caption2).padding(.horizontal, 6).padding(.vertical, 3)
+                                    .background(Brand.panel, in: Capsule())
+                            }
+                        }
+                    }
+                }
+                HStack(spacing: 6) {
+                    if let date = message.timestamp { Text(date, style: .time) }
+                    if mine && !message.readBy.isEmpty { Text("Read") }
+                    else if mine { Text("Delivered") }
+                }
+                .font(.caption2).foregroundStyle(Brand.muted)
+            }
+            if !mine { Spacer(minLength: 90) }
+        }
+    }
+}
+
+private struct MessageAttachmentView: View {
+    let media: MessageMedia
+    var body: some View {
+        if media.type == "image", let url = media.remoteURL {
+            AsyncImage(url: url) { image in image.resizable().scaledToFit() } placeholder: { ProgressView() }
+                .frame(maxWidth: 360, maxHeight: 280).clipShape(RoundedRectangle(cornerRadius: 9))
+        } else if let url = media.remoteURL {
+            Link(destination: url) {
+                Label(media.fileName ?? media.type.capitalized, systemImage: media.type == "video" ? "play.rectangle.fill" : media.type == "audio" ? "waveform" : "doc.fill")
+            }
+        }
+    }
+}
+
+private struct TypingRow: View {
+    @Environment(AppModel.self) private var model
+    let ids: [UUID]
+    @State private var phase = 0
+    var body: some View {
+        HStack {
+            Text(ids.compactMap { model.accounts[$0]?.displayName }.joined(separator: ", "))
+            Text(["·", "··", "···"][phase]).monospaced().frame(width: 24, alignment: .leading)
+            Spacer()
+        }
+        .font(.caption).foregroundStyle(Brand.muted)
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(350)); phase = (phase + 1) % 3
+            }
+        }
+    }
+}
+
+private struct ComposerView: View {
+    @Environment(AppModel.self) private var model
+    var body: some View {
+        @Bindable var model = model
+        HStack(alignment: .bottom, spacing: 10) {
+            Button { } label: { Image(systemName: "plus.circle.fill").font(.title2) }
+                .buttonStyle(.plain).foregroundStyle(Brand.yellow).help("Attach a file")
+            TextField("Message…  Use @ to summon a Tardy", text: $model.composer, axis: .vertical)
+                .textFieldStyle(.plain).lineLimit(1...6).padding(10)
+                .background(Brand.raised, in: RoundedRectangle(cornerRadius: 12))
+                .onChange(of: model.composer) { _, _ in model.composerChanged() }
+                .onSubmit { Task { await model.send() } }
+            Button { Task { await model.send() } } label: {
+                Image(systemName: "arrow.up.circle.fill").font(.system(size: 27))
+            }
+            .buttonStyle(.plain).foregroundStyle(Brand.yellow)
+            .disabled(model.composer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isSending)
+        }
+        .padding(14).background(Brand.panel)
+    }
+}
+
+private struct ContextInspector: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                Text("CONTEXT").font(.caption.bold()).foregroundStyle(Brand.yellow)
+                if let conversation = model.selectedConversation {
+                    SectionLabel("People & Tardies")
+                    ForEach(conversation.participants, id: \.self) { id in
+                        if let account = model.accounts[id] { ParticipantRow(account: account, active: true) }
+                    }
+                    Divider()
+                    SectionLabel("Your agents")
+                    ForEach(model.ownedAgents.filter { !conversation.participants.contains($0.id) }) { agent in
+                        HStack {
+                            ParticipantRow(account: agent, active: false)
+                            Spacer()
+                            Button("Summon") { Task { await model.summon(agent) } }
+                                .buttonStyle(.bordered).controlSize(.small)
+                        }
+                    }
+                    if model.ownedAgents.allSatisfy({ conversation.participants.contains($0.id) }) {
+                        Text("All your agents are already here.").font(.caption).foregroundStyle(Brand.muted)
+                    }
+                    Divider()
+                    SectionLabel("Thread")
+                    Label(conversation.mode == .work ? "Agent context enabled" : "Chat until an agent is summoned", systemImage: conversation.mode == .work ? "sparkles" : "bubble.left")
+                        .font(.caption).foregroundStyle(Brand.muted)
+                }
+            }
+            .padding(18)
+        }
+        .background(Brand.panel)
+    }
+}
+
+private struct ParticipantRow: View {
+    let account: Account
+    let active: Bool
+    var body: some View {
+        HStack(spacing: 9) {
+            Avatar(account: account, size: 30)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(account.displayName).font(.subheadline.weight(.medium)).lineLimit(1)
+                Text("@\(account.handle)").font(.caption2).foregroundStyle(Brand.muted)
+            }
+            if account.kind == .agent { Image(systemName: "sparkles").font(.caption2).foregroundStyle(Brand.yellow) }
+            if active { Circle().fill(.green).frame(width: 6, height: 6) }
+        }
+    }
+}
+
+private struct SectionLabel: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+    var body: some View { Text(text).font(.caption.bold()).foregroundStyle(Brand.muted) }
+}
+
+private struct Avatar: View {
+    let account: Account?
+    let size: CGFloat
+    var body: some View {
+        AsyncImage(url: account?.avatarURL) { phase in
+            if let image = phase.image { image.resizable().scaledToFill() }
+            else {
+                ZStack {
+                    Circle().fill(account?.kind == .agent ? Brand.yellow : Brand.raised)
+                    Text(account?.displayName.first.map(String.init) ?? "?")
+                        .font(.system(size: size * 0.38, weight: .bold)).foregroundStyle(account?.kind == .agent ? .black : .white)
+                }
+            }
+        }
+        .frame(width: size, height: size).clipShape(Circle())
+    }
+}
