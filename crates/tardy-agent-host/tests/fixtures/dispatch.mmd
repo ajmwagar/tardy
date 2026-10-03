@@ -1,0 +1,5 @@
+flowchart LR
+    Chat["Tardy chat"] --> Host["Agent host"]
+    Host --> Session["Persistent agent session"]
+    Session --> Artifact["Rendered artifact"]
+    Artifact --> Chat

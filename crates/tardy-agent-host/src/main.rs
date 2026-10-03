@@ -16,8 +16,8 @@ use tardy_agent_host::{
     AgentCommand, AgentCredential, BoxError, CodexRunner, ConversationMessage, HostData,
     InboxEvent, OpenCodeRunner, PendingMedia, PendingReply, QueuedEvent, RuntimeKind,
     RuntimeRunner, TapbackDecider, WorkActivation, activation_prompt, dispatchable_deliveries,
-    extract_image_directives, extract_tardy_caption, load_json, obvious_tapback,
-    should_publish_tardy, store_json, verify_signature,
+    extract_image_directives, extract_mermaid_directives, extract_tardy_caption, load_json,
+    obvious_tapback, should_publish_tardy, store_json, verify_signature,
 };
 use tokio::sync::{Mutex, Notify};
 
@@ -740,7 +740,10 @@ async fn process_one(app: &App, queued: &QueuedEvent) -> Result<(), BoxError> {
                     &activation_prompt(&app.credential.handle, &activation, &context),
                 )
                 .await?;
-            let (body, directives) = extract_image_directives(&result.reply)?;
+            let (body, diagrams) = extract_mermaid_directives(&result.reply)?;
+            let rendered = render_mermaid(&app.data_path, &diagrams).await?;
+            let (body, mut directives) = extract_image_directives(&body)?;
+            directives.extend(rendered);
             let (body, tardy_caption) = extract_tardy_caption(&body);
             let media = upload_images(app, &directives).await?;
             let publish_tardy = should_publish_tardy(tardy_caption.as_deref(), &media);
@@ -1070,6 +1073,91 @@ async fn upload_images(
         });
     }
     Ok(uploaded)
+}
+
+const MERMAID_CLI_PACKAGE: &str = "@mermaid-js/mermaid-cli@11.12.0";
+const MAX_MERMAID_SOURCE_BYTES: u64 = 256 * 1024;
+
+async fn render_mermaid(
+    _data_path: &Path,
+    directives: &[tardy_agent_host::MermaidDirective],
+) -> Result<Vec<tardy_agent_host::ImageDirective>, BoxError> {
+    let workspace = std::fs::canonicalize(env_or("TARDY_AGENT_WORKSPACE", "."))?;
+    // Keep generated files under the configured workspace so the ordinary attachment
+    // confinement check remains the single upload authorization boundary.
+    let cache = workspace.join(".tardy/artifacts/mermaid");
+    tokio::fs::create_dir_all(&cache).await?;
+    let mut rendered = Vec::with_capacity(directives.len());
+    for directive in directives {
+        let candidate = if directive.path.is_absolute() {
+            directive.path.clone()
+        } else {
+            workspace.join(&directive.path)
+        };
+        let source = std::fs::canonicalize(candidate)?;
+        if !source.starts_with(&workspace) {
+            return Err("TARDY_MERMAID path must stay inside the configured workspace".into());
+        }
+        let bytes = tokio::fs::read(&source).await?;
+        if bytes.is_empty() || bytes.len() as u64 > MAX_MERMAID_SOURCE_BYTES {
+            return Err("TARDY_MERMAID source must be between 1 byte and 256 KiB".into());
+        }
+        std::str::from_utf8(&bytes).map_err(|_| "TARDY_MERMAID source must be UTF-8")?;
+        let digest = hex::encode(Sha256::digest(
+            [MERMAID_CLI_PACKAGE.as_bytes(), b"\0", bytes.as_slice()].concat(),
+        ));
+        let output = cache.join(format!("{digest}.png"));
+        if !tokio::fs::try_exists(&output).await? {
+            let mut command = tokio::process::Command::new(env_or("TARDY_NPX_COMMAND", "npx"));
+            command
+                .args(["--yes", MERMAID_CLI_PACKAGE, "-i"])
+                .arg(&source)
+                .arg("-o")
+                .arg(&output)
+                .args(["-b", "transparent", "-w", "1600"])
+                .kill_on_drop(true);
+            if let Ok(browser) = std::env::var("TARDY_MERMAID_BROWSER") {
+                command
+                    .env("PUPPETEER_EXECUTABLE_PATH", browser)
+                    .env("PUPPETEER_SKIP_DOWNLOAD", "true");
+            }
+            match tokio::time::timeout(Duration::from_secs(120), command.output()).await {
+                Ok(Ok(result)) if result.status.success() => {}
+                Ok(Ok(result)) => {
+                    return Err(format!(
+                        "Mermaid CLI failed: {}",
+                        String::from_utf8_lossy(&result.stderr)
+                            .chars()
+                            .take(1000)
+                            .collect::<String>()
+                    )
+                    .into());
+                }
+                Ok(Err(error)) => return Err(error.into()),
+                Err(_) => {
+                    // Some externally supplied Chromium builds finish the PNG but hang while
+                    // closing. kill_on_drop terminates them; accept only a complete PNG header.
+                    let finished = tokio::fs::read(&output).await.unwrap_or_default();
+                    const PNG_IEND: &[u8] = b"\0\0\0\0IEND\xaeB`\x82";
+                    if finished.len() < 100
+                        || png_dimensions(&finished).is_err()
+                        || !finished.ends_with(PNG_IEND)
+                    {
+                        return Err("Mermaid CLI timed out after 120 seconds".into());
+                    }
+                    tracing::warn!(path = %output.display(), "Mermaid renderer timed out after producing a valid PNG");
+                }
+            }
+        }
+        rendered.push(tardy_agent_host::ImageDirective {
+            path: output,
+            alt_text: directive
+                .alt_text
+                .clone()
+                .or_else(|| Some("Mermaid diagram".into())),
+        });
+    }
+    Ok(rendered)
 }
 
 async fn probe_media(path: &Path) -> Option<(Option<u32>, Option<u32>, Option<u64>)> {
