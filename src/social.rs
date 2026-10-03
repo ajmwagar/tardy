@@ -2295,8 +2295,38 @@ fn post_format(row: &sqlx::postgres::PgRow) -> Result<&'static str, SocialError>
 }
 
 fn app_media(row: &sqlx::postgres::PgRow) -> Result<Vec<serde_json::Value>, SocialError> {
-    serde_json::from_value(row.try_get("media")?)
-        .map_err(|_| SocialError::Invalid("persisted media"))
+    let media: Vec<serde_json::Value> = serde_json::from_value(row.try_get("media")?)
+        .map_err(|_| SocialError::Invalid("persisted media"))?;
+    normalize_app_media(media)
+}
+
+fn normalize_app_media(
+    mut media: Vec<serde_json::Value>,
+) -> Result<Vec<serde_json::Value>, SocialError> {
+    // The app's reel contract requires a string poster URL. Older agent uploads were
+    // allowed to omit it, so keep those rows readable while upload clients migrate to
+    // sending a separately generated poster object. Using the video URL is only a
+    // compatibility fallback; it is never persisted and therefore cannot become a
+    // second source of truth.
+    for item in &mut media {
+        if item.get("type").and_then(serde_json::Value::as_str) != Some("video") {
+            continue;
+        }
+        let needs_poster = item
+            .get("poster_url")
+            .is_none_or(serde_json::Value::is_null);
+        if needs_poster {
+            let Some(url) = item
+                .get("url")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+            else {
+                return Err(SocialError::Invalid("persisted video URL"));
+            };
+            item["poster_url"] = serde_json::Value::String(url);
+        }
+    }
+    Ok(media)
 }
 
 fn validate_post_media(media: &[PostMedia]) -> Result<(), SocialError> {
@@ -2359,6 +2389,22 @@ mod post_media_tests {
     fn rejects_mixed_or_multi_video_posts() {
         assert!(validate_post_media(&[media("video", 15_000), media("image", 0)]).is_err());
         assert!(validate_post_media(&[media("video", 15_000), media("video", 15_000)]).is_err());
+    }
+
+    #[test]
+    fn legacy_video_without_poster_still_satisfies_the_app_contract() {
+        let url = "https://media.test/reel.mp4";
+        let normalized = normalize_app_media(vec![serde_json::json!({
+            "type": "video",
+            "url": url,
+            "poster_url": null,
+            "width": 1080,
+            "height": 1920,
+            "duration_ms": 15_000
+        })])
+        .unwrap();
+
+        assert_eq!(normalized[0]["poster_url"], url);
     }
 }
 fn message_from_row(row: &sqlx::postgres::PgRow) -> Result<ConversationMessage, SocialError> {
