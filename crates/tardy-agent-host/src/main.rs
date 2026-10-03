@@ -53,6 +53,9 @@ async fn main() -> Result<(), BoxError> {
             return Err("tapback requires a message to classify".into());
         }
         let decision = tokio::task::spawn_blocking(move || {
+            if let Some(obvious) = obvious_tapback(&body) {
+                return Ok::<_, BoxError>(obvious);
+            }
             TapbackDecider::from_env()?.decide("host-doctor", &body)
         })
         .await??;
@@ -207,7 +210,7 @@ async fn poll_loop(app: App) -> Result<(), BoxError> {
         .ok_or("missing subscription")?;
     loop {
         let cursor = app.data.lock().await.cursor;
-        let response = app
+        let response = match app
             .client
             .get(format!(
                 "{}/v1/feed-subscriptions/{subscription}/events",
@@ -216,13 +219,29 @@ async fn poll_loop(app: App) -> Result<(), BoxError> {
             .query(&[("after", cursor), ("limit", 50_i64)])
             .bearer_auth(&app.credential.api_token)
             .send()
-            .await?;
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => {
+                tracing::warn!(%error, "Tardy inbox poll request failed; retrying");
+                tokio::time::sleep(Duration::from_secs(3)).await;
+                continue;
+            }
+        };
         if !response.status().is_success() {
             tracing::warn!(status = %response.status(), "Tardy inbox poll failed");
             tokio::time::sleep(Duration::from_secs(3)).await;
             continue;
         }
-        for event in response.json::<Vec<InboxEvent>>().await? {
+        let events = match response.json::<Vec<InboxEvent>>().await {
+            Ok(events) => events,
+            Err(error) => {
+                tracing::warn!(%error, "Tardy inbox poll body failed; retrying");
+                tokio::time::sleep(Duration::from_secs(3)).await;
+                continue;
+            }
+        };
+        for event in events {
             enqueue(&app, format!("poll:{}", event.id), event).await?;
         }
         tokio::select! {
@@ -274,18 +293,31 @@ async fn webhook(
 }
 
 async fn enqueue(app: &App, delivery_id: String, event: InboxEvent) -> Result<(), BoxError> {
+    let activation = WorkActivation::from_event(&event);
     let mut data = app.data.lock().await;
-    if data.processed_deliveries.contains(&delivery_id)
-        || data
-            .queue
-            .iter()
-            .any(|queued| queued.delivery_id == delivery_id)
-    {
+    if data.processed_deliveries.contains(&delivery_id) {
         return Ok(());
     }
-    data.queue.push_back(QueuedEvent { delivery_id, event });
-    store_json(&app.data_path, &*data).await?;
+    let already_queued = data
+        .queue
+        .iter()
+        .any(|queued| queued.delivery_id == delivery_id);
+    if !already_queued {
+        data.queue.push_back(QueuedEvent { delivery_id, event });
+        store_json(&app.data_path, &*data).await?;
+    }
     drop(data);
+    // Acknowledgement is a fast, independent lane. A busy Codex/OpenCode session must not
+    // delay the human-visible receipt for work that is already durably queued.
+    if let Some(activation) = activation
+        && !activation.legacy_dm
+        && !activation.message_id.is_empty()
+        && let Err(error) = acknowledge(app, &activation).await
+    {
+        // The durable queue remains the retry boundary: process_one calls acknowledge again
+        // before dispatch, and acknowledged message ids keep successful sends idempotent.
+        tracing::warn!(%error, "immediate message acknowledgement failed; retained for retry");
+    }
     app.notify.notify_one();
     Ok(())
 }
@@ -873,7 +905,8 @@ async fn acknowledge(app: &App, activation: &WorkActivation) -> Result<(), BoxEr
         )
         .await?;
     } else {
-        return Ok(());
+        // `none` is still a completed classification. Persist it so a replay does not pay for
+        // the same RLCD decision repeatedly or later add a stale reaction.
     }
     let mut data = app.data.lock().await;
     data.acknowledged_messages
