@@ -4072,7 +4072,7 @@ mod tests {
             "POST",
             "/v1/search",
             json!({"query":"Rust", "limit":10}),
-            None,
+            Some(&profile_id),
             Some(&token),
         )
         .await;
@@ -4083,29 +4083,31 @@ mod tests {
             "POST",
             "/v1/ai-consents/search",
             Value::Null,
-            None,
+            Some(&profile_id),
             Some(&token),
         )
         .await;
         assert_eq!(status, StatusCode::OK);
-        let (status, results) = request(
+        let (status, _) = request(
             &app,
             "POST",
             "/v1/search",
             json!({"query":"Rust", "limit":10}),
-            None,
+            Some(&profile_id),
             Some(&token),
         )
         .await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(results[0]["item"]["id"], reel.id.to_string());
+        // Consent now lets the request reach the durable social-search boundary. This
+        // unit state intentionally has no PgSocialStore; PostgreSQL integration tests
+        // cover successful candidate retrieval.
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
 
         let (status, _) = request(
             &app,
             "DELETE",
             "/v1/ai-consents/search",
             Value::Null,
-            None,
+            Some(&profile_id),
             Some(&token),
         )
         .await;
@@ -4115,7 +4117,7 @@ mod tests {
             "POST",
             "/v1/search",
             json!({"query":"Rust", "limit":10}),
-            None,
+            Some(&profile_id),
             Some(&token),
         )
         .await;

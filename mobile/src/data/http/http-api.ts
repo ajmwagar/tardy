@@ -38,6 +38,7 @@ import { tardyUrl } from '@/share/links';
 /** The server's page limit for conversation messages (1..=100). */
 const MESSAGE_PAGE = 100;
 const REQUEST_TIMEOUT_MS = 12_000;
+const AUTH_REQUEST_TIMEOUT_MS = 30_000;
 
 /**
  * `TardyApi` over HTTP against the Rust server (ajmwagar/tardy, `feat/backend-foundation`).
@@ -128,6 +129,7 @@ type RequestOptions<T> = {
   /** How to read a 2xx body; omitted means the body is ignored (204 or an unused echo). */
   decode?: Decoder<T>;
   auth?: Auth;
+  timeoutMs?: number;
 };
 
 const segment = (value: string) => encodeURIComponent(value);
@@ -163,13 +165,14 @@ export class HttpTardyApi implements TardyApi {
   }
 
   private async request<T = void>(method: string, path: string, options: RequestOptions<T> = {}): Promise<T> {
-    const { query, body, decode, auth = 'session' } = options;
+    const { query, body, decode, auth = 'session', timeoutMs = REQUEST_TIMEOUT_MS } = options;
     const search = Object.entries(query ?? {})
       .filter((entry): entry is [string, string] => entry[1] !== undefined)
       .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
       .join('&');
     const route = `${method} ${path}`;
     let response: { status: number; text(): Promise<string> };
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
       response = await Promise.race([
         this.fetch(`${this.baseUrl}${path}${search ? `?${search}` : ''}`, {
@@ -177,12 +180,14 @@ export class HttpTardyApi implements TardyApi {
           headers: this.headers(auth, body !== undefined),
           ...(body !== undefined && { body: JSON.stringify(body) }),
         }),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`request timed out after ${REQUEST_TIMEOUT_MS / 1_000}s`)), REQUEST_TIMEOUT_MS),
-        ),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => reject(new Error(`request timed out after ${timeoutMs / 1_000}s`)), timeoutMs);
+        }),
       ]);
     } catch (error) {
       throw new Error(`Network error on ${route}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+    } finally {
+      if (timeout !== undefined) clearTimeout(timeout);
     }
     const text = await response.text();
     if (response.status < 200 || response.status > 299) throw errorForResponse(route, response.status, text);
@@ -204,7 +209,9 @@ export class HttpTardyApi implements TardyApi {
   // MARK: auth
 
   async signIn(credential: AuthCredential): Promise<SignedIn> {
-    return this.adopt(await this.request('POST', '/v1/sessions', { body: snakeKeys(credential), decode: W.signedIn, auth: 'none' }));
+    return this.adopt(await this.request('POST', '/v1/sessions', {
+      body: snakeKeys(credential), decode: W.signedIn, auth: 'none', timeoutMs: AUTH_REQUEST_TIMEOUT_MS,
+    }));
   }
 
   async developmentSession(): Promise<SignedIn> {

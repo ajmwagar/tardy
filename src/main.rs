@@ -20,7 +20,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let public_base_url =
         std::env::var("TARDY_PUBLIC_BASE_URL").unwrap_or_else(|_| format!("http://{bind}"));
     let listener = tokio::net::TcpListener::bind(&bind).await?;
-    tracing::info!(%bind, %public_base_url, "tardy listening");
+    tracing::info!(%bind, %public_base_url, delivery = "fab", "tardy listening");
     let database_url = required("DATABASE_URL")?;
     let mut state = AppState::postgres(public_base_url)?;
     tracing::info!(ranker = state.ranker.name(), "for you ranker selected");
@@ -42,7 +42,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     state = state.with_web_billing(PgWebBillingStore::new(pool.clone(), web_base_url, stripe));
     if let Ok(client_id) = std::env::var("APPLE_CLIENT_ID") {
-        state = state.with_apple_auth(AppleAuthenticator::new(client_id)?);
+        let apple_auth = AppleAuthenticator::new(client_id)?;
+        let warmer = apple_auth.clone();
+        tokio::spawn(async move {
+            if let Err(error) = warmer.prewarm().await {
+                tracing::warn!(%error, "Apple signing-key prewarm failed; first sign-in will retry");
+            }
+        });
+        state = state.with_apple_auth(apple_auth);
     } else {
         tracing::warn!("APPLE_CLIENT_ID is unset; Sign in with Apple is disabled");
     }

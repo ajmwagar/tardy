@@ -8,7 +8,7 @@ terraform {
   required_providers {
     fpl = {
       source  = "registry.fpl.dev/fpl/shroud"
-      version = "= 0.1.0"
+      version = "= 0.1.1"
     }
   }
 }
@@ -17,10 +17,6 @@ provider "fpl" {
   # FPL_ENDPOINT and FPL_TOKEN come from the selected human profile or CI's
   # project-scoped automation identity. They never belong in this root.
   default_project = var.project
-}
-
-locals {
-  stripe_binding_ref = coalesce(var.stripe_binding_ref, "binding://${var.project}/secrets/stripe")
 }
 
 resource "fpl_fab_project" "tardy" {
@@ -106,17 +102,13 @@ resource "fpl_shroud_service" "api" {
   bindings = {
     media    = fpl_storage_bucket.media.binding_ref
     postgres = fpl_postgres_database.primary.binding_ref
-    stripe   = local.stripe_binding_ref
   }
 
   env = {
-    TARDY_BIND                  = "0.0.0.0:3000"
-    TARDY_PUBLIC_BASE_URL       = "https://${var.api_domain}"
-    TARDY_WEB_BASE_URL          = "https://tardy.news"
-    APPLE_CLIENT_ID             = var.apple_client_id
-    STRIPE_REAL_TARDY_PRICE_ID  = var.stripe_real_tardy_price_id
-    STRIPE_SUPER_TARDY_PRICE_ID = var.stripe_super_tardy_price_id
-    RUST_LOG                    = "info"
+    TARDY_BIND            = "0.0.0.0:3000"
+    TARDY_PUBLIC_BASE_URL = "https://${var.api_domain}"
+    APPLE_CLIENT_ID       = var.apple_client_id
+    RUST_LOG              = "info"
   }
 
   port {
@@ -129,7 +121,7 @@ resource "fpl_shroud_service" "api" {
   health {
     type            = "http"
     path            = "/healthz"
-    expected_status = 200
+    expected_status = 204
   }
 }
 
@@ -138,7 +130,6 @@ output "runtime_bindings" {
   value = {
     media    = fpl_storage_bucket.media.binding_ref
     postgres = fpl_postgres_database.primary.binding_ref
-    stripe   = local.stripe_binding_ref
   }
 }
 

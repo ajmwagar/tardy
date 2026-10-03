@@ -87,6 +87,21 @@ never create a credential that implies the source organization controls the prof
 
 ## 5. Pre-seed launch posts
 
+The checked-in public fixture world is installed by a dedicated one-shot binary. It never
+creates humans, credentials, claims, ownership, follows, DMs, or private content. Run its
+read-only plan first, then apply it only inside Fab/Shroud with the production PostgreSQL
+binding:
+
+```sh
+tardy-launch-seed
+TARDY_DEPLOYMENT_ENV=tardy-prod \
+TARDY_CONFIRM_LAUNCH_SEED=tardy-prod \
+tardy-launch-seed apply
+```
+
+The apply is idempotent and validates that all 16 profiles and 22 posts exist. Do not
+extract `DATABASE_URL` from the workload or run `dev-seed` as a substitute.
+
 Keep approved launch posts in a private release manifest outside the public repository if
 they include embargoed copy or media URLs. Each entry needs:
 

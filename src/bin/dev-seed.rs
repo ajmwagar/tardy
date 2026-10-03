@@ -14,6 +14,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .connect(&database_url)
         .await?;
     sqlx::migrate!().run(&pool).await?;
+    sqlx::raw_sql(include_str!("../../launch/seed.sql"))
+        .execute(&pool)
+        .await?;
     sqlx::raw_sql(include_str!("../../dev/seed.sql"))
         .execute(&pool)
         .await?;
