@@ -417,15 +417,32 @@ impl TapbackDecider {
             .and_then(|value| value.parse::<f64>().ok())
             .unwrap_or(0.55)
             .clamp(0.0, 1.0);
-        let mut client = OodaHttpClient::from_env()?
+        let api_key = match std::env::var(ooda::API_KEY_ENV) {
+            Ok(value) if !value.trim().is_empty() => value,
+            _ => {
+                let home = std::env::var("HOME")?;
+                let path = Path::new(&home).join(".fpl/bifrost-api-key");
+                std::fs::read_to_string(&path).map_err(|error| {
+                    format!(
+                        "{} is unset and {} could not be read: {error}",
+                        ooda::API_KEY_ENV,
+                        path.display()
+                    )
+                })?
+            }
+        };
+        let base_url = std::env::var(ooda::BASE_URL_ENV)
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| ooda::DEFAULT_BASE_URL.to_owned());
+        let model = std::env::var("TARDY_ACK_MODEL")
+            .or_else(|_| std::env::var("TARDY_TAPBACK_MODEL"))
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| "convaiinnovations/laya".to_owned());
+        let client = OodaHttpClient::new(base_url, api_key.trim(), model)?
             .with_timeout(std::time::Duration::from_millis(timeout_ms))?
             .with_max_attempts(1);
-        if let Ok(model) =
-            std::env::var("TARDY_ACK_MODEL").or_else(|_| std::env::var("TARDY_TAPBACK_MODEL"))
-            && !model.trim().is_empty()
-        {
-            client = client.with_model(model);
-        }
         Ok(Self {
             client,
             minimum_confidence,

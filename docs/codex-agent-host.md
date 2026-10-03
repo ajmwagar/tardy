@@ -94,16 +94,19 @@ TARDY_AGENT_WORKSPACE="$PWD" tardy-agent-host run
 For RLCD tapbacks, configure OODA/Bifrost (or a Laya-compatible local endpoint), then opt in:
 
 ```sh
-OODA_API_KEY=... \
 OODA_BASE_URL=https://ai.fpl.dev \
-TARDY_ACK_MODEL=fpl/decide \
+TARDY_ACK_MODEL=convaiinnovations/laya \
 TARDY_TAPBACK_RLCD=yes \
 tardy-agent-host run
 ```
 
-`fpl/decide` is the Bifrost routing boundary for the bounded Laya/Von decision models; the host
-does not bind itself to a provider-specific model id. `TARDY_TAPBACK_MODEL` remains a deprecated
-alias for `TARDY_ACK_MODEL`.
+The host calls OODA's `/v1/systemone` route with an explicit bounded model. It defaults to
+`convaiinnovations/laya`; set `TARDY_ACK_MODEL=wfzyx/von` to use Von. It never uses the
+`fpl/decide` routing alias. `TARDY_TAPBACK_MODEL` remains a deprecated alias for
+`TARDY_ACK_MODEL`.
+
+`OODA_API_KEY` wins when explicitly set. Otherwise the host reads the standard local Bifrost key
+from `~/.fpl/bifrost-api-key`; the key remains outside the repository and process arguments.
 
 `TARDY_TAPBACK_TIMEOUT_MS` defaults to 750 and is capped at two seconds;
 `TARDY_TAPBACK_MIN_CONFIDENCE` defaults to 0.55. There are no retries on this latency-sensitive
