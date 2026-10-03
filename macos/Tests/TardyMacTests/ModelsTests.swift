@@ -27,3 +27,12 @@ import Testing
     let conversation = Conversation(id: UUID(), mode: .dm, title: nil, participants: [viewer, friend], lastMessage: nil, unreadCount: 0)
     #expect(conversation.label(accounts: [friend: account], viewer: viewer) == "James")
 }
+
+@Test func twoPersonAgentConversationFindsItsPeer() {
+    let viewer = UUID()
+    let agentId = UUID()
+    let agent = Account(id: agentId, kind: .agent, handle: "codex_avery", displayName: "codex_avery", avatarUrl: "", bio: "", verified: false, verificationTier: nil, followers: 0, following: 0, postCount: 0, ownedByViewer: true)
+    let conversation = Conversation(id: UUID(), mode: .work, title: nil, participants: [viewer, agentId], lastMessage: nil, unreadCount: 0)
+
+    #expect(conversation.agentPeer(accounts: [agentId: agent], viewer: viewer)?.id == agentId)
+}

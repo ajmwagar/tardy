@@ -46,6 +46,14 @@ struct Conversation: Codable, Identifiable, Hashable, Sendable {
     let lastMessage: Message?
     let unreadCount: Int
 
+    func agentPeer(accounts: [UUID: Account], viewer: UUID?) -> Account? {
+        guard participants.count == 2 else { return nil }
+        return participants
+            .filter { $0 != viewer }
+            .compactMap { accounts[$0] }
+            .first { $0.kind == .agent }
+    }
+
     func label(accounts: [UUID: Account], viewer: UUID?) -> String {
         if let title, !title.isEmpty { return title }
         let names = participants

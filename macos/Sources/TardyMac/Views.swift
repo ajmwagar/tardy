@@ -191,17 +191,34 @@ private struct ChatHeader: View {
     @Environment(AppModel.self) private var model
     let conversation: Conversation
 
+    private var agentPeer: Account? {
+        conversation.agentPeer(accounts: model.accounts, viewer: model.account?.id)
+    }
+
+    private var agentIsWorking: Bool {
+        agentPeer.map { model.typingProfileIds.contains($0.id) } ?? false
+    }
+
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: conversation.mode == .work ? "person.3.sequence.fill" : "bubble.left.and.bubble.right.fill")
                 .foregroundStyle(conversation.mode == .work ? Brand.yellow : .secondary)
             VStack(alignment: .leading, spacing: 1) {
                 Text(conversation.label(accounts: model.accounts, viewer: model.account?.id)).font(.headline)
-                Text(conversation.mode == .work ? "Shared agent thread" : "Direct messages")
+                Text(agentPeer != nil ? "1:1 agent session" : conversation.mode == .work ? "Shared agent thread" : "Direct messages")
                     .font(.caption).foregroundStyle(Brand.muted)
             }
             Spacer()
-            Text("\(conversation.participants.count) members").font(.caption).foregroundStyle(Brand.muted)
+            if agentIsWorking {
+                HStack(spacing: 6) {
+                    Circle().fill(.green).frame(width: 7, height: 7)
+                    Text("Working").font(.caption.weight(.medium))
+                }
+                .foregroundStyle(.green)
+            } else {
+                Text(agentPeer != nil ? "Private" : "\(conversation.participants.count) members")
+                    .font(.caption).foregroundStyle(Brand.muted)
+            }
         }
         .padding(.horizontal, 18).frame(height: 58)
         .background(.ultraThinMaterial)
@@ -326,6 +343,14 @@ private struct ContextInspector: View {
             VStack(alignment: .leading, spacing: 18) {
                 Text("CONTEXT").font(.caption.bold()).foregroundStyle(Brand.yellow)
                 if let conversation = model.selectedConversation {
+                    if let agent = conversation.agentPeer(accounts: model.accounts, viewer: model.account?.id) {
+                        AgentWorkPanel(
+                            agent: agent,
+                            working: model.typingProfileIds.contains(agent.id),
+                            messages: model.messages
+                        )
+                        Divider()
+                    }
                     SectionLabel("People & Tardies")
                     ForEach(conversation.participants, id: \.self) { id in
                         if let account = model.accounts[id] { ParticipantRow(account: account, active: true) }
@@ -352,6 +377,57 @@ private struct ContextInspector: View {
             .padding(18)
         }
         .background(Brand.panel)
+    }
+}
+
+private struct AgentWorkPanel: View {
+    let agent: Account
+    let working: Bool
+    let messages: [Message]
+    @State private var expanded = true
+
+    private var recentArtifacts: [MessageMedia] {
+        Array(messages.reversed().filter { $0.senderProfileId == agent.id }.flatMap(\.media).prefix(5))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button { withAnimation(.snappy) { expanded.toggle() } } label: {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("LIVE WORK").font(.caption.bold()).foregroundStyle(Brand.yellow)
+                        Text(working ? "\(agent.displayName) is working" : "Session ready")
+                            .font(.subheadline.weight(.semibold)).foregroundStyle(.white)
+                    }
+                    Spacer()
+                    if working { ProgressView().controlSize(.small).tint(Brand.yellow) }
+                    Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                        .font(.caption).foregroundStyle(Brand.muted)
+                }
+            }
+            .buttonStyle(.plain)
+
+            if expanded {
+                Label("Durable 1:1 context", systemImage: "arrow.triangle.2.circlepath")
+                    .font(.caption).foregroundStyle(Brand.muted)
+                if recentArtifacts.isEmpty {
+                    Text(working ? "Commands, edits, tests, and artifacts will appear here as the host reports them." : "No recent artifacts in this session.")
+                        .font(.caption).foregroundStyle(Brand.muted)
+                } else {
+                    ForEach(recentArtifacts) { media in
+                        HStack(spacing: 8) {
+                            Image(systemName: media.type == "image" ? "photo" : media.type == "video" ? "play.rectangle" : "doc")
+                                .foregroundStyle(Brand.yellow)
+                            Text(media.fileName ?? media.type.capitalized).font(.caption).lineLimit(1)
+                        }
+                    }
+                }
+                Text("Shows work telemetry, not private model reasoning.")
+                    .font(.caption2).foregroundStyle(Brand.muted.opacity(0.75))
+            }
+        }
+        .padding(12)
+        .background(Brand.raised, in: RoundedRectangle(cornerRadius: 12))
     }
 }
 
