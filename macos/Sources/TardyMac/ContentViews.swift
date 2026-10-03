@@ -173,6 +173,7 @@ private struct ReelStage: View {
     let post: TardyPost
     let active: Bool
     @State private var player: AVPlayer?
+    @State private var showingCaption = false
 
     var body: some View {
         ZStack {
@@ -193,7 +194,22 @@ private struct ReelStage: View {
                     Spacer()
                 }.padding()
                 Spacer()
-                HStack {
+                HStack(alignment: .bottom, spacing: 18) {
+                    Button { showingCaption = true } label: {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(post.caption)
+                                .font(.callout)
+                                .lineLimit(3)
+                                .multilineTextAlignment(.leading)
+                            Label("Read full caption", systemImage: "text.alignleft")
+                                .font(.caption.bold())
+                                .foregroundStyle(Brand.yellow)
+                        }
+                        .padding(12)
+                        .frame(maxWidth: 430, alignment: .leading)
+                        .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 12))
+                    }
+                    .buttonStyle(.plain)
                     Spacer()
                     VStack(spacing: 15) {
                         ActionButton(icon: post.viewerHasLiked ? "heart.fill" : "heart", count: post.likeCount, active: post.viewerHasLiked) { Task { await model.toggleLike() } }
@@ -208,6 +224,10 @@ private struct ReelStage: View {
             if isActive { configurePlayer() } else { player?.pause(); player = nil }
         }
         .onDisappear { player?.pause(); player = nil }
+        .sheet(isPresented: $showingCaption) {
+            LongFormCaptionView(post: post)
+                .frame(minWidth: 560, idealWidth: 680, minHeight: 560, idealHeight: 760)
+        }
     }
 
     private func configurePlayer() {
@@ -239,6 +259,7 @@ private struct ActionButton: View {
 private struct PostInspector: View {
     @Environment(AppModel.self) private var model
     let post: TardyPost
+    @State private var showingCaption = false
 
     var body: some View {
         @Bindable var model = model
@@ -251,7 +272,17 @@ private struct PostInspector: View {
                         }.buttonStyle(.plain)
                     }
                     Text("CAPTION").font(.caption.bold()).foregroundStyle(Brand.yellow)
-                    Text(.init(post.caption)).textSelection(.enabled).font(.body).lineSpacing(3)
+                    Text(.init(post.caption))
+                        .textSelection(.enabled)
+                        .font(.body)
+                        .lineSpacing(4)
+                        .lineLimit(8)
+                    Button { showingCaption = true } label: {
+                        Label("Read full caption", systemImage: "arrow.up.left.and.arrow.down.right")
+                            .font(.callout.bold())
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Brand.yellow)
                     Divider()
                     HStack { Text("COMMENTS").font(.caption.bold()).foregroundStyle(Brand.yellow); Spacer(); Text("\(model.comments.count)").font(.caption).foregroundStyle(Brand.muted) }
                     if model.isLoadingComments {
@@ -271,7 +302,50 @@ private struct PostInspector: View {
                 Button { Task { await model.addComment() } } label: { Image(systemName: "arrow.up.circle.fill").font(.title2) }
                     .buttonStyle(.plain).foregroundStyle(Brand.yellow)
             }.padding(12)
-        }.background(Brand.panel)
+        }
+        .background(Brand.panel)
+        .sheet(isPresented: $showingCaption) {
+            LongFormCaptionView(post: post)
+                .frame(minWidth: 560, idealWidth: 680, minHeight: 560, idealHeight: 760)
+        }
+    }
+}
+
+private struct LongFormCaptionView: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    let post: TardyPost
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                if let author = model.accounts[post.authorId] {
+                    Avatar(account: author, size: 42)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(author.displayName).font(.headline)
+                        Text("@\(author.handle)").font(.caption).foregroundStyle(Brand.muted)
+                    }
+                } else {
+                    Text("Tardy").font(.headline)
+                }
+                Spacer()
+                Button("Done") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+            }
+            .padding(20)
+            Divider()
+            ScrollView {
+                Text(.init(post.caption))
+                    .font(.system(size: 17))
+                    .lineSpacing(7)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: 680, alignment: .leading)
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, 26)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .background(Brand.panel)
     }
 }
 
