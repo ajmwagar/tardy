@@ -2,7 +2,11 @@
 # will have compiled files and executables
 debug
 target
+.env
+.env.local
+.env.*.local
 .wrangler/
+.agents/
 
 # OpenTofu working data and local state. Production state belongs in FPL's
 # managed encrypted backend, never in this repository.
@@ -39,3 +43,7 @@ brag-output*/work/frames/
 # Apple's SF Rounded is copied in locally for renders, never committed
 content/**/assets/fonts/SF*
 content/**/snapshots/
+mobile/assets/reels/shared-*.mp4
+mobile/assets/reels/shared-*-thumb.jpg
+# Local object-store payloads created by the development upload adapter.
+mobile/assets/reels/uploads/

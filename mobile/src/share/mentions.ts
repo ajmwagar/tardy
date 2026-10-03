@@ -17,6 +17,16 @@ export function completeMention(text: string, handle: string): string {
 }
 
 /**
+ * Accepts the active (first) autocomplete result, or leaves the composer alone when the
+ * autocomplete menu is closed. Keeping this decision pure makes keyboard and tap completion
+ * share the same text transformation.
+ */
+export function acceptMentionSuggestion(text: string, handles: readonly string[]): string | null {
+  if (mentionQuery(text) === null || handles.length === 0) return null;
+  return completeMention(text, handles[0]);
+}
+
+/**
  * The accounts `text` mentions, resolved by the composer against accounts it already knows
  * (picked from suggestions, or loaded on screen). Unknown handles are not mentions: the
  * server never parses text, and the client never guesses. Deduplicated, in order.

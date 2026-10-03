@@ -15,4 +15,6 @@ export function keychainSlot(key: string) {
 }
 
 /** The signed-in session's token: the only auth state the client persists. */
-export const sessionTokenStorage = keychainSlot('tardy.session');
+const previewIdentity = process.env.EXPO_PUBLIC_TARDY_DEV_EMAIL?.trim().toLowerCase();
+const previewKey = previewIdentity?.replace(/[^a-z0-9._-]/g, '_');
+export const sessionTokenStorage = keychainSlot(__DEV__ && previewKey ? `tardy.session.dev.${previewKey}` : 'tardy.session');

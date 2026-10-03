@@ -1,7 +1,7 @@
 import { faults } from '@/data/mock/faults';
 import { POSTS } from '@/data/mock/fixtures';
 
-import { clearError, flushEngagement, getState, ingestPosts, seedFollowing, setLiked, toggleAlarm, toggleFollowing, toggleRepost, toggleSaved } from '../store';
+import { cacheAccounts, cacheViewerAccount, clearError, flushEngagement, getState, incrementCommentCount, ingestPosts, resetViewerState, seedFollowing, setLiked, toggleAlarm, toggleFollowing, toggleRepost, toggleSaved } from '../store';
 
 /**
  * Rollback paths, driven by the dev fault switch. Injected interaction faults throw before
@@ -19,6 +19,12 @@ afterEach(() => {
 afterAll(() => flushEngagement());
 
 describe('optimistic interactions', () => {
+  it('updates the shared count after a confirmed comment', () => {
+    const before = getState().posts.get(post.id)!.commentCount;
+    incrementCommentCount(post.id);
+    expect(getState().posts.get(post.id)!.commentCount).toBe(before + 1);
+  });
+
   it('a failed like rolls back and sets lastError', async () => {
     const before = getState().posts.get(post.id)!;
     expect(before.liked).toBe(false);
@@ -55,8 +61,45 @@ describe('optimistic interactions', () => {
 
   it('a failed follow rolls back', async () => {
     seedFollowing([]);
+    const viewer = {
+      id: 'viewer', kind: 'human' as const, handle: 'viewer', name: 'Viewer', avatarUrl: '', bio: '', verified: false,
+      followers: 2, following: 3, postCount: 0,
+    };
+    const target = {
+      id: post.authorId, kind: 'human' as const, handle: 'target', name: 'Target', avatarUrl: '', bio: '', verified: false,
+      followers: 7, following: 1, postCount: 1,
+    };
+    cacheViewerAccount(viewer);
+    cacheAccounts([target]);
     await toggleFollowing(post.authorId);
     expect(getState().following.has(post.authorId)).toBe(false);
+    expect(getState().accounts.get('me')?.following).toBe(3);
+    expect(getState().accounts.get(post.authorId)?.followers).toBe(7);
     expect(getState().lastError).toMatch(/follow them/);
+  });
+});
+
+describe('viewer account cache', () => {
+  it('keeps the stable me alias for a durable UUID and refreshes both keys', () => {
+    resetViewerState();
+    const account = {
+      id: '28542681-0556-40dc-9dbd-743691f9f31a',
+      kind: 'human' as const,
+      handle: 'james',
+      name: 'James',
+      avatarUrl: 'https://example.test/avatar.jpg',
+      bio: '',
+      verified: false,
+      followers: 0,
+      following: 0,
+      postCount: 1,
+    };
+    cacheViewerAccount(account);
+    expect(getState().accounts.get('me')).toEqual(account);
+    expect(getState().accounts.get(account.id)).toEqual(account);
+
+    const refreshed = { ...account, postCount: 2 };
+    cacheAccounts([refreshed]);
+    expect(getState().accounts.get('me')).toEqual(refreshed);
   });
 });

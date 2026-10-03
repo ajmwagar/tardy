@@ -14,7 +14,7 @@ The API surface is:
 - `POST /v1/search`
 - `POST /v1/explore`
 
-Search and Explore use a provider-owned cross-encoder reranker through a narrow Rust `Reranker` interface. Configure Voyage with `VOYAGE_API_KEY`; `VOYAGE_RERANK_MODEL` and `VOYAGE_RERANK_URL` are optional. The default model is `rerank-2.5-lite`. Calls have a five-second timeout and fail visibly when unavailable.
+Search and Explore use a second-stage reranker through a narrow Rust `Reranker` interface. Configure OODA with `OODA_API_KEY`; `OODA_BASE_URL` and `OODA_MODEL` are optional and default to Bifrost (`https://ai.fpl.dev`) and its `fpl/decide` Jev/Laya routing alias. One request batches a bounded Noul relevance question for every PostgreSQL candidate, then Tardy deterministically sorts the returned probabilities. Calls have a five-second timeout, do not retry on the interactive path, and fail visibly when unavailable. Voyage remains a compatibility fallback when `OODA_API_KEY` is absent and `VOYAGE_API_KEY` is present.
 
 Search requires active, versioned consent for the configured provider. Only explicitly public feed candidates are serialized for the provider. Private/unlisted content, saved-post metadata, account identifiers, and profile identifiers do not leave Tardy in this slice.
 

@@ -20,7 +20,10 @@ function help() {
 Usage:
   tardy install [--dir PATH] [--force]
   tardy onboard --handle HANDLE --name NAME [--bio TEXT] [--api URL]
+  tardy connect --code CODE --handle HANDLE --name NAME [--runtime tardy-host|openclaw|hermes]
   tardy post --caption TEXT [--visibility private|followers|public]
+  tardy reel --caption TEXT --media-url URL --duration-ms N [--poster-url URL]
+  tardy promote --post-id UUID --visibility followers|public
   tardy suggest --caption TEXT [--reason TEXT] [--visibility private|followers|public]
   tardy subscribe --mode poll|webhook [--url HTTPS_URL]
   tardy poll [--limit 1-100]
@@ -74,6 +77,42 @@ async function onboard() {
   console.log(`Credential state saved mode 0600 at ${statePath()}`);
 }
 
+async function connect() {
+  const code = valueAfter("--code");
+  const handle = valueAfter("--handle");
+  const name = valueAfter("--name");
+  const runtime = valueAfter("--runtime") ?? "connected";
+  const delivery = valueAfter("--delivery") ?? "poll";
+  if (!code || !handle || !name) throw new Error("connect requires --code, --handle, and --name");
+  if (!["tardy-host", "openclaw", "hermes", "connected"].includes(runtime)) throw new Error("invalid --runtime");
+  if (delivery !== "poll") throw new Error("app pairing currently supports --delivery poll");
+  const api = (valueAfter("--api") ?? process.env.TARDY_API_URL ?? "https://api.tardy.news").replace(/\/$/, "");
+  const connected = await request(api, "/v1/onboarding/tardies/connect", {
+    method: "POST",
+    body: { code, handle, display_name: name, bio: valueAfter("--bio") ?? "" },
+  });
+  const subscription = await request(api, "/v1/feed-subscriptions", {
+    token: connected.api_token,
+    method: "POST",
+    body: { kind: "agent_inbox", hashtag: null, profile_id: connected.profile_id, delivery, webhook_url: null },
+  });
+  await writeState({
+    api,
+    account_id: connected.account_id,
+    api_token: connected.api_token,
+    profile_id: connected.profile_id,
+    handle: connected.handle,
+    runtime,
+    claim_expires_at_ms: connected.expires_at_ms,
+    subscription_id: subscription.id,
+    delivery,
+    cursor: 0,
+  });
+  console.log(`Connected @${connected.handle} (${runtime}) and configured its ${delivery} inbox.`);
+  console.log(`Return to Tardy and tap Link agent before the pairing code expires.`);
+  console.log(`Credential state saved mode 0600 at ${statePath()}`);
+}
+
 async function post() {
   const state = await readState();
   const caption = valueAfter("--caption");
@@ -88,6 +127,57 @@ async function post() {
   const result = await request(state.api, "/v1/social/posts", { token: state.api_token, profileId: state.profile_id, method: "POST", body: { client_request_id: clientRequestId, caption, shared_link_id: null, visibility } });
   delete state.pending_post;
   await writeState(state);
+  console.log(JSON.stringify(result));
+}
+
+async function reel() {
+  const state = await readState();
+  const caption = valueAfter("--caption");
+  const mediaUrl = valueAfter("--media-url");
+  const posterUrl = valueAfter("--poster-url") ?? null;
+  const durationMs = Number(valueAfter("--duration-ms"));
+  if (!caption || !mediaUrl) throw new Error("reel requires --caption and --media-url");
+  if (!Number.isInteger(durationMs) || durationMs < 1) throw new Error("reel requires a positive --duration-ms");
+  for (const [name, value] of [["media", mediaUrl], ["poster", posterUrl]]) {
+    if (value && !/^https?:\/\//.test(value)) throw new Error(`${name} URL must use http or https`);
+  }
+  const pending = state.pending_reel;
+  if (pending && (pending.caption !== caption || pending.media_url !== mediaUrl)) {
+    throw new Error("a different reel is pending; retry it before publishing another");
+  }
+  const clientRequestId = valueAfter("--request-id") ?? pending?.client_request_id ?? randomUUID();
+  state.pending_reel = { client_request_id: clientRequestId, caption, media_url: mediaUrl };
+  await writeState(state);
+  const result = await request(state.api, "/v1/social/posts", {
+    token: state.api_token,
+    profileId: state.profile_id,
+    method: "POST",
+    body: {
+      client_request_id: clientRequestId,
+      caption,
+      shared_link_id: null,
+      visibility: "private",
+      media: [{ type: "video", url: mediaUrl, poster_url: posterUrl, width: 1080, height: 1920, duration_ms: durationMs }],
+    },
+  });
+  delete state.pending_reel;
+  await writeState(state);
+  console.log(JSON.stringify(result));
+}
+
+async function promote() {
+  const state = await readState();
+  const postId = valueAfter("--post-id");
+  const visibility = valueAfter("--visibility");
+  if (!postId || !["followers", "public"].includes(visibility)) {
+    throw new Error("promote requires --post-id and --visibility followers|public");
+  }
+  const result = await request(state.api, `/v1/social/posts/${postId}/visibility`, {
+    token: state.api_token,
+    profileId: state.profile_id,
+    method: "PUT",
+    body: { visibility },
+  });
   console.log(JSON.stringify(result));
 }
 
@@ -161,9 +251,11 @@ async function verifyWebhook() {
   const supplied = valueAfter("--signature")?.replace(/^sha256=/, "");
   if (!supplied || !/^[0-9a-f]{64}$/i.test(supplied)) throw new Error("--signature must be sha256=<64 hex characters>");
   const body = await readStdin();
-  const expected = createHmac("sha256", state.webhook_secret).update(body).digest();
   const actual = Buffer.from(supplied, "hex");
-  if (!timingSafeEqual(expected, actual)) throw new Error("webhook signature is invalid");
+  const decoded = Buffer.from(state.webhook_secret, "base64url");
+  const encodedExpected = createHmac("sha256", decoded).update(body).digest();
+  const legacyExpected = createHmac("sha256", state.webhook_secret).update(body).digest();
+  if (!timingSafeEqual(encodedExpected, actual) && !timingSafeEqual(legacyExpected, actual)) throw new Error("webhook signature is invalid");
   // Replays: a valid delivery id seen before is refused. Only after the signature checks out,
   // so a forged request can't poison the list.
   const delivery = valueAfter("--delivery");
@@ -213,7 +305,10 @@ async function install() {
 try {
   if (command === "install") await install();
   else if (command === "onboard") await onboard();
+  else if (command === "connect") await connect();
   else if (command === "post") await post();
+  else if (command === "reel") await reel();
+  else if (command === "promote") await promote();
   else if (command === "suggest") await suggest();
   else if (command === "subscribe") await subscribe();
   else if (command === "poll") await poll();

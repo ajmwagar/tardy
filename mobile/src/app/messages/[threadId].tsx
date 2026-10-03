@@ -1,7 +1,7 @@
 import { Image } from 'expo-image';
 import { router, Stack, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActionSheetIOS, Alert, AppState, FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActionSheetIOS, Alert, Animated, AppState, Easing, FlatList, KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ErrorState, Pulse, SkeletonBlock } from '@/components/states';
@@ -11,11 +11,15 @@ import type { Account, Message, Post, ThreadRef } from '@/data/types';
 import { LinkPreview } from '@/components/link-preview';
 import { ReactionChips, ReactionPicker, type ReactionAnchor } from '@/components/reactions';
 import { ThreadAvatar } from '@/components/thread-avatar';
+import { MessageAttachment } from '@/components/message-attachment';
 import { applyReaction, nextReaction, reactionOf, type ReactionKind } from '@/reactions/reactions';
 import { lastSequence, LIVE_FULL_EVERY, mergeMessages, nextCheckMs, quickCheckCursor } from '@/messages/live';
+import { acceptCommand, commandSuggestions } from '@/messages/commands';
+import { messageImages, messageSpans, type MessageImage as InlineMessageImage } from '@/messages/format';
 import { isWork, promotionNotice } from '@/share/sections';
 import { useSharedLink } from '@/share/use-shared-link';
 import { isGroup, othersIn, threadLabel } from '@/share/thread-label';
+import { parseTardyUrl } from '@/share/links';
 import { api, cacheAccounts, ensureAccounts, refreshUnread, reportError, useAccount, useStore } from '@/state/store';
 import { colors, IMAGE_TRANSITION_MS, radius, timeAgo } from '@/theme';
 
@@ -29,16 +33,15 @@ const LINK_CARD_WIDTH = 260;
  */
 type Row = Message & { pending?: boolean; failed?: boolean; event?: string };
 
-function SharedPostCard({ message }: { message: Message }) {
-  const ref = message.sharedPost;
+function NativePostCard({ postId, unavailable = false }: { postId: string; unavailable?: boolean }) {
   const [post, setPost] = useState<Post | null>(null);
-  const [hidden, setHidden] = useState(ref?.status === 'unavailable');
+  const [hidden, setHidden] = useState(unavailable);
   const author = useAccount(post?.authorId);
 
   useEffect(() => {
-    if (ref?.status !== 'available') return;
+    if (unavailable) return;
     api
-      .post(ref.postId)
+      .post(postId)
       .then(async (p) => {
         await ensureAccounts([p.authorId]);
         setPost(p);
@@ -48,9 +51,8 @@ function SharedPostCard({ message }: { message: Message }) {
         if (e instanceof TardyApiError) setHidden(true);
         else reportError(`Couldn't load a shared tardy: ${e instanceof Error ? e.message : String(e)}`);
       });
-  }, [ref]);
+  }, [postId, unavailable]);
 
-  if (!ref) return null;
   if (hidden) {
     return (
       <View style={[styles.shared, styles.sharedHidden]}>
@@ -80,13 +82,52 @@ function SharedPostCard({ message }: { message: Message }) {
   );
 }
 
+function SharedPostCard({ message }: { message: Message }) {
+  const ref = message.sharedPost;
+  if (!ref) return null;
+  return <NativePostCard postId={ref.status === 'available' ? ref.postId : ''} unavailable={ref.status === 'unavailable'} />;
+}
+
 const isUrl = (text: string) => /^https?:\/\/\S+$/.test(text.trim());
+
+function MessageText({ text, mine }: { text: string; mine: boolean }) {
+  return (
+    <Text style={mine ? styles.textMine : styles.textTheirs}>
+      {messageSpans(text).map((span, index) => (
+        <Text key={index} style={span.kind === 'code' ? (mine ? styles.codeMine : styles.codeTheirs) : undefined}>
+          {span.text}
+        </Text>
+      ))}
+    </Text>
+  );
+}
+
+function MessageImageCard({ image }: { image: InlineMessageImage }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <Pressable onPress={() => setOpen(true)} accessibilityRole="imagebutton" accessibilityLabel={`${image.alt}, open full screen`}>
+        <Image source={image.url} recyclingKey={image.url} style={styles.messageImage} contentFit="cover" cachePolicy="memory-disk" transition={IMAGE_TRANSITION_MS} />
+      </Pressable>
+      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+        <Pressable style={styles.imageModal} onPress={() => setOpen(false)} accessibilityRole="button" accessibilityLabel="Close image">
+          <Image source={image.url} style={styles.imageFull} contentFit="contain" cachePolicy="memory-disk" />
+          <View style={styles.imageClose}><Icon name="xmark" size={18} color="#fff" weight="bold" /></View>
+          <Text style={styles.imageAlt}>{image.alt}</Text>
+        </Pressable>
+      </Modal>
+    </>
+  );
+}
 
 /** A shared link as its preview card, filling in as enrichment finishes. */
 function LinkCard({ id, url }: { id: string; url: string }) {
   // A failed preview read leaves the plain card: the link itself still opens.
   const { link } = useSharedLink(id);
-  return <LinkPreview url={url} link={link} width={LINK_CARD_WIDTH} />;
+  if (!link && !isUrl(url)) return <SkeletonBlock style={{ width: LINK_CARD_WIDTH, height: 150 }} />;
+  const postId = link ? parseTardyUrl(link.canonicalUrl) : null;
+  if (postId) return <NativePostCard postId={postId} />;
+  return <LinkPreview url={link?.canonicalUrl ?? url} link={link} width={LINK_CARD_WIDTH} />;
 }
 
 const Bubble = memo(function Bubble({
@@ -98,6 +139,7 @@ const Bubble = memo(function Bubble({
   onRetry,
   onReact,
   onToggleReaction,
+  receipt,
 }: {
   row: Row;
   mine: boolean;
@@ -109,8 +151,14 @@ const Bubble = memo(function Bubble({
   /** Long-press: open the tap-back bar above this bubble. */
   onReact: (row: Row, anchor: ReactionAnchor) => void;
   onToggleReaction: (row: Row, kind: ReactionKind) => void;
+  receipt?: string;
 }) {
   const sender = useAccount(row.senderId);
+  const formatted = useMemo(() => messageImages(row.text), [row.text]);
+  const images = [
+    ...(row.media ?? []).filter((item) => item.type === 'image').map((item) => ({ url: item.url, alt: item.altText ?? 'Image attachment' })),
+    ...formatted.images.filter((item) => !(row.media ?? []).some((media) => media.url === item.url)),
+  ];
   const bubbleRef = useRef<View>(null);
   // Only delivered messages can be reacted to (a pending or failed one has no server id yet).
   const reactable = !row.pending && !row.failed && !row.id.startsWith('local-');
@@ -125,9 +173,10 @@ const Bubble = memo(function Bubble({
       <View style={[styles.bubbleColumn, mine && styles.bubbleColumnMine]}>
         {showName && !mine && sender && <Text style={styles.senderName}>{sender.handle}</Text>}
         {row.sharedPost && <SharedPostCard message={row} />}
-        {row.sharedLinkId && !row.sharedPost && isUrl(row.text) ? (
-          <LinkCard id={row.sharedLinkId} url={row.text} />
-        ) : row.text ? (
+        {row.sharedLinkId && !row.sharedPost ? <LinkCard id={row.sharedLinkId} url={isUrl(row.text) ? row.text : ''} /> : null}
+        {images.map((image) => <MessageImageCard key={image.url} image={image} />)}
+        {(row.media ?? []).filter((item) => item.type !== 'image').map((item) => <MessageAttachment key={item.assetId} media={item} />)}
+        {formatted.text && !(row.sharedLinkId && isUrl(row.text)) ? (
           <Pressable
             ref={bubbleRef}
             onPress={row.failed ? () => onRetry(row) : undefined}
@@ -136,7 +185,7 @@ const Bubble = memo(function Bubble({
             accessibilityActions={reactable ? [{ name: 'longpress', label: 'React' }] : undefined}
             onAccessibilityAction={(e) => e.nativeEvent.actionName === 'longpress' && longPress()}
             style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs, row.pending && styles.bubblePending]}>
-            <Text style={mine ? styles.textMine : styles.textTheirs}>{row.text}</Text>
+            <MessageText text={formatted.text} mine={mine} />
           </Pressable>
         ) : null}
         <ReactionChips
@@ -146,6 +195,7 @@ const Bubble = memo(function Bubble({
           align={mine ? 'flex-end' : 'flex-start'}
         />
         {row.failed && <Text style={styles.failed}>Not delivered · tap to retry</Text>}
+        {!row.failed && receipt ? <Text style={styles.receipt}>{receipt}</Text> : null}
       </View>
     </View>
   );
@@ -163,6 +213,45 @@ function ThreadSkeleton() {
   );
 }
 
+function TypingRow({ profileId }: { profileId: string }) {
+  const account = useAccount(profileId);
+  const [dots] = useState(() => [new Animated.Value(0), new Animated.Value(0), new Animated.Value(0)]);
+
+  useEffect(() => {
+    const animation = Animated.loop(
+      Animated.stagger(
+        130,
+        dots.map((dot) =>
+          Animated.sequence([
+            Animated.timing(dot, { toValue: 1, duration: 260, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+            Animated.timing(dot, { toValue: 0, duration: 260, easing: Easing.in(Easing.quad), useNativeDriver: true }),
+          ]),
+        ),
+      ),
+    );
+    animation.start();
+    return () => animation.stop();
+  }, [dots]);
+
+  return (
+    <View style={styles.typingRow} accessibilityLiveRegion="polite" accessibilityLabel={`${account?.handle ?? 'Someone'} is typing`}>
+      <Avatar account={account} size={26} />
+      <View style={styles.typingBubble}>
+        {dots.map((dot, index) => (
+          <Animated.View
+            key={index}
+            style={[
+              styles.typingDot,
+              { opacity: dot.interpolate({ inputRange: [0, 1], outputRange: [0.35, 1] }), transform: [{ translateY: dot.interpolate({ inputRange: [0, 1], outputRange: [0, -3] }) }] },
+            ]}
+          />
+        ))}
+      </View>
+      <Text style={styles.typingLabel}>{account?.handle ?? 'Someone'} is typing</Text>
+    </View>
+  );
+}
+
 export default function ThreadScreen() {
   const { threadId } = useLocalSearchParams<{ threadId: string }>();
   const insets = useSafeAreaInsets();
@@ -171,9 +260,12 @@ export default function ThreadScreen() {
   const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
+  const [typingIds, setTypingIds] = useState<string[]>([]);
   const group = thread !== null && isGroup(thread);
   const otherAccount = useAccount(thread ? othersIn(thread, meId)[0] : undefined);
   const accounts = useStore((s) => s.accounts);
+  const hasAgent = thread?.participantIds.some((id) => accounts.get(id)?.kind === 'agent') ?? false;
+  const commands = useMemo(() => hasAgent ? commandSuggestions(draft) : [], [draft, hasAgent]);
   const groupLabel = thread && group ? threadLabel(thread, meId, (id) => accounts.get(id)?.handle) : null;
   const lastReadId = useRef<string | null>(null);
 
@@ -191,12 +283,14 @@ export default function ThreadScreen() {
     inFlight.current = true;
     try {
       const full = cursor.current === 0 || checks.current++ % LIVE_FULL_EVERY === 0;
-      const [current, fetched] = await Promise.all([
+      const [current, fetched, typing] = await Promise.all([
         full ? api.thread(threadId) : Promise.resolve(null),
         api.messages(threadId, full ? undefined : quickCheckCursor(cursor.current)),
+        api.typing(threadId),
       ]);
-      await ensureAccounts([...(current?.participantIds ?? []), ...fetched.map((m) => m.senderId)]);
+      await ensureAccounts([...(current?.participantIds ?? []), ...fetched.map((m) => m.senderId), ...typing]);
       if (current) setThread(current);
+      setTypingIds(typing.filter((id) => id !== meId));
       if (fetched.some((m) => (m.sequence ?? 0) > cursor.current)) lastActivity.current = Date.now();
       cursor.current = Math.max(cursor.current, lastSequence(fetched));
       // Keep local pending/failed sends and event lines; everything else comes from the server.
@@ -220,7 +314,20 @@ export default function ThreadScreen() {
     } finally {
       inFlight.current = false;
     }
-  }, [threadId]);
+  }, [threadId, meId]);
+
+  const composing = draft.trim().length > 0;
+  const chatReady = rows !== null;
+  useEffect(() => {
+    if (!chatReady) return;
+    void api.setTyping(threadId, composing).catch(() => {});
+    if (!composing) return;
+    const renewal = setInterval(() => void api.setTyping(threadId, true).catch(() => {}), 3_000);
+    return () => {
+      clearInterval(renewal);
+      void api.setTyping(threadId, false).catch(() => {});
+    };
+  }, [threadId, composing, chatReady]);
 
   useFocusEffect(
     useCallback(() => {
@@ -276,6 +383,7 @@ export default function ThreadScreen() {
   );
 
   const data = useMemo(() => [...(rows ?? [])].reverse(), [rows]); // inverted list: newest first
+  const latestMineId = useMemo(() => [...(rows ?? [])].reverse().find((row) => row.senderId === meId && !row.event)?.id, [rows, meId]);
 
   /**
    * Adds one of the viewer's own agents. The confirmation names the agent and what it will
@@ -356,6 +464,15 @@ export default function ThreadScreen() {
       const older = data[index + 1];
       const newer = data[index - 1];
       const gap = older && Date.parse(item.createdAt) - Date.parse(older.createdAt) > BREAK_MS;
+      const recipientCount = Math.max(0, (thread?.participantIds.length ?? 1) - 1);
+      const readCount = item.readByIds?.length ?? 0;
+      const receipt = item.id === latestMineId && !item.pending
+        ? readCount >= recipientCount && recipientCount > 0
+          ? 'Read'
+          : readCount > 0
+            ? `Read by ${readCount}`
+            : 'Delivered'
+        : undefined;
       if (item.event) {
         return (
           <Text style={styles.event} accessibilityRole="text">
@@ -375,11 +492,12 @@ export default function ThreadScreen() {
             onRetry={retry}
             onReact={openPicker}
             onToggleReaction={toggleReaction}
+            receipt={receipt}
           />
         </View>
       );
     },
-    [data, meId, retry, group, openPicker, toggleReaction],
+    [data, meId, retry, group, openPicker, toggleReaction, latestMineId, thread],
   );
 
   return (
@@ -439,7 +557,27 @@ export default function ThreadScreen() {
             contentContainerStyle={styles.list}
             keyboardDismissMode="interactive"
           />
-          <View style={[styles.composer, { paddingBottom: Math.max(insets.bottom, 10) }]}>
+          {typingIds.map((id) => <TypingRow key={id} profileId={id} />)}
+          {commands.length > 0 ? (
+            <View style={styles.commandMenu} accessibilityRole="menu" accessibilityLabel="Agent commands">
+              {commands.map((item, index) => (
+                <Pressable
+                  key={item.command}
+                  style={[styles.commandRow, index === 0 && styles.commandRowSelected]}
+                  accessibilityRole="menuitem"
+                  accessibilityLabel={`${item.title}: ${item.detail}`}
+                  onPress={() => setDraft(acceptCommand(item.command))}>
+                  <View style={styles.commandGlyph}><Text style={styles.commandSlash}>/</Text></View>
+                  <View style={styles.commandCopy}>
+                    <Text style={styles.commandTitle}>{item.command} <Text style={styles.commandName}>{item.title}</Text></Text>
+                    <Text style={styles.commandDetail} numberOfLines={1}>{item.detail}</Text>
+                  </View>
+                  {index === 0 ? <Text style={styles.commandHint}>return</Text> : null}
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
+          <View style={[styles.composer, { paddingBottom: Math.max(insets.bottom, 10) }]}> 
             <TextInput
               value={draft}
               onChangeText={setDraft}
@@ -447,6 +585,11 @@ export default function ThreadScreen() {
               placeholderTextColor={colors.textTertiary}
               style={styles.input}
               multiline
+              submitBehavior={commands.length > 0 ? 'submit' : 'newline'}
+              onSubmitEditing={() => {
+                const first = commands[0];
+                if (first) setDraft(acceptCommand(first.command));
+              }}
             />
             {/* Always laid out (dimmed when empty) so the input doesn't jump wider and narrower. */}
             <PressableScale
@@ -490,7 +633,14 @@ const styles = StyleSheet.create({
   bubblePending: { opacity: 0.6 },
   textMine: { color: colors.onPrimary, fontSize: 15, lineHeight: 20 },
   textTheirs: { color: colors.text, fontSize: 15, lineHeight: 20 },
+  codeMine: { fontFamily: 'ui-monospace', backgroundColor: 'rgba(0,0,0,0.18)' },
+  codeTheirs: { fontFamily: 'ui-monospace', color: colors.primary, backgroundColor: colors.surface },
   failed: { color: colors.alarm, fontSize: 11.5 },
+  receipt: { color: colors.textTertiary, fontSize: 11.5, paddingHorizontal: 4 },
+  typingRow: { flexDirection: 'row', alignItems: 'center', gap: 7, minHeight: 38, paddingHorizontal: 16, paddingVertical: 4 },
+  typingBubble: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 12, height: 30, borderRadius: 16, backgroundColor: colors.elevated },
+  typingDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: colors.textSecondary },
+  typingLabel: { color: colors.textTertiary, fontSize: 11.5 },
   shared: { width: 230, borderRadius: radius.media, backgroundColor: colors.surface, overflow: 'hidden' },
   sharedHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, padding: 8 },
   sharedMedia: { width: 230, height: 230 * 1.25, backgroundColor: colors.elevated },
@@ -498,6 +648,15 @@ const styles = StyleSheet.create({
   sharedCaption: { color: colors.text, fontSize: 13 },
   sharedHidden: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 12 },
   sharedHiddenText: { color: colors.textTertiary, fontSize: 13, flexShrink: 1 },
+  fileCard: { width: 250, minHeight: 68, borderRadius: radius.media, backgroundColor: colors.surface, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  fileText: { flex: 1, gap: 3 },
+  fileName: { color: colors.text, fontSize: 13.5, fontWeight: '700' },
+  fileDetail: { color: colors.textTertiary, fontSize: 11 },
+  messageImage: { width: 260, height: 260, borderRadius: radius.media, backgroundColor: colors.elevated },
+  imageModal: { flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' },
+  imageFull: { width: '100%', height: '100%' },
+  imageClose: { position: 'absolute', top: 56, right: 20, width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.55)' },
+  imageAlt: { position: 'absolute', left: 20, right: 70, bottom: 42, color: '#fff', fontSize: 14 },
   composer: {
     flexDirection: 'row',
     alignItems: 'flex-end',
@@ -508,6 +667,16 @@ const styles = StyleSheet.create({
     borderTopColor: colors.separator,
     backgroundColor: colors.bg,
   },
+  commandMenu: { marginHorizontal: 12, marginBottom: 2, borderRadius: radius.media, overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth, borderColor: colors.separator, backgroundColor: colors.surface },
+  commandRow: { minHeight: 58, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.separator },
+  commandRowSelected: { backgroundColor: colors.elevated },
+  commandGlyph: { width: 30, height: 30, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.primary },
+  commandSlash: { color: colors.onPrimary, fontWeight: '900', fontSize: 18 },
+  commandCopy: { flex: 1, gap: 2 },
+  commandTitle: { color: colors.primary, fontSize: 13.5, fontWeight: '800', fontFamily: 'ui-monospace' },
+  commandName: { color: colors.text, fontFamily: undefined, fontWeight: '700' },
+  commandDetail: { color: colors.textTertiary, fontSize: 11.5 },
+  commandHint: { color: colors.textTertiary, fontSize: 10, fontFamily: 'ui-monospace', textTransform: 'uppercase' },
   input: {
     flex: 1,
     minHeight: 40,

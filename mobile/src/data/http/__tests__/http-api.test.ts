@@ -57,11 +57,15 @@ describe('HttpTardyApi: routes', () => {
     ['account by id', (api) => api.account('a b'), 'GET', '/v1/profiles/by-id/a%20b'],
     ['accounts batch', (api) => api.accounts(['a', 'b']), 'GET', '/v1/profiles?ids=a%2Cb'],
     ['sendMessage', (api) => api.sendMessage('t1', 'hi'), 'POST', '/v1/social/conversations/t1/messages', { body: 'hi' }],
+    ['typing', (api) => api.typing('t1'), 'GET', '/v1/social/conversations/t1/typing'],
+    ['start typing', (api) => api.setTyping('t1', true), 'PUT', '/v1/social/conversations/t1/typing'],
+    ['stop typing', (api) => api.setTyping('t1', false), 'DELETE', '/v1/social/conversations/t1/typing'],
     ['markThreadRead', (api) => api.markThreadRead('t1', 'm9'), 'POST', '/v1/social/conversations/t1/read', { through_message_id: 'm9' }],
     ['addAgent', (api) => api.addAgent('t1', 'a2'), 'POST', '/v1/social/conversations/t1/agents', { agent_profile_id: 'a2', include_anchor_share: true }],
     ['createSharedLink', (api) => api.createSharedLink('https://youtu.be/x'), 'POST', '/v1/social/shared-links', { url: 'https://youtu.be/x' }],
     ['addComment', (api) => api.addComment('p1', 'hey @a2', ['a2']), 'POST', '/v1/social/posts/p1/comments', { body: 'hey @a2', mentioned_profile_ids: ['a2'] }],
     ['claimAgent', (api) => api.claimAgent(' TARDY-7Q4K '), 'POST', '/v1/onboarding/tardy-claims', { code: 'TARDY-7Q4K' }],
+    ['createAgentPairing', (api) => api.createAgentPairing(), 'POST', '/v1/onboarding/tardies', {}],
     ['markNotificationsRead', (api) => api.markNotificationsRead('1970-01-01T00:00:01.000Z'), 'POST', '/v1/notifications/read', { through_at_ms: 1000 }],
     ['setSaved on', (api) => api.setSaved('p1', true), 'PUT', '/v1/saved-posts/p1'],
     ['setSaved off', (api) => api.setSaved('p1', false), 'DELETE', '/v1/saved-posts/p1'],
@@ -69,8 +73,11 @@ describe('HttpTardyApi: routes', () => {
     ['setFollowing on', (api) => api.setFollowing('acct-2', true), 'PUT', '/v1/profiles/acct-2/follow'],
     ['setNotificationDefault', (api) => api.setNotificationDefault('review_requested', false), 'PUT', '/v1/push/preferences', { category: 'review_requested', enabled: false }],
     ['setNotificationOverride clear', (api) => api.setNotificationOverride('proj', 'shipped', null), 'PUT', '/v1/push/preferences/projects/proj', { category: 'shipped', enabled: null }],
-    ['registerPushToken', (api) => api.registerPushToken({ token: 'ExponentPushToken[x]', provider: 'expo', platform: 'ios' }), 'POST', '/v1/push/devices', { token: 'ExponentPushToken[x]', provider: 'expo', platform: 'ios' }],
+    ['registerPushToken', (api) => api.registerPushToken({ token: 'ab'.repeat(32), environment: 'sandbox', topic: 'dev.fpl.tardy' }), 'POST', '/v1/push/devices', { token: 'ab'.repeat(32), environment: 'sandbox', topic: 'dev.fpl.tardy' }],
     ['updateProfile', (api) => api.updateProfile({ name: 'Ada L' }), 'PATCH', '/v1/profile', { display_name: 'Ada L' }],
+    ['profileAgents', (api) => api.profileAgents('person 1'), 'GET', '/v1/profiles/by-id/person%201/agents'],
+    ['updateAgentProfile', (api) => api.updateAgentProfile('agent 1', { name: 'Builder', handle: 'builder' }), 'PATCH', '/v1/agents/agent%201/profile', { display_name: 'Builder', handle: 'builder' }],
+    ['generateAgentAvatar', (api) => api.generateAgentAvatar('agent 1'), 'POST', '/v1/agents/agent%201/avatar/generate'],
     ['setVisibility', (api) => api.setVisibility('proj', 'team'), 'PUT', '/v1/profiles/by-id/proj/visibility', { visibility: 'team' }],
     [
       'logEngagement',
@@ -319,23 +326,40 @@ describe('HttpTardyApi: decoding', () => {
 
   it('openThread starts with the person, then adds agents', async () => {
     const { api, calls } = await signedInClient(
-      { status: 200, body: [] },
       { status: 201, body: { id: 't9', mode: 'dm', participants: ['acct-1', 'h2'] } },
       { status: 200, body: { id: 't9', mode: 'work', participants: ['acct-1', 'h2', 'a3'] } },
     );
     const thread = await api.openThread([{ id: 'a3', kind: 'agent' }, { id: 'h2', kind: 'human' }]);
     expect(thread).toEqual({ id: 't9', kind: 'work', participantIds: ['acct-1', 'h2', 'a3'] });
     expect(calls.map((c) => [c.method, c.url.replace(BASE, '/'), c.body])).toEqual([
-      ['GET', '/v1/social/conversations', undefined],
-      ['POST', '/v1/social/conversations', { recipient_profile_id: 'h2' }],
+      ['POST', '/v1/social/conversations', { participant_profile_ids: ['h2'] }],
       ['POST', '/v1/social/conversations/t9/agents', { agent_profile_id: 'a3', include_anchor_share: true }],
     ]);
   });
 
-  it('openThread refuses a group of people instead of dropping one', async () => {
-    const { api, calls } = await signedInClient();
-    await expect(api.openThread([{ id: 'h2', kind: 'human' }, { id: 'h3', kind: 'human' }])).rejects.toMatchObject({ code: 'invalid' });
-    expect(calls).toHaveLength(0);
+  it('openThread creates all people in one group request', async () => {
+    const { api, calls } = await signedInClient(
+      { status: 201, body: { id: 'tg', mode: 'dm', participants: ['acct-1', 'h2', 'h3'] } },
+    );
+    await expect(api.openThread([{ id: 'h2', kind: 'human' }, { id: 'h3', kind: 'human' }])).resolves.toMatchObject({ id: 'tg' });
+    expect(calls[0].body).toEqual({ participant_profile_ids: ['h2', 'h3'] });
+  });
+
+  it('renames groups and adds or removes participants in place', async () => {
+    const thread = { id: 'tg', mode: 'dm', title: 'Ship Room', participants: ['acct-1', 'h2', 'h3'] };
+    const { api, calls } = await signedInClient(
+      { status: 200, body: thread },
+      { status: 200, body: thread },
+      { status: 200, body: { ...thread, participants: ['acct-1', 'h2'] } },
+    );
+    await api.renameThread('tg', 'Ship Room');
+    await api.addThreadParticipant('tg', 'h3');
+    await api.removeThreadParticipant('tg', 'h3');
+    expect(calls.map((call) => [call.method, call.url.replace(BASE, '/'), call.body])).toEqual([
+      ['PUT', '/v1/social/conversations/tg', { title: 'Ship Room' }],
+      ['POST', '/v1/social/conversations/tg/participants', { profile_id: 'h3' }],
+      ['DELETE', '/v1/social/conversations/tg/participants/h3', undefined],
+    ]);
   });
 });
 

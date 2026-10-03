@@ -1,7 +1,9 @@
 use async_trait::async_trait;
 use rusty_s3::{Bucket, Credentials, S3Action, UrlStyle};
 use serde::{Deserialize, Serialize};
+use sqlx::{PgPool, Row};
 use std::collections::{BTreeMap, HashMap};
+use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use utoipa::ToSchema;
@@ -17,9 +19,23 @@ pub enum MediaKind {
     AudioOriginal,
     Poster,
     VideoOriginal,
+    Document,
+    MessageAttachment,
 }
 
 impl MediaKind {
+    fn db_name(self) -> &'static str {
+        match self {
+            Self::Scene => "scene",
+            Self::Voiceover => "voiceover",
+            Self::AudioOriginal => "audio_original",
+            Self::Poster => "poster",
+            Self::VideoOriginal => "video_original",
+            Self::Document => "document",
+            Self::MessageAttachment => "message_attachment",
+        }
+    }
+
     fn max_bytes(self) -> u64 {
         match self {
             Self::Scene => 1 << 20,
@@ -27,6 +43,8 @@ impl MediaKind {
             Self::Voiceover => 25 << 20,
             Self::AudioOriginal => 500 << 20,
             Self::VideoOriginal => 250 << 20,
+            Self::Document => 50 << 20,
+            Self::MessageAttachment => 250 << 20,
         }
     }
     fn allows(self, mime: &str) -> bool {
@@ -39,6 +57,24 @@ impl MediaKind {
                 "audio/mp4" | "audio/mpeg" | "audio/ogg" | "audio/wav" | "audio/flac"
             ),
             Self::VideoOriginal => matches!(mime, "video/mp4" | "video/quicktime" | "video/webm"),
+            Self::Document => matches!(mime, "application/pdf" | "text/markdown" | "text/plain"),
+            Self::MessageAttachment => matches!(
+                mime,
+                "image/jpeg"
+                    | "image/png"
+                    | "image/webp"
+                    | "video/mp4"
+                    | "video/quicktime"
+                    | "video/webm"
+                    | "audio/mp4"
+                    | "audio/mpeg"
+                    | "audio/ogg"
+                    | "audio/wav"
+                    | "audio/flac"
+                    | "application/pdf"
+                    | "text/markdown"
+                    | "text/plain"
+            ),
         }
     }
     fn key_segment(self) -> &'static str {
@@ -48,6 +84,8 @@ impl MediaKind {
             Self::AudioOriginal => "music-originals",
             Self::Poster => "poster",
             Self::VideoOriginal => "video",
+            Self::Document => "documents",
+            Self::MessageAttachment => "message-attachments",
         }
     }
 }
@@ -143,12 +181,94 @@ pub trait ObjectStore: Send + Sync {
         expires: Duration,
     ) -> Result<(String, String, BTreeMap<String, String>), MediaError>;
     async fn head(&self, key: &str) -> Result<ObjectMetadata, MediaError>;
+    async fn presign_get(&self, key: &str, expires: Duration) -> Result<String, MediaError>;
 }
 
 pub struct R2ObjectStore {
     bucket: Bucket,
     credentials: Credentials,
     client: reqwest::Client,
+}
+
+/// Development object store backed by `TARDY_LOCAL_BLOB_DIR`. Uploads still travel
+/// through the same authorize -> PUT -> complete contract as R2, so local dogfood
+/// exercises the production boundary instead of inventing a second client flow.
+pub struct LocalObjectStore {
+    root: PathBuf,
+    public_base_url: String,
+}
+
+impl LocalObjectStore {
+    fn from_env() -> Option<Self> {
+        Some(Self {
+            root: std::env::var_os("TARDY_LOCAL_BLOB_DIR")?.into(),
+            public_base_url: std::env::var("TARDY_PUBLIC_BASE_URL").ok()?,
+        })
+    }
+
+    fn path(&self, key: &str) -> Result<PathBuf, MediaError> {
+        if key
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
+        {
+            return Err(MediaError::Forbidden);
+        }
+        Ok(self.root.join("uploads").join(key))
+    }
+}
+
+#[async_trait]
+impl ObjectStore for LocalObjectStore {
+    async fn presign_put(
+        &self,
+        key: &str,
+        content_type: &str,
+        byte_length: u64,
+        sha256_base64: Option<&str>,
+        _expires: Duration,
+    ) -> Result<(String, String, BTreeMap<String, String>), MediaError> {
+        let mut headers = BTreeMap::from([
+            ("content-type".into(), content_type.into()),
+            ("content-length".into(), byte_length.to_string()),
+        ]);
+        if let Some(checksum) = sha256_base64 {
+            headers.insert("x-tardy-checksum-sha256".into(), checksum.into());
+        }
+        Ok((
+            "PUT".into(),
+            format!(
+                "{}/v1/dev/uploads/{key}",
+                self.public_base_url.trim_end_matches('/')
+            ),
+            headers,
+        ))
+    }
+
+    async fn head(&self, key: &str) -> Result<ObjectMetadata, MediaError> {
+        let path = self.path(key)?;
+        let metadata = tokio::fs::metadata(&path)
+            .await
+            .map_err(|error| MediaError::ObjectStore(error.to_string()))?;
+        let content_type = tokio::fs::read_to_string(path.with_extension("tardy-content-type"))
+            .await
+            .map_err(|error| MediaError::ObjectStore(error.to_string()))?;
+        let sha256_base64 = tokio::fs::read_to_string(path.with_extension("tardy-sha256"))
+            .await
+            .ok();
+        Ok(ObjectMetadata {
+            content_type: Some(content_type),
+            byte_length: metadata.len(),
+            sha256_base64,
+        })
+    }
+
+    async fn presign_get(&self, key: &str, _expires: Duration) -> Result<String, MediaError> {
+        self.path(key)?;
+        Ok(format!(
+            "{}/v1/dev/uploads/{key}",
+            self.public_base_url.trim_end_matches('/')
+        ))
+    }
 }
 
 impl R2ObjectStore {
@@ -172,6 +292,42 @@ impl R2ObjectStore {
                 .build()
                 .map_err(|error| MediaError::ObjectStore(error.to_string()))?,
         }))
+    }
+
+    /// Upload trusted server-generated bytes directly. Client uploads still use the
+    /// quarantine/authorize flow; workers use this narrow path for derived cache objects.
+    pub async fn put_bytes(
+        &self,
+        key: &str,
+        content_type: &str,
+        bytes: Vec<u8>,
+    ) -> Result<(), MediaError> {
+        let (_, url, headers) = self
+            .presign_put(
+                key,
+                content_type,
+                bytes.len() as u64,
+                None,
+                Duration::from_secs(300),
+            )
+            .await?;
+        let mut request = self.client.put(url).body(bytes);
+        for (name, value) in headers {
+            if !name.eq_ignore_ascii_case("host") {
+                request = request.header(name, value);
+            }
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|error| MediaError::ObjectStore(error.to_string()))?;
+        if !response.status().is_success() {
+            return Err(MediaError::ObjectStore(format!(
+                "HTTP {}",
+                response.status()
+            )));
+        }
+        Ok(())
     }
 }
 
@@ -236,10 +392,19 @@ impl ObjectStore for R2ObjectStore {
                 .map(str::to_owned),
         })
     }
+
+    async fn presign_get(&self, key: &str, expires: Duration) -> Result<String, MediaError> {
+        Ok(self
+            .bucket
+            .get_object(Some(&self.credentials), key)
+            .sign(expires)
+            .into())
+    }
 }
 
 pub struct MediaService {
     object_store: Option<Arc<dyn ObjectStore>>,
+    pool: Option<PgPool>,
     sessions: RwLock<HashMap<Uuid, UploadSession>>,
 }
 
@@ -247,13 +412,23 @@ impl MediaService {
     pub fn new(object_store: Option<Arc<dyn ObjectStore>>) -> Self {
         Self {
             object_store,
+            pool: None,
             sessions: RwLock::new(HashMap::new()),
         }
     }
     pub fn from_env() -> Result<Self, MediaError> {
-        Ok(Self::new(
-            R2ObjectStore::from_env()?.map(|store| Arc::new(store) as Arc<dyn ObjectStore>),
-        ))
+        let store = R2ObjectStore::from_env()?
+            .map(|store| Arc::new(store) as Arc<dyn ObjectStore>)
+            .or_else(|| {
+                LocalObjectStore::from_env().map(|store| Arc::new(store) as Arc<dyn ObjectStore>)
+            });
+        Ok(Self::new(store))
+    }
+
+    pub fn from_env_with_pool(pool: PgPool) -> Result<Self, MediaError> {
+        let mut service = Self::from_env()?;
+        service.pool = Some(pool);
+        Ok(service)
     }
 
     pub async fn authorize(
@@ -287,23 +462,38 @@ impl MediaService {
                 Duration::from_millis(UPLOAD_TTL_MS),
             )
             .await?;
-        self.sessions
-            .write()
-            .map_err(|_| MediaError::Poisoned)?
-            .insert(
-                id,
-                UploadSession {
+        if let Some(pool) = &self.pool {
+            sqlx::query("INSERT INTO media_upload_sessions (id,profile_id,kind,object_key,content_type,byte_length,sha256_base64,expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7,to_timestamp($8::double precision/1000.0))")
+                .bind(id)
+                .bind(actor)
+                .bind(intent.kind.db_name())
+                .bind(&key)
+                .bind(&intent.content_type)
+                .bind(intent.byte_length as i64)
+                .bind(&intent.sha256_base64)
+                .bind(expires_at_ms as f64)
+                .execute(pool)
+                .await
+                .map_err(|error| MediaError::ObjectStore(format!("persist upload: {error}")))?;
+        } else {
+            self.sessions
+                .write()
+                .map_err(|_| MediaError::Poisoned)?
+                .insert(
                     id,
-                    profile_id: actor,
-                    kind: intent.kind,
-                    object_key: key,
-                    content_type: intent.content_type,
-                    byte_length: intent.byte_length,
-                    sha256_base64: intent.sha256_base64,
-                    expires_at_ms,
-                    completed: None,
-                },
-            );
+                    UploadSession {
+                        id,
+                        profile_id: actor,
+                        kind: intent.kind,
+                        object_key: key,
+                        content_type: intent.content_type,
+                        byte_length: intent.byte_length,
+                        sha256_base64: intent.sha256_base64,
+                        expires_at_ms,
+                        completed: None,
+                    },
+                );
+        }
         Ok(UploadAuthorization {
             id,
             method,
@@ -320,13 +510,37 @@ impl MediaService {
         id: Uuid,
         now_ms: u64,
     ) -> Result<MediaAsset, MediaError> {
-        let session = self
-            .sessions
-            .read()
-            .map_err(|_| MediaError::Poisoned)?
-            .get(&id)
-            .cloned()
-            .ok_or(MediaError::NotFound)?;
+        let session = if let Some(pool) = &self.pool {
+            let row = sqlx::query("SELECT id,profile_id,kind,object_key,content_type,byte_length,sha256_base64,(extract(epoch from expires_at)*1000)::double precision AS expires_at_ms,completed_asset_id FROM media_upload_sessions WHERE id=$1")
+                .bind(id).fetch_optional(pool).await
+                .map_err(|error| MediaError::ObjectStore(format!("read upload: {error}")))?
+                .ok_or(MediaError::NotFound)?;
+            let kind = parse_kind(row.try_get::<String, _>("kind").map_err(db_media)?.as_str())?;
+            let completed_id: Option<Uuid> = row.try_get("completed_asset_id").map_err(db_media)?;
+            let completed = if let Some(asset_id) = completed_id {
+                Some(self.asset(asset_id).await?)
+            } else {
+                None
+            };
+            UploadSession {
+                id: row.try_get("id").map_err(db_media)?,
+                profile_id: row.try_get("profile_id").map_err(db_media)?,
+                kind,
+                object_key: row.try_get("object_key").map_err(db_media)?,
+                content_type: row.try_get("content_type").map_err(db_media)?,
+                byte_length: row.try_get::<i64, _>("byte_length").map_err(db_media)? as u64,
+                sha256_base64: row.try_get("sha256_base64").map_err(db_media)?,
+                expires_at_ms: row.try_get::<f64, _>("expires_at_ms").map_err(db_media)? as u64,
+                completed,
+            }
+        } else {
+            self.sessions
+                .read()
+                .map_err(|_| MediaError::Poisoned)?
+                .get(&id)
+                .cloned()
+                .ok_or(MediaError::NotFound)?
+        };
         if session.profile_id != actor {
             return Err(MediaError::Forbidden);
         }
@@ -356,16 +570,114 @@ impl MediaService {
             content_type: session.content_type,
             byte_length: session.byte_length,
             sha256_base64: session.sha256_base64,
-            status: MediaStatus::Quarantined,
+            status: if matches!(
+                session.kind,
+                MediaKind::Poster | MediaKind::MessageAttachment
+            ) {
+                MediaStatus::Ready
+            } else {
+                MediaStatus::Quarantined
+            },
         };
-        self.sessions
-            .write()
-            .map_err(|_| MediaError::Poisoned)?
-            .get_mut(&id)
-            .ok_or(MediaError::NotFound)?
-            .completed = Some(asset.clone());
+        if let Some(pool) = &self.pool {
+            sqlx::query("INSERT INTO media_assets (id,profile_id,kind,object_key,content_type,byte_length,sha256_base64,status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (id) DO NOTHING")
+                .bind(asset.id).bind(asset.profile_id).bind(asset.kind.db_name()).bind(&asset.object_key).bind(&asset.content_type).bind(asset.byte_length as i64).bind(&asset.sha256_base64).bind(status_name(asset.status))
+                .execute(pool).await.map_err(|error| MediaError::ObjectStore(format!("persist asset: {error}")))?;
+            sqlx::query("UPDATE media_upload_sessions SET completed_asset_id=$2 WHERE id=$1")
+                .bind(id)
+                .bind(asset.id)
+                .execute(pool)
+                .await
+                .map_err(|error| MediaError::ObjectStore(format!("complete upload: {error}")))?;
+        } else {
+            self.sessions
+                .write()
+                .map_err(|_| MediaError::Poisoned)?
+                .get_mut(&id)
+                .ok_or(MediaError::NotFound)?
+                .completed = Some(asset.clone());
+        }
         Ok(asset)
     }
+
+    pub async fn ready_asset(&self, actor: Uuid, id: Uuid) -> Result<MediaAsset, MediaError> {
+        let asset = self.asset(id).await?;
+        if asset.profile_id != actor {
+            return Err(MediaError::Forbidden);
+        }
+        if asset.status != MediaStatus::Ready {
+            return Err(MediaError::Forbidden);
+        }
+        Ok(asset)
+    }
+
+    pub async fn delivery_url(&self, id: Uuid) -> Result<String, MediaError> {
+        let asset = self.asset(id).await?;
+        if asset.status != MediaStatus::Ready {
+            return Err(MediaError::Forbidden);
+        }
+        self.object_store
+            .as_ref()
+            .ok_or(MediaError::Unconfigured)?
+            .presign_get(&asset.object_key, Duration::from_secs(5 * 60))
+            .await
+    }
+
+    async fn asset(&self, id: Uuid) -> Result<MediaAsset, MediaError> {
+        if let Some(pool) = &self.pool {
+            let row = sqlx::query("SELECT id,profile_id,kind,object_key,content_type,byte_length,sha256_base64,status FROM media_assets WHERE id=$1")
+                .bind(id).fetch_optional(pool).await.map_err(|error| MediaError::ObjectStore(format!("read asset: {error}")))?.ok_or(MediaError::NotFound)?;
+            return Ok(MediaAsset {
+                id: row.try_get("id").map_err(db_media)?,
+                profile_id: row.try_get("profile_id").map_err(db_media)?,
+                kind: parse_kind(row.try_get::<String, _>("kind").map_err(db_media)?.as_str())?,
+                object_key: row.try_get("object_key").map_err(db_media)?,
+                content_type: row.try_get("content_type").map_err(db_media)?,
+                byte_length: row.try_get::<i64, _>("byte_length").map_err(db_media)? as u64,
+                sha256_base64: row.try_get("sha256_base64").map_err(db_media)?,
+                status: parse_status(
+                    row.try_get::<String, _>("status")
+                        .map_err(db_media)?
+                        .as_str(),
+                )?,
+            });
+        }
+        self.sessions
+            .read()
+            .map_err(|_| MediaError::Poisoned)?
+            .values()
+            .find_map(|session| session.completed.clone().filter(|asset| asset.id == id))
+            .ok_or(MediaError::NotFound)
+    }
+}
+
+fn parse_kind(value: &str) -> Result<MediaKind, MediaError> {
+    match value {
+        "structured" | "scene" => Ok(MediaKind::Scene),
+        "audio" | "voiceover" => Ok(MediaKind::Voiceover),
+        "music-originals" | "audio_original" => Ok(MediaKind::AudioOriginal),
+        "poster" => Ok(MediaKind::Poster),
+        "video" | "video_original" => Ok(MediaKind::VideoOriginal),
+        "documents" | "document" => Ok(MediaKind::Document),
+        "message-attachments" | "message_attachment" => Ok(MediaKind::MessageAttachment),
+        _ => Err(MediaError::MetadataMismatch),
+    }
+}
+fn status_name(value: MediaStatus) -> &'static str {
+    match value {
+        MediaStatus::Quarantined => "quarantined",
+        MediaStatus::Ready => "ready",
+    }
+}
+fn parse_status(value: &str) -> Result<MediaStatus, MediaError> {
+    match value {
+        "quarantined" => Ok(MediaStatus::Quarantined),
+        "ready" => Ok(MediaStatus::Ready),
+        _ => Err(MediaError::MetadataMismatch),
+    }
+}
+fn db_media(error: sqlx::Error) -> MediaError {
+    MediaError::ObjectStore(format!("database: {error}"))
 }
 
 #[cfg(test)]
@@ -400,6 +712,9 @@ mod tests {
         async fn head(&self, _: &str) -> Result<ObjectMetadata, MediaError> {
             Ok(self.metadata.lock().unwrap().clone().unwrap())
         }
+        async fn presign_get(&self, key: &str, _: Duration) -> Result<String, MediaError> {
+            Ok(format!("https://r2.test/{key}"))
+        }
     }
 
     #[tokio::test]
@@ -426,6 +741,43 @@ mod tests {
         let asset = service.complete(profile, auth.id, 2).await.unwrap();
         assert_eq!(asset.status, MediaStatus::Quarantined);
         assert_eq!(service.complete(profile, auth.id, 3).await.unwrap(), asset);
+    }
+
+    #[tokio::test]
+    async fn private_message_files_are_ready_but_executables_are_rejected() {
+        let service = MediaService::new(Some(Arc::new(Fake {
+            metadata: Mutex::new(None),
+        })));
+        let profile = Uuid::new_v4();
+        let auth = service
+            .authorize(
+                profile,
+                UploadIntent {
+                    profile_id: profile,
+                    kind: MediaKind::MessageAttachment,
+                    content_type: "application/pdf".into(),
+                    byte_length: 42,
+                    sha256_base64: None,
+                },
+                1,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            service.complete(profile, auth.id, 2).await.unwrap().status,
+            MediaStatus::Ready
+        );
+        let executable = UploadIntent {
+            profile_id: profile,
+            kind: MediaKind::MessageAttachment,
+            content_type: "application/x-mach-binary".into(),
+            byte_length: 42,
+            sha256_base64: None,
+        };
+        assert!(matches!(
+            service.authorize(profile, executable, 3).await,
+            Err(MediaError::UnsupportedType)
+        ));
     }
 
     #[tokio::test]

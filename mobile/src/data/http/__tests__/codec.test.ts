@@ -121,6 +121,38 @@ describe('wire types', () => {
     expect(W.message({ ...wire, body: 'https://youtu.be/x', shared_link_id: 'l1' }, 'r')).toMatchObject({ text: 'https://youtu.be/x', sharedLinkId: 'l1' });
   });
 
+  it('decodes private message image attachments', () => {
+    const wire = {
+      id: 'm-image', conversation_id: 't1', sequence: 5, sender_profile_id: 'agent', body: '',
+      shared_link_id: null, created_at: '2026-09-30T12:00:00.5+00:00',
+      media: [{ asset_id: 'asset-1', type: 'image', url: 'https://r2.test/signed', width: 1200, height: 800, alt_text: 'A diagram' }],
+    };
+    expect(W.message(wire, 'r').media).toEqual([
+      { assetId: 'asset-1', type: 'image', url: 'https://r2.test/signed', width: 1200, height: 800, altText: 'A diagram' },
+    ]);
+  });
+
+  it('decodes typed private agent attachments', () => {
+    const wire = {
+      id: 'm-file', conversation_id: 't1', sequence: 6, sender_profile_id: 'agent', body: 'Listen to this',
+      shared_link_id: null, created_at: '2026-09-30T12:00:00.5+00:00',
+      media: [{ asset_id: 'asset-2', type: 'audio', url: 'https://r2.test/audio', content_type: 'audio/mpeg', byte_length: 4096, width: null, height: null, file_name: 'mix.mp3', alt_text: 'New mix' }],
+    };
+    expect(W.message(wire, 'r').media).toEqual([
+      { assetId: 'asset-2', type: 'audio', url: 'https://r2.test/audio', contentType: 'audio/mpeg', byteLength: 4096, fileName: 'mix.mp3', altText: 'New mix' },
+    ]);
+  });
+
+  it('decodes enriched shared-link media and caption', () => {
+    expect(W.sharedLink({
+      id: 'l1', canonical_url: 'https://instagram.com/reel/1', provider: 'instagram', status: 'ready',
+      title: 'A reel', caption: 'What the agent should know', thumbnail_url: 'https://thumb', media_url: 'https://api/media.mp4',
+    }, 'r')).toEqual({
+      id: 'l1', canonicalUrl: 'https://instagram.com/reel/1', provider: 'instagram', status: 'ready',
+      title: 'A reel', caption: 'What the agent should know', thumbnailUrl: 'https://thumb', mediaUrl: 'https://api/media.mp4',
+    });
+  });
+
   it('maps the social Comment and keeps resolved mentions', () => {
     const wire = { id: 'c1', post_id: 'p1', author_profile_id: 'a1', body: 'hey', mentioned_profile_ids: ['a2'], created_at: '1970-01-01T00:00:00Z' };
     expect(W.comment(wire, 'r')).toEqual({ id: 'c1', postId: 'p1', authorId: 'a1', text: 'hey', createdAt: '1970-01-01T00:00:00.000Z', likeCount: 0, mentionedIds: ['a2'] });
@@ -131,7 +163,18 @@ describe('wire types', () => {
     const n = { id: 'n', actor_id: 'a', text: 't', created_at_ms: 0, read: false };
     expect(W.notifications([{ ...n, kind: 'like' }, { ...n, kind: 'poke' }], 'r').map((x) => x.kind)).toEqual(['like']);
 
-    const defaults = { like: true, comment: true, follow: true, mention: true, shipped: true, blocked: true, review_requested: true, poke: false };
+    const defaults = {
+      like: true,
+      comment: true,
+      follow: true,
+      mention: true,
+      message: true,
+      conversation_invite: true,
+      shipped: true,
+      blocked: true,
+      review_requested: true,
+      poke: false,
+    };
     const prefs = W.notificationPreferences(
       {
         defaults,

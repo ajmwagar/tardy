@@ -35,6 +35,7 @@ export const MediaCarousel = memo(function MediaCarousel({
   width,
   active,
   onIndexChange,
+  onSingleTap,
 }: {
   postId: string;
   media: MediaItem[];
@@ -42,12 +43,15 @@ export const MediaCarousel = memo(function MediaCarousel({
   /** Whether this post is the one on screen; only then does video play. */
   active: boolean;
   onIndexChange?: (index: number) => void;
+  /** Overrides video mute for contexts such as Home, where tapping a reel opens it full-screen. */
+  onSingleTap?: () => void;
 }) {
   const frame = feedFrameRatio(media);
   const height = width / frame;
   const [index, setIndex] = useState(0);
   const muted = useStore((s) => s.muted);
   const hasVideo = media.some((m) => m.type === 'video');
+  const singleTap = onSingleTap ?? (hasVideo ? toggleMuted : undefined);
 
   const onScrollEnd = useCallback(
     (e: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -84,7 +88,10 @@ export const MediaCarousel = memo(function MediaCarousel({
   );
 
   return (
-    <DoubleTapLike postId={postId} onSingleTap={hasVideo ? toggleMuted : undefined}>
+    <DoubleTapLike
+      postId={postId}
+      onSingleTap={singleTap}
+      singleTapIcon={!onSingleTap && hasVideo ? (muted ? 'speaker.wave.2.fill' : 'speaker.slash.fill') : undefined}>
       {media.length === 1 ? (
         renderItem({ item: media[0], index: 0 })
       ) : (

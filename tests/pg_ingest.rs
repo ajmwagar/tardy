@@ -105,7 +105,7 @@ async fn polling_is_deduplicated_and_enqueues_exactly_once() {
     push.set_preference(
         account_id,
         NotificationPreference {
-            category: "hyper_tardy".into(),
+            category: "mention".into(),
             enabled: true,
         },
     )
@@ -134,7 +134,10 @@ async fn polling_is_deduplicated_and_enqueues_exactly_once() {
     assert_eq!(notifications.len(), 1);
     assert_eq!(notifications[0].actor_id, actor_id);
     assert!(!notifications[0].read);
-    push.mark_notifications_read(account_id, Utc::now())
+    // The API serializes timestamps to milliseconds. The persisted row may have finer
+    // precision, but an inclusive read watermark must still cover that same millisecond.
+    let through = chrono::DateTime::from_timestamp_millis(notifications[0].created_at_ms).unwrap();
+    push.mark_notifications_read(account_id, through)
         .await
         .unwrap();
     assert!(push.notifications(account_id, 50).await.unwrap()[0].read);

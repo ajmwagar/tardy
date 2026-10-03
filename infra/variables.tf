@@ -65,3 +65,32 @@ variable "api_memory_mib" {
   default     = 512
   description = "Requested API memory in MiB."
 }
+
+variable "stripe_binding_ref" {
+  type        = string
+  default     = null
+  nullable    = true
+  description = "Opaque Shroud binding containing Stripe runtime environment values. This is an identifier, never a Stripe secret."
+  validation {
+    condition     = var.stripe_binding_ref == null || startswith(var.stripe_binding_ref, "binding://")
+    error_message = "Stripe credentials must be supplied through an opaque binding:// reference."
+  }
+}
+
+variable "stripe_real_tardy_price_id" {
+  type        = string
+  description = "Stripe Price ID for the $20/month REAL Tardy subscription. Price IDs are public identifiers."
+  validation {
+    condition     = startswith(var.stripe_real_tardy_price_id, "price_")
+    error_message = "REAL Tardy must reference a Stripe price_ identifier."
+  }
+}
+
+variable "stripe_super_tardy_price_id" {
+  type        = string
+  description = "Stripe Price ID for the $250 one-time SUPER Tardy purchase. Price IDs are public identifiers."
+  validation {
+    condition     = startswith(var.stripe_super_tardy_price_id, "price_")
+    error_message = "SUPER Tardy must reference a Stripe price_ identifier."
+  }
+}

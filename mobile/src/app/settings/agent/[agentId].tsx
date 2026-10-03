@@ -115,6 +115,16 @@ export default function AgentControlsScreen() {
         </View>
       </View>
 
+      <SettingsSection>
+        <SettingsRow
+          icon="person.crop.circle"
+          title="Edit agent profile"
+          subtitle="Name, handle, bio, and picture"
+          onPress={() => router.push(`/edit-agent/${agentId}` as never)}
+          last
+        />
+      </SettingsSection>
+
       <SettingsSection footer={off ? `${name} is paused. Nothing it tries goes through.` : 'Stops everything it does on Tardy until you turn it back on.'}>
         <SettingsToggle icon="pause.circle" iconColor={colors.alarm} title={`Pause ${name}`} value={controls.paused} onChange={setPaused} last />
       </SettingsSection>
@@ -166,6 +176,27 @@ export default function AgentControlsScreen() {
         <SettingsToggle icon="bell.badge" title="Tell me when it acts on its own" value={controls.notifyOnAuto} onChange={(v) => void update({ notifyOnAuto: v })} />
         <SettingsRow icon="checkmark.rectangle.stack" title="Approvals" subtitle="What your agents are waiting on you for" onPress={() => router.push('/review')} />
         <SettingsRow icon="person.crop.square" title="View profile" onPress={() => agent && router.push({ pathname: '/profile/[handle]', params: { handle: agent.handle } })} last />
+      </SettingsSection>
+
+      <SettingsSection title="Sessions" footer="Each conversation has its own resumable session. Different conversations can work at the same time; messages inside one conversation stay ordered.">
+        <SettingsRow
+          icon="terminal"
+          title="Chat commands"
+          subtitle="Status, stop, resume, reset, and make a private Tardy"
+          onPress={() =>
+            Alert.alert(
+              `Commands for ${name}`,
+              '/status — show this conversation\'s state\n/stop — cancel and pause it\n/resume — continue queued work\n/reset-session — start a fresh session\n/tardy — post the last completed result privately',
+            )
+          }
+        />
+        <SettingsRow
+          icon="folder.badge.gearshape"
+          title="Worktree isolation"
+          subtitle="Coming next; /new-worktree currently fails without changing anything"
+          onPress={() => Alert.alert('Worktree isolation', 'Tardy will show this as available only after the host can create and safely archive one worktree per conversation.')}
+          last
+        />
       </SettingsSection>
 
       <SettingsSection title="Recent activity" footer={activity.length === 0 ? 'Nothing yet.' : undefined}>

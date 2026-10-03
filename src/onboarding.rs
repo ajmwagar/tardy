@@ -150,6 +150,52 @@ impl AccountRegistry {
         })
     }
 
+    /// Exchanges a human-created pairing code for the agent's credential exactly once.
+    /// Any bootstrap token returned when the pairing was created is rotated away.
+    pub fn connect_tardy(
+        &self,
+        code: &str,
+        now_ms: u64,
+    ) -> Result<TemporaryTardyAccount, OnboardingError> {
+        let mut connection = self
+            .connection
+            .lock()
+            .map_err(|_| OnboardingError::Poisoned)?;
+        let tx = connection.transaction()?;
+        let row: Option<(String, i64)> = tx
+            .query_row(
+                "SELECT c.account_id,c.expires_at_ms FROM agent_claims c
+                 JOIN accounts a ON a.id=c.account_id
+                 WHERE c.code_hash=?1 AND c.claimed_at_ms IS NULL
+                   AND c.expires_at_ms>?2 AND a.temporary=1",
+                params![hash_code(code), to_i64(now_ms)?],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let (account_id, expires_at_ms) = row.ok_or(OnboardingError::InvalidClaim)?;
+        let has_profile: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM account_profiles WHERE account_id=?1)",
+            [&account_id],
+            |row| row.get(0),
+        )?;
+        if has_profile {
+            return Err(OnboardingError::InvalidClaim);
+        }
+        let api_token = format!("tardy_{}", Uuid::new_v4().simple());
+        tx.execute(
+            "UPDATE accounts SET api_token_hash=?1 WHERE id=?2",
+            params![hash_code(&api_token), &account_id],
+        )?;
+        tx.commit()?;
+        Ok(TemporaryTardyAccount {
+            account_id: Uuid::parse_str(&account_id).map_err(|_| OnboardingError::InvalidClaim)?,
+            api_token,
+            claim_code: code.to_owned(),
+            expires_at_ms: u64::try_from(expires_at_ms)
+                .map_err(|_| OnboardingError::TimestampOverflow)?,
+        })
+    }
+
     pub fn claim_tardy(
         &self,
         human_account_id: Uuid,
@@ -578,6 +624,30 @@ mod tests {
         assert!(registry.owns_profile(human.account.id, profile).unwrap());
         assert!(matches!(
             registry.authenticate(&tardy.api_token),
+            Err(OnboardingError::InvalidClaim)
+        ));
+    }
+
+    #[test]
+    fn human_created_pairing_rotates_bootstrap_token_and_connects_once() {
+        let registry = AccountRegistry::in_memory().unwrap();
+        let pairing = registry.register_tardy(10).unwrap();
+        let connected = registry.connect_tardy(&pairing.claim_code, 11).unwrap();
+        assert_eq!(connected.account_id, pairing.account_id);
+        assert_ne!(connected.api_token, pairing.api_token);
+        assert!(matches!(
+            registry.authenticate_at(&pairing.api_token, 11),
+            Err(OnboardingError::InvalidClaim)
+        ));
+        assert_eq!(
+            registry.authenticate_at(&connected.api_token, 11).unwrap(),
+            pairing.account_id
+        );
+        registry
+            .bind_profile(connected.account_id, Uuid::new_v4())
+            .unwrap();
+        assert!(matches!(
+            registry.connect_tardy(&pairing.claim_code, 12),
             Err(OnboardingError::InvalidClaim)
         ));
     }

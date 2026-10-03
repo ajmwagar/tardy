@@ -9,7 +9,7 @@ import { NOTIFICATION_KINDS } from './preferences';
  * does not leak through the payload.
  *
  * Wire (the push's `data` object, snake_case like the API):
- * `{ v: 1, notification_id, kind, actor_id, post_id? }`. Unknown extra keys are ignored;
+ * `{ v: 1, notification_id, kind, actor_id, post_id?, conversation_id? }`.
  * a `v` other than 1 is rejected so a future format change is a visible break, not a
  * silent misroute.
  */
@@ -18,12 +18,19 @@ export type PushPayload = {
   kind: NotificationKind;
   actorId: string;
   postId?: string;
+  conversationId?: string;
 };
 
 export const PUSH_PAYLOAD_VERSION = 1;
 
 export function payloadFor(n: Notification): PushPayload {
-  return { notificationId: n.id, kind: n.kind, actorId: n.actorId, ...(n.postId !== undefined && { postId: n.postId }) };
+  return {
+    notificationId: n.id,
+    kind: n.kind,
+    actorId: n.actorId,
+    ...(n.postId !== undefined && { postId: n.postId }),
+    ...(n.conversationId !== undefined && { conversationId: n.conversationId }),
+  };
 }
 
 export function encodePushPayload(p: PushPayload): Record<string, string | number> {
@@ -33,6 +40,7 @@ export function encodePushPayload(p: PushPayload): Record<string, string | numbe
     kind: p.kind,
     actor_id: p.actorId,
     ...(p.postId !== undefined && { post_id: p.postId }),
+    ...(p.conversationId !== undefined && { conversation_id: p.conversationId }),
   };
 }
 
@@ -50,8 +58,15 @@ export function parsePushPayload(data: unknown): ParsedPayload {
   if (!isKind(d.kind)) return { ok: false, reason: `unknown notification kind ${String(d.kind)}` };
   if (!nonEmpty(d.actor_id)) return { ok: false, reason: 'push payload has no actor_id' };
   if (d.post_id !== undefined && !nonEmpty(d.post_id)) return { ok: false, reason: 'push payload has a malformed post_id' };
+  if (d.conversation_id !== undefined && !nonEmpty(d.conversation_id)) return { ok: false, reason: 'push payload has a malformed conversation_id' };
   return {
     ok: true,
-    payload: { notificationId: d.notification_id, kind: d.kind, actorId: d.actor_id, ...(d.post_id !== undefined && { postId: d.post_id }) },
+    payload: {
+      notificationId: d.notification_id,
+      kind: d.kind,
+      actorId: d.actor_id,
+      ...(d.post_id !== undefined && { postId: d.post_id as string }),
+      ...(d.conversation_id !== undefined && { conversationId: d.conversation_id as string }),
+    },
   };
 }

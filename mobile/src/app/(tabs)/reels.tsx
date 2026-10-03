@@ -1,8 +1,8 @@
-import { FlashList, type ViewToken } from '@shopify/flash-list';
+import { FlashList, type FlashListRef, type ViewToken } from '@shopify/flash-list';
 import { LinearGradient } from 'expo-linear-gradient';
-import { router, useIsFocused } from 'expo-router';
+import { router, useIsFocused, useLocalSearchParams } from 'expo-router';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useSoundPlays } from '@/audio/use-sound-plays';
@@ -16,8 +16,10 @@ import { StyleChip } from '@/components/style-chip';
 import { Avatar, Icon, NameLine, PressableScale, Reaction, StatusPill } from '@/components/ui';
 import { VideoSurface } from '@/components/video-surface';
 import type { Post } from '@/data/types';
-import { api, loadFeedPage, logEngagement, toggleAlarm, toggleFollowing, toggleLiked, toggleMuted, toggleRepost, toggleSaved, useAccount, useIsFollowing, usePostState, useStore } from '@/state/store';
+import { api, ensureAccounts, ingestPosts, loadFeedPage, logEngagement, toggleAlarm, toggleFollowing, toggleLiked, toggleMuted, toggleRepost, toggleSaved, useAccount, useIsFollowing, usePostState, useStore } from '@/state/store';
 import { colors } from '@/theme';
+import { useRefresh } from '@/components/use-refresh';
+import { freshReelOrder } from '@/reels/refresh';
 
 type Item = { key: string; post: Post };
 
@@ -41,23 +43,55 @@ const Reel = memo(function Reel({ post, active, height }: { post: Post; active: 
   const following = useIsFollowing(post.authorId);
   const muted = useStore((s) => s.muted);
   const [expanded, setExpanded] = useState(false);
+  const [speed, setSpeed] = useState<1 | 2 | 4>(1);
+  const [lockedSpeed, setLockedSpeed] = useState<2 | 4 | null>(null);
   const media = post.media[0];
   useSoundPlays(post, active, muted);
 
   const openProfile = () => author && router.push({ pathname: '/profile/[handle]', params: { handle: author.handle } });
   const share = () => router.push({ pathname: '/share', params: { postId: post.id } });
+  const previewSpeed = useCallback((nextSpeed: 2 | 4) => {
+    if (!active) return;
+    setSpeed(nextSpeed);
+  }, [active]);
+  const finishSpeed = useCallback((nextLockedSpeed: 2 | 4 | null) => {
+    setLockedSpeed(nextLockedSpeed);
+    setSpeed(nextLockedSpeed ?? lockedSpeed ?? 1);
+  }, [lockedSpeed]);
+  const unlockSpeed = useCallback(() => {
+    setLockedSpeed(null);
+    setSpeed(1);
+  }, []);
+  useEffect(() => {
+    // Reset after the active reel changes without synchronously cascading another render.
+    const frame = requestAnimationFrame(unlockSpeed);
+    return () => cancelAnimationFrame(frame);
+  }, [active, unlockSpeed]);
 
   return (
     <View style={{ height, backgroundColor: '#000' }}>
-      <DoubleTapLike postId={post.id} onSingleTap={toggleMuted} heartSize={120}>
+      <DoubleTapLike
+        postId={post.id}
+        onSingleTap={toggleMuted}
+        singleTapIcon={muted ? 'speaker.wave.2.fill' : 'speaker.slash.fill'}
+        onHoldSpeed={previewSpeed}
+        onHoldEnd={finishSpeed}
+        heartSize={148}>
         <View style={{ height }}>
           {media?.type === 'video' && (
             // Fill when the video's shape is close to the screen's, else show it whole over the blur
             // (landscape reels, iPads). The native player applies the same rule on its own.
-            <VideoSurface postId={post.id} media={media} active={active} fullBleed contentFit={fitFor(mediaRatio(media), width / height)} />
+            <VideoSurface postId={post.id} media={media} active={active} fullBleed playbackRate={speed} contentFit={fitFor(mediaRatio(media), width / height)} />
           )}
         </View>
       </DoubleTapLike>
+
+      {speed > 1 ? (
+        <Pressable onPress={lockedSpeed ? unlockSpeed : undefined} disabled={!lockedSpeed} style={styles.speedBadge} accessibilityRole={lockedSpeed ? 'button' : undefined} accessibilityLabel={lockedSpeed ? `Unlock ${speed} times playback` : undefined}>
+          <Text style={styles.speedText}>{speed}×{lockedSpeed ? '  LOCKED' : ''}</Text>
+          {!lockedSpeed ? <Text style={styles.speedHint}>↑ 4× lock   ↓ 2× lock</Text> : null}
+        </Pressable>
+      ) : null}
 
       <LinearGradient pointerEvents="none" colors={['transparent', 'rgba(0,0,0,0.55)']} style={[styles.scrim, { height: chrome + 150 }]} />
 
@@ -80,7 +114,7 @@ const Reel = memo(function Reel({ post, active, height }: { post: Post; active: 
           color="#fff"
           icon="bubble.left"
           label="Comments"
-          count={post.commentCount}
+          count={state?.commentCount ?? post.commentCount}
           onPress={() => router.push({ pathname: '/comments/[postId]', params: { postId: post.id } })}
         />
         <Reaction
@@ -127,15 +161,25 @@ const Reel = memo(function Reel({ post, active, height }: { post: Post; active: 
             <Avatar account={author} size={28} />
             <NameLine account={author} style={styles.white} />
           </PressableScale>
-          {!following && (
+          {author?.ownedByViewer ? (
+            <View style={styles.follow} accessibilityLabel={`${author.handle} is claimed by you`}>
+              <Text style={styles.followText}>Claimed</Text>
+            </View>
+          ) : !following && (
             <PressableScale onPress={() => toggleFollowing(post.authorId)} style={styles.follow} scaleTo={0.95}>
               <Text style={styles.followText}>Follow</Text>
             </PressableScale>
           )}
         </View>
-        <Text style={styles.caption} numberOfLines={expanded ? 6 : 1} onPress={() => setExpanded((e) => !e)}>
-          {post.caption}
-        </Text>
+        {expanded ? (
+          <ScrollView style={[styles.expandedCaption, { maxHeight: height * 0.42 }]} nestedScrollEnabled showsVerticalScrollIndicator>
+            <Text style={styles.caption} onPress={() => setExpanded(false)}>{post.caption}</Text>
+          </ScrollView>
+        ) : (
+          <Pressable onPress={() => setExpanded(true)} accessibilityRole="button" accessibilityLabel="Read full caption">
+            <Text style={styles.caption} numberOfLines={2}>{post.caption} <Text style={styles.more}>more</Text></Text>
+          </Pressable>
+        )}
         {post.sound && (
           <Pressable
             style={styles.sound}
@@ -170,6 +214,8 @@ const Reel = memo(function Reel({ post, active, height }: { post: Post; active: 
 });
 
 export default function ReelsScreen() {
+  const { postId } = useLocalSearchParams<{ postId?: string }>();
+  const listRef = useRef<FlashListRef<Item>>(null);
   const window = useWindowDimensions();
   // Size each reel to the list's real viewport (between the status bar and tab bar), not
   // the window, so paging lands exactly on item boundaries.
@@ -204,13 +250,53 @@ export default function ReelsScreen() {
   }, []);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (!postId) {
+      void load();
+      return;
+    }
+    let live = true;
+    loading.current = true;
+    void Promise.all([api.post(postId), loadFeedPage(api.reelsFeed(null))])
+      .then(async ([requested, page]) => {
+        await ensureAccounts([requested.authorId, requested.projectId, ...(requested.collaboratorIds ?? [])]);
+        ingestPosts([requested]);
+        if (!live) return;
+        const ordered = [requested, ...page.items.filter((post) => post.id !== requested.id)];
+        cursor.current = page.nextCursor;
+        setItems(ordered.map((post, index) => ({ key: `opened:${postId}:${index}:${post.id}`, post })));
+        setActiveKey(null);
+        setExhausted(page.nextCursor === null);
+        setError(null);
+        listRef.current?.scrollToOffset({ offset: 0, animated: false });
+      })
+      .catch((error: unknown) => {
+        if (live) setError({ page: 'first', message: error instanceof Error ? error.message : String(error) });
+      })
+      .finally(() => {
+        loading.current = false;
+      });
+    return () => {
+      live = false;
+    };
+  }, [load, postId]);
 
   const reload = useCallback(() => {
     setExhausted(false);
     void load();
   }, [load]);
+  const { refreshing, onRefresh } = useRefresh(
+    useCallback(async () => {
+      const previousId = items.find((item) => item.key === activeKey)?.post.id ?? items[0]?.post.id;
+      const page = await loadFeedPage(api.reelsFeed(null));
+      const fresh = freshReelOrder(page.items, previousId);
+      cursor.current = page.nextCursor;
+      setItems(fresh.map((post, index) => ({ key: `refresh:${Date.now()}:${index}:${post.id}`, post })));
+      setActiveKey(null);
+      setExhausted(page.nextCursor === null);
+      setError(null);
+      listRef.current?.scrollToOffset({ offset: 0, animated: false });
+    }, [activeKey, items]),
+  );
   const chrome = insets.bottom + TAB_BAR_CLEARANCE;
 
   const dwell = useRef<{ id: string; at: number } | null>(null);
@@ -258,6 +344,7 @@ export default function ReelsScreen() {
         )
       ) : (
         <FlashList
+          ref={listRef}
           data={items}
           keyExtractor={keyOf}
           renderItem={renderItem}
@@ -284,6 +371,7 @@ export default function ReelsScreen() {
           onViewableItemsChanged={onViewableItemsChanged}
           viewabilityConfig={VIEWABILITY}
           drawDistance={height}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />}
         />
       )}
       <View pointerEvents="box-none" style={[styles.topBar, { top: insets.top }]}>
@@ -300,6 +388,9 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: '#000' },
   fill: { flex: 1, justifyContent: 'center' },
   scrim: { position: 'absolute', left: 0, right: 0, bottom: 0 },
+  speedBadge: { position: 'absolute', top: '44%', alignSelf: 'center', minWidth: 72, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 22, alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.68)' },
+  speedText: { color: '#fff', fontSize: 19, fontWeight: '900', letterSpacing: 0.4 },
+  speedHint: { color: 'rgba(255,255,255,0.72)', fontSize: 10, fontWeight: '800', marginTop: 2 },
   topBar: { position: 'absolute', left: 0, right: 0, height: 44, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14 },
   rail: { position: 'absolute', right: 8, alignItems: 'center', gap: 18 },
   info: { position: 'absolute', left: 12, right: 70, gap: 6 },
@@ -308,6 +399,8 @@ const styles = StyleSheet.create({
   follow: { borderRadius: 999, paddingHorizontal: 12, paddingVertical: 4, backgroundColor: colors.primary },
   followText: { color: colors.onPrimary, fontSize: 12, fontWeight: '800' },
   caption: { color: '#fff', fontSize: 14, lineHeight: 19, ...shadow },
+  expandedCaption: { flexGrow: 0, paddingRight: 4 },
+  more: { color: colors.textSecondary, fontWeight: '700' },
   sound: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start', maxWidth: '85%' },
   soundText: { color: '#fff', fontSize: 13, fontWeight: '600', ...shadow },
   metaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, alignItems: 'center' },

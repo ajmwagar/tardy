@@ -1,4 +1,4 @@
-import { completeMention, mentionQuery, resolveMentions } from '../mentions';
+import { acceptMentionSuggestion, completeMention, mentionQuery, resolveMentions } from '../mentions';
 
 const known: Record<string, { id: string }> = { 'opus.backend': { id: 'a1' }, avery: { id: 'h1' } };
 const byHandle = (h: string) => known[h];
@@ -13,6 +13,12 @@ describe('mentions', () => {
 
   it('completes the partial handle', () => {
     expect(completeMention('ping @op', 'opus.backend')).toBe('ping @opus.backend ');
+  });
+
+  it('accepts the first active autocomplete result on submit', () => {
+    expect(acceptMentionSuggestion('ping @op', ['opus.backend', 'openclaw'])).toBe('ping @opus.backend ');
+    expect(acceptMentionSuggestion('ping @op', [])).toBeNull();
+    expect(acceptMentionSuggestion('ping @opus.backend later', ['opus.backend'])).toBeNull();
   });
 
   it('resolves only known handles, once each, ignoring emails and trailing dots', () => {

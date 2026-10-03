@@ -1,8 +1,9 @@
 import type { AgentActivity, AgentControls } from '@/agents/controls';
 import { TardyApiError, type TardyApi, type TardyApiErrorCode } from '../api';
-import type { ProfilePatch } from '../profile';
+import type { AgentProfilePatch, ProfilePatch } from '../profile';
 import type {
   Account,
+  AgentPairing,
   AuthCredential,
   Comment,
   EngagementAction,
@@ -27,7 +28,7 @@ import type {
   ThreadRef,
   Visibility,
 } from '../types';
-import { array, arraySkipping, isoToMs, snakeKeys, TardyWireError, type Decoder } from './codec';
+import { array, arraySkipping, isoToMs, object, snakeKeys, string, TardyWireError, type Decoder } from './codec';
 import * as W from './wire';
 import type { PlayKind } from '@/audio/plays';
 import type { PlanId } from '@/membership/plans';
@@ -180,10 +181,7 @@ export class HttpTardyApi implements TardyApi {
           ...(body !== undefined && { body: JSON.stringify(body) }),
         }),
         new Promise<never>((_, reject) => {
-          timeout = setTimeout(
-            () => reject(new Error(`request timed out after ${timeoutMs / 1_000}s`)),
-            timeoutMs,
-          );
+          timeout = setTimeout(() => reject(new Error(`request timed out after ${timeoutMs / 1_000}s`)), timeoutMs);
         }),
       ]);
     } catch (error) {
@@ -217,7 +215,19 @@ export class HttpTardyApi implements TardyApi {
   }
 
   async developmentSession(): Promise<SignedIn> {
-    return this.adopt(await this.request('POST', '/v1/dev/session', { decode: W.signedIn, auth: 'none' }));
+    return this.adopt(await this.request('POST', '/v1/dev/session', {
+      body: { email: process.env.EXPO_PUBLIC_TARDY_DEV_EMAIL },
+      decode: W.signedIn,
+      auth: 'none',
+    }));
+  }
+
+  async webHandoff(returnPath: '/verify' | '/membership'): Promise<string> {
+    const result = await this.request('POST', '/v1/web/handoffs', {
+      body: { return_path: returnPath },
+      decode: object<{ url: string }>({ url: string }),
+    });
+    return result.url;
   }
 
   async requestEmailCode(email: string): Promise<void> {
@@ -257,6 +267,21 @@ export class HttpTardyApi implements TardyApi {
   updateProfile(patch: ProfilePatch): Promise<Account> {
     // `name` is `display_name` on the wire (the Rust `Profile` field).
     return this.request('PATCH', '/v1/profile', { body: snakeKeys({ displayName: patch.name, bio: patch.bio }), decode: W.account });
+  }
+
+  profileAgents(profileId: string): Promise<Account[]> {
+    return this.request('GET', `/v1/profiles/by-id/${segment(profileId)}/agents`, { decode: array(W.account) });
+  }
+
+  updateAgentProfile(agentId: string, patch: AgentProfilePatch): Promise<Account> {
+    return this.request('PATCH', `/v1/agents/${segment(agentId)}/profile`, {
+      body: snakeKeys({ handle: patch.handle, displayName: patch.name, bio: patch.bio, avatarUrl: patch.avatarUrl }),
+      decode: W.account,
+    });
+  }
+
+  generateAgentAvatar(agentId: string): Promise<Account> {
+    return this.request('POST', `/v1/agents/${segment(agentId)}/avatar/generate`, { decode: W.account });
   }
 
   async completeOnboarding(): Promise<SignedIn> {
@@ -377,32 +402,57 @@ export class HttpTardyApi implements TardyApi {
     return send(text.trim() || link!.canonicalUrl, attachment.sharedLinkId);
   }
 
+  typing(threadId: string): Promise<string[]> {
+    return this.request('GET', `/v1/social/conversations/${segment(threadId)}/typing`, { decode: array(string) });
+  }
+
+  async setTyping(threadId: string, active: boolean): Promise<void> {
+    await this.request(active ? 'PUT' : 'DELETE', `/v1/social/conversations/${segment(threadId)}/typing`);
+  }
+
   async openThread(participants: readonly ThreadParticipant[], title?: string): Promise<ThreadRef> {
-    void title; // Group titles are proposed; the server does not store them yet.
     const viewerId = this.current?.accountId;
     if (!viewerId) throw new TardyApiError('unauthenticated', 'Sign in to message.');
     const plan = conversationPlan(participants, viewerId);
     if (!plan.ok) {
-      throw new TardyApiError(
-        'invalid',
-        plan.reason === 'nobody' ? 'A thread needs someone besides you.' : 'Group chats with more than one other person are not supported by the server yet.',
-      );
+      throw new TardyApiError('invalid', 'A thread needs someone besides you.');
     }
-    const others = [plan.recipientId, ...plan.addAgentIds];
-    // The server creates a new conversation on every call; find the existing one first.
-    const existing = (await this.request('GET', '/v1/social/conversations', { decode: array(W.conversation) })).find((t) =>
-      sameMembers(t.participantIds, viewerId, others),
-    );
-    if (existing) {
-      const { lastMessage: _last, unreadCount: _unread, ...ref } = existing;
-      return ref;
+    const others = [...plan.recipientIds, ...plan.addAgentIds];
+    const name = title?.trim();
+    const explicitGroup = others.length > 1 || Boolean(name);
+    if (!explicitGroup) {
+      const existing = (await this.request('GET', '/v1/social/conversations', { decode: array(W.conversation) })).find((t) =>
+        t.participantIds.length === 2 && sameMembers(t.participantIds, viewerId, others),
+      );
+      if (existing) {
+        const { lastMessage: _last, unreadCount: _unread, ...ref } = existing;
+        return ref;
+      }
     }
     let thread = await this.request('POST', '/v1/social/conversations', {
-      body: { recipient_profile_id: plan.recipientId },
+      body: { participant_profile_ids: plan.recipientIds, ...(name && { title: name }) },
       decode: W.threadRef,
     });
     for (const agentId of plan.addAgentIds) thread = await this.addAgent(thread.id, agentId);
     return thread;
+  }
+
+  renameThread(threadId: string, title?: string): Promise<ThreadRef> {
+    return this.request('PUT', `/v1/social/conversations/${segment(threadId)}`, {
+      body: { title: title?.trim() || null }, decode: W.threadRef,
+    });
+  }
+
+  addThreadParticipant(threadId: string, profileId: string): Promise<ThreadRef> {
+    return this.request('POST', `/v1/social/conversations/${segment(threadId)}/participants`, {
+      body: { profile_id: profileId }, decode: W.threadRef,
+    });
+  }
+
+  removeThreadParticipant(threadId: string, profileId: string): Promise<ThreadRef> {
+    return this.request('DELETE', `/v1/social/conversations/${segment(threadId)}/participants/${segment(profileId)}`, {
+      decode: W.threadRef,
+    });
   }
 
   addAgent(threadId: string, agentId: string, includeAnchorShare = true): Promise<ThreadRef> {
@@ -591,6 +641,10 @@ export class HttpTardyApi implements TardyApi {
 
   async claimAgent(code: string): Promise<void> {
     await this.request('POST', '/v1/onboarding/tardy-claims', { body: { code: code.trim() } });
+  }
+
+  createAgentPairing(): Promise<AgentPairing> {
+    return this.request('POST', '/v1/onboarding/tardies', { body: {}, decode: W.agentPairing, auth: 'none' });
   }
 
   setVisibility(projectId: string, visibility: Visibility): Promise<Account> {

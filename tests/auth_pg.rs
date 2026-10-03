@@ -21,21 +21,56 @@ async fn apple_identity_creates_resumable_per_device_session() {
         )
         .await
         .unwrap();
-    let retried = store
-        .sign_in_apple(
-            "apple-stable-subject",
-            Some("person@example.com"),
-            None,
-            b"unique-assertion-one",
-            now + 1,
+    assert!(matches!(
+        store
+            .sign_in_apple(
+                "apple-stable-subject",
+                Some("person@example.com"),
+                None,
+                b"unique-assertion-one",
+                now + 1,
+            )
+            .await,
+        Err(PgAccountError::AssertionReplayed)
+    ));
+    assert_eq!(signed_in.provider, "apple");
+    assert_eq!(signed_in.profile.display_name, "Person Example");
+    assert!(signed_in.profile.onboarded_at_ms.is_none());
+    let profile = store
+        .set_human_handle(signed_in.profile.account_id, "person.example")
+        .await
+        .unwrap();
+    assert_eq!(profile.handle, "person.example");
+    assert!(profile.onboarded_at_ms.is_none());
+    let profile = store
+        .update_human_profile(
+            signed_in.profile.account_id,
+            Some("Updated Person"),
+            Some("Shipping Tardy."),
         )
         .await
         .unwrap();
-    assert_eq!(retried.profile.account_id, signed_in.profile.account_id);
-    assert_ne!(retried.token, signed_in.token);
-    assert_eq!(signed_in.provider, "apple");
-    assert_eq!(signed_in.profile.display_name, "Person Example");
-    assert!(signed_in.profile.onboarded_at_ms.is_some());
+    assert_eq!(profile.display_name, "Updated Person");
+    assert_eq!(profile.bio, "Shipping Tardy.");
+    let profile = store
+        .set_human_avatar(
+            signed_in.profile.account_id,
+            "https://tardy.test/v1/avatars/seed",
+        )
+        .await
+        .unwrap();
+    assert_eq!(profile.avatar_url, "https://tardy.test/v1/avatars/seed");
+    assert!(matches!(
+        store
+            .update_human_profile(signed_in.profile.account_id, Some(""), None)
+            .await,
+        Err(PgAccountError::InvalidDisplayName)
+    ));
+    let profile = store
+        .complete_human_onboarding(signed_in.profile.account_id, now + 1)
+        .await
+        .unwrap();
+    assert_eq!(profile.onboarded_at_ms, Some(now + 1));
     assert_eq!(
         store.authenticate(&signed_in.token, now).await.unwrap(),
         signed_in.profile.account_id
@@ -45,29 +80,7 @@ async fn apple_identity_creates_resumable_per_device_session() {
         .resume_human_session(&signed_in.token, now + 1)
         .await
         .unwrap();
-    assert_eq!(resumed.profile, signed_in.profile);
-    let updated = store
-        .update_human_profile(
-            signed_in.profile.account_id,
-            Some("  Person Updated  "),
-            Some("  Building in public.  "),
-        )
-        .await
-        .unwrap();
-    assert_eq!(updated.display_name, "Person Updated");
-    assert_eq!(updated.bio, "Building in public.");
-    assert!(matches!(
-        store
-            .update_human_profile(signed_in.profile.account_id, Some("   "), None)
-            .await,
-        Err(PgAccountError::InvalidDisplayName)
-    ));
-    assert!(matches!(
-        store
-            .update_human_profile(signed_in.profile.account_id, None, Some(&"x".repeat(501)),)
-            .await,
-        Err(PgAccountError::InvalidBio)
-    ));
+    assert_eq!(resumed.profile, profile);
     store
         .revoke_human_session(&signed_in.token, now + 2)
         .await

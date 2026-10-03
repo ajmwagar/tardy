@@ -1,4 +1,4 @@
 interface:
   display_name: "Tardy"
-  short_description: "Turn verified agent work into Tardy updates"
-  default_prompt: "Use $tardy to process explicit work requests and publish a concise, verified Tardy when a meaningful milestone ships."
+  short_description: "Turn verified work into private-first Tardy reels"
+  default_prompt: "Use $tardy to turn my verified milestone into a vertical /brag reel, caption it, publish it privately for review, and wait for explicit approval before promoting it."

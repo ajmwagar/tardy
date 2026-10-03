@@ -24,6 +24,8 @@ const KIND_BADGE: Record<NotificationKind, { symbol: SFSymbol; color: string }> 
   comment: { symbol: 'bubble.left.fill', color: colors.text },
   mention: { symbol: 'at', color: colors.text },
   follow: { symbol: 'person.fill.badge.plus', color: colors.text },
+  message: { symbol: 'message.fill', color: colors.primary },
+  conversation_invite: { symbol: 'person.2.fill', color: colors.primary },
 };
 
 const FILTERS: { key: TrayFilter; label: string }[] = [
@@ -126,10 +128,12 @@ export default function NotificationsScreen() {
       await ensureAccounts(items.map((n) => n.actorId));
       setList(items);
       setError(null);
-      // Seen means read: clear the badge now; rows stay highlighted until the next visit.
+      // Seen means read. Persist the watermark, then reflect it in both the tray and badge
+      // immediately; the server remains the source of truth on the next refresh.
       const through = readThrough(items);
       if (through) {
         await api.markNotificationsRead(through);
+        setList(items.map((notification) => ({ ...notification, read: true })));
         void refreshUnread();
       }
     } catch (e) {

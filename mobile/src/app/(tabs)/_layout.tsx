@@ -5,6 +5,7 @@ import { haptic } from '@/components/ui';
 import { badgeText } from '@/notifications/tray';
 import { refreshUnread, useAccount, useStore } from '@/state/store';
 import { colors } from '@/theme';
+import { emitTabReselect } from '@/navigation/tab-reselect';
 
 /**
  * Icon-only tabs: Home, Reels, Search (the middle), Messages, Profile. Notifications live
@@ -26,7 +27,9 @@ export default function TabsLayout() {
         current.current = route.name;
       },
       tabPress: (e: { data: { isPrevented: boolean } }) => {
-        if (!e.data.isPrevented && current.current !== route.name) haptic.selection();
+        if (e.data.isPrevented) return;
+        if (current.current === route.name) emitTabReselect(route.name);
+        else haptic.selection();
       },
     }),
     [],

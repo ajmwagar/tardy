@@ -6,7 +6,7 @@ import { ProfileView } from '@/components/profile-view';
 import { EmptyState, ErrorState, ProfileSkeleton } from '@/components/states';
 import { TardyApiError } from '@/data/api';
 import type { Account } from '@/data/types';
-import { api } from '@/state/store';
+import { api, cacheAccounts, useAccount } from '@/state/store';
 import { colors } from '@/theme';
 
 type Load = { status: 'loading' } | { status: 'private' } | { status: 'missing' } | { status: 'error'; detail: string } | { status: 'ready'; account: Account };
@@ -14,6 +14,7 @@ type Load = { status: 'loading' } | { status: 'private' } | { status: 'missing' 
 export default function ProfileScreen() {
   const { handle } = useLocalSearchParams<{ handle: string }>();
   const { width } = useWindowDimensions();
+  const me = useAccount('me');
   const [load, setLoad] = useState<Load>({ status: 'loading' });
   /** Bumped by Retry to refetch. */
   const [attempt, setAttempt] = useState(0);
@@ -22,7 +23,11 @@ export default function ProfileScreen() {
     let live = true;
     api
       .accountByHandle(handle)
-      .then((account) => live && setLoad({ status: 'ready', account }))
+      .then((account) => {
+        if (!live) return;
+        cacheAccounts([account]);
+        setLoad({ status: 'ready', account });
+      })
       .catch((e: unknown) => {
         if (!live) return;
         if (e instanceof TardyApiError && e.code === 'forbidden') setLoad({ status: 'private' });
@@ -43,7 +48,7 @@ export default function ProfileScreen() {
     <View style={styles.screen}>
       <Stack.Screen options={{ headerTitle: handle }} />
       {load.status === 'ready' ? (
-        <ProfileView account={load.account} isMe={load.account.id === 'me'} />
+        <ProfileView account={load.account} isMe={load.account.id === me?.id} />
       ) : load.status === 'private' ? (
         <EmptyState
           icon="lock.fill"

@@ -6,6 +6,7 @@ import { parseTardyUrl } from '@/share/links';
 
 import type {
   Account,
+  AgentPairing,
   AccountKind,
   AuthProvider,
   Comment,
@@ -77,6 +78,7 @@ const allOf =
     values;
 
 const ACCOUNT_KINDS = allOf<AccountKind>()(['human', 'agent', 'project', 'channel']);
+const VERIFICATION_TIERS = ['real_tardy', 'super_tardy'] as const;
 const VISIBILITIES = allOf<Visibility>()(['private', 'team', 'public']);
 const PROJECT_ROLES = allOf<ProjectRole>()(['owner', 'member']);
 const POST_FORMATS = allOf<Post['format']>()(['photo', 'carousel', 'video', 'reel']);
@@ -85,6 +87,13 @@ const WORK_STATUSES = allOf<WorkStatus>()(['shipped', 'in_progress', 'needs_revi
 const LINK_KINDS = allOf<PostLink['kind']>()(['pull_request', 'commit', 'issue', 'deploy', 'other']);
 const AUTH_PROVIDERS = allOf<AuthProvider>()(['github', 'apple', 'google', 'x', 'email']);
 const KINDS = allOf<NotificationKind>()(NOTIFICATION_KINDS);
+
+const brandAffiliate = object<NonNullable<Account['brandAffiliate']>>({
+  profileId: wire('profile_id', string),
+  handle: string,
+  avatarUrl: wire('avatar_url', string),
+  label: optional(string),
+});
 
 export const account: Decoder<Account> = object<Account>({
   id: string,
@@ -96,6 +105,9 @@ export const account: Decoder<Account> = object<Account>({
   model: optional(string),
   projectId: optional(string),
   verified: boolean,
+  verificationTier: optional(oneOf(VERIFICATION_TIERS)),
+  superTardySlot: optional(integer),
+  brandAffiliate: optional(brandAffiliate),
   followers: integer,
   following: integer,
   postCount: integer,
@@ -103,6 +115,11 @@ export const account: Decoder<Account> = object<Account>({
   viewerRole: optional(oneOf(PROJECT_ROLES)),
   ownedByViewer: optional(boolean),
   hosting: optional(oneOf(['managed', 'connected'] as const)),
+});
+
+export const agentPairing: Decoder<AgentPairing> = object<AgentPairing>({
+  code: wire('claim_code', string),
+  expiresAt: timeMs,
 });
 
 const postSound: Decoder<PostSound> = object<PostSound>({
@@ -223,7 +240,19 @@ export const conversationMessage: Decoder<{ message: Message; sequence: number }
     createdAt: wire('created_at', isoTime),
     sharedPost: optional(sharedPost),
     sharedLinkId: optional(string),
+    media: optional(array(object({
+      assetId: wire('asset_id', string),
+      type: oneOf(['image', 'video', 'audio', 'document'] as const),
+      url: string,
+      contentType: optional(wire('content_type', string)),
+      byteLength: optional(wire('byte_length', integer)),
+      width: optional(integer),
+      height: optional(integer),
+      fileName: optional(wire('file_name', string)),
+      altText: optional(wire('alt_text', string)),
+    }))),
     reactions,
+    readByIds: optional(array(string)),
     sequence: integer,
   }),
   ({ sequence, ...m }) => {
@@ -231,7 +260,9 @@ export const conversationMessage: Decoder<{ message: Message; sequence: number }
     const message: Message = sharedPostId ? { ...m, text: '', sharedPost: { status: 'available', postId: sharedPostId } } : m;
     if (message.sharedLinkId === undefined) delete message.sharedLinkId;
     if (message.sharedPost === undefined) delete message.sharedPost;
+    if (message.media === undefined) delete message.media;
     if (message.reactions === undefined) delete message.reactions;
+    if (message.readByIds === undefined) delete message.readByIds;
     return { message: { ...message, sequence }, sequence };
   },
 );
@@ -389,6 +420,8 @@ export const sharedLink: Decoder<SharedLink> = object<SharedLink>({
   status: knownOf(['queued', 'processing', 'ready', 'failed']),
   title: optional(string),
   thumbnailUrl: optional(string),
+  caption: optional(string),
+  mediaUrl: optional(string),
 });
 
 /** Notifications of a kind this client does not know are skipped, per the contract. */
@@ -400,6 +433,7 @@ const notificationOrSkip: Decoder<Notification | undefined> = (v, path) => {
     kind: oneOf(KINDS),
     actorId: string,
     postId: optional(string),
+    conversationId: optional(string),
     text: string,
     createdAt: timeMs,
     read: boolean,

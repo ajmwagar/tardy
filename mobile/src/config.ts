@@ -59,14 +59,19 @@ export async function openWebPage(kind: WebPage, webUrl: string | null = config.
  * session; nothing about the user goes in the URL. Alerts loudly when the website URL
  * isn't configured or the browser can't be opened.
  */
-export async function openWebCheckout(kind: WebCheckout, webUrl: string | null = config.webUrl): Promise<void> {
+export async function openWebCheckout(
+  kind: WebCheckout,
+  webUrl: string | null = config.webUrl,
+  authorize?: (path: '/verify' | '/membership') => Promise<string>,
+): Promise<void> {
   const { path, enables } = WEB_CHECKOUTS[kind];
   if (!webUrl) {
     Alert.alert('Checkout not configured', `Set EXPO_PUBLIC_TARDY_WEB_URL to the Tardy website to enable ${enables}.`);
     return;
   }
-  const url = `${webUrl}${path}`;
+  let url = `${webUrl}${path}`;
   try {
+    if (authorize && (path === '/verify' || path === '/membership')) url = await authorize(path);
     await Linking.openURL(url);
   } catch (error) {
     Alert.alert("Couldn't open checkout", `${url}\n\n${error instanceof Error ? error.message : String(error)}`);

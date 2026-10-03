@@ -1,4 +1,4 @@
-import { FlashList, type ViewToken } from '@shopify/flash-list';
+import { FlashList, type FlashListRef, type ViewToken } from '@shopify/flash-list';
 import { router, useIsFocused } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, RefreshControl, StyleSheet, useWindowDimensions, View } from 'react-native';
@@ -16,6 +16,7 @@ import { Wordmark } from '@/components/wordmark';
 import type { Post, StoryGroup } from '@/data/types';
 import { api, ensureAccounts, loadFeedPage, loadTrending, logEngagement, reportError, useStore } from '@/state/store';
 import { colors } from '@/theme';
+import { onTabReselect } from '@/navigation/tab-reselect';
 
 const keyOf = (p: Post) => p.id;
 /** A post counts as on screen (plays video, accrues dwell) once 60% visible for 120ms. */
@@ -24,6 +25,7 @@ const VIEWABILITY = { itemVisiblePercentThreshold: 60, minimumViewTime: 120 };
 const describe = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export default function HomeScreen() {
+  const listRef = useRef<FlashListRef<Post>>(null);
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const [posts, setPosts] = useState<Post[]>([]);
@@ -76,6 +78,8 @@ export default function HomeScreen() {
     void loadStories();
     void loadTrending();
   }, [load, loadStories]);
+
+  useEffect(() => onTabReselect('index', () => listRef.current?.scrollToOffset({ offset: 0, animated: true })), []);
 
   // The spinner waits only for the feed; stories and the ticker catch up behind it.
   const { refreshing, onRefresh: refresh } = useRefresh(
@@ -136,6 +140,7 @@ export default function HomeScreen() {
       </View>
 
       <FlashList
+        ref={listRef}
         data={posts}
         keyExtractor={keyOf}
         renderItem={renderItem}

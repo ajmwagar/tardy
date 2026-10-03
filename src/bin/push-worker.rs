@@ -80,6 +80,12 @@ async fn deliver(
     delivery: ClaimedDelivery,
 ) -> Result<(), PushError> {
     let mut data = delivery.data.clone();
+    data.insert("v".into(), 1.into());
+    data.insert(
+        "notification_id".into(),
+        delivery.notification_id.to_string().into(),
+    );
+    data.insert("kind".into(), delivery.category.clone().into());
     if let Some(deep_link) = &delivery.deep_link {
         data.insert("deep_link".into(), deep_link.clone().into());
     }

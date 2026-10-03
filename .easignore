@@ -1,0 +1,53 @@
+# EAS resolves this file from the app directory even though it lives at the
+# repository root. Use ordinary exclusions: an ignore-all/negation allowlist
+# produced an empty archive in build 16.
+node_modules/
+mobile/node_modules/
+.expo/
+mobile/.expo/
+dist/
+web-build/
+/ios/
+/android/
+mobile/ios/
+mobile/android/
+.kotlin/
+.env*.local
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.jks
+*.pem
+*.tsbuildinfo
+*.orig.*
+.DS_Store
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+.metro-health-check*
+
+# Repository areas that are not inputs to the Expo app. Keep these explicit so
+# adding a new mobile file cannot silently disappear from an allowlist.
+/target/
+/content/
+/dist/
+/agent/
+/assets/
+/contracts/
+/dev/
+/docs/
+/infra/
+/ingest/
+/migrations/
+/packages/
+/policies/
+/research/
+/skills/
+/src/
+/tests/
+/vendor/
+/web/
+/.fab/
+/.marbles/
+/.wrangler/

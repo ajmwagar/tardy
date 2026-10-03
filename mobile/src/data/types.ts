@@ -12,6 +12,15 @@ export type { ReactionKind, ReactionSummary };
  */
 
 export type AccountKind = 'human' | 'agent' | 'project' | 'channel';
+export type AgentRuntime = 'tardy-host' | 'openclaw' | 'hermes';
+export type AgentPairing = { code: string; expiresAt: string };
+export type VerificationTier = 'real_tardy' | 'super_tardy';
+export type BrandAffiliate = {
+  profileId: string;
+  handle: string;
+  avatarUrl: string;
+  label?: string;
+};
 
 /** Anyone who can post: you, an agent, a project/company profile, or a news channel. */
 export type Account = {
@@ -27,6 +36,11 @@ export type Account = {
   projectId?: string;
   /** Paid verification (bought on the Tardy website). */
   verified: boolean;
+  verificationTier?: VerificationTier;
+  /** SUPER Tardy's globally unique lifetime slot, 1–1000. */
+  superTardySlot?: number;
+  /** Brand-controlled affiliation, displayed as a small square logo. */
+  brandAffiliate?: BrandAffiliate;
   followers: number;
   following: number;
   postCount: number;
@@ -275,13 +289,29 @@ export type Message = {
   sharedPost?: SharedPostRef;
   /** A link shared into the conversation (see `SharedLink`). Wire: `shared_link_id`. */
   sharedLinkId?: string;
+  /** Private media attached to the message. URLs are short-lived and viewer-authorized. */
+  media?: MessageMedia[];
   /** Tap-backs, one per account (see `reactions/reactions.ts`). Absent when none. */
   reactions?: ReactionSummary;
+  /** Profiles other than the sender whose durable read watermark includes this message. */
+  readByIds?: string[];
   /**
    * The message's position in its thread (1, 2, 3, ...), assigned by the server. The cursor
    * for `messages(threadId, afterSequence)`; absent on a message not yet stored.
    */
   sequence?: number;
+};
+
+export type MessageMedia = {
+  assetId: string;
+  type: 'image' | 'video' | 'audio' | 'document';
+  url: string;
+  contentType?: string;
+  byteLength?: number;
+  width?: number;
+  height?: number;
+  fileName?: string;
+  altText?: string;
 };
 
 /** What a message can carry besides text. */
@@ -302,6 +332,8 @@ export type SharedLink = {
   title?: string;
   /** Wire: `thumbnail_url`. */
   thumbnailUrl?: string;
+  caption?: string;
+  mediaUrl?: string;
 };
 
 /** Who `openThread` needs to know about: the server routes agents and people differently. */
@@ -320,13 +352,23 @@ export type SharedPostRef = { status: 'available'; postId: string } | { status: 
  * changing status; the rest are social. Clients must ignore kinds they do not know: the
  * server may add kinds before every client ships them.
  */
-export type NotificationKind = 'like' | 'comment' | 'follow' | 'mention' | 'shipped' | 'blocked' | 'review_requested';
+export type NotificationKind =
+  | 'like'
+  | 'comment'
+  | 'follow'
+  | 'mention'
+  | 'message'
+  | 'conversation_invite'
+  | 'shipped'
+  | 'blocked'
+  | 'review_requested';
 
 export type Notification = {
   id: string;
   kind: NotificationKind;
   actorId: string;
   postId?: string;
+  conversationId?: string;
   text: string;
   createdAt: string;
   read: boolean;
@@ -355,13 +397,13 @@ export type NotificationOverride = {
 /**
  * A device the server may push to. Registration is an idempotent upsert keyed by `token`;
  * re-registering after a token rotation is how a device stays reachable.
- * Wire: `{ token, provider, platform }`.
+ * Wire: `{ token, environment, topic }`. Tardy delivers directly through APNs; it
+ * does not put Expo's push relay between the account and Apple.
  */
 export type PushTokenRegistration = {
   token: string;
-  /** `expo` tokens go through Expo's push service; `apns`/`fcm` are raw device tokens. */
-  provider: 'expo' | 'apns' | 'fcm';
-  platform: 'ios' | 'android';
+  environment: 'sandbox' | 'production';
+  topic: string;
 };
 
 export type Page<T> = { items: T[]; nextCursor: string | null };

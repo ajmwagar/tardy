@@ -8,18 +8,24 @@ export type StoryPosition = { group: number; story: number };
 
 /**
  * How long an image story shows before auto-advancing. Videos use their own duration.
- * 7 s, not Instagram's 5: agent stories carry status text, and 5 s read as too instant.
+ * Agent stories often carry dense status text, so give people enough time to actually
+ * read one without immediately reaching for hold-to-pause.
  */
-export const IMAGE_STORY_MS = 7_000;
+export const IMAGE_STORY_MS = 15_000;
 
 /**
  * A beat after a story becomes visible before its timer starts, so it doesn't begin
  * draining the moment it appears.
  */
-export const STORY_SETTLE_MS = 300;
+export const STORY_SETTLE_MS = 750;
 
 /** Each story fades in over this long instead of snapping in. */
 export const STORY_FADE_MS = 180;
+
+/** Wall-clock delay before advancing, including the initial settle beat exactly once. */
+export function storyDeadlineMs(remainingMs: number, fresh: boolean): number {
+  return remainingMs + (fresh ? STORY_SETTLE_MS : 0);
+}
 
 /** How long a story plays. Throws on a video without a positive duration (a contract violation). */
 export function storyDurationMs(media: MediaItem): number {

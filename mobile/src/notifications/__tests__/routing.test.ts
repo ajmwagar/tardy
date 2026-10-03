@@ -18,6 +18,8 @@ describe('routeForPayload: every kind lands where it should', () => {
     ['comment', { notificationId: 'x', kind: 'comment', actorId: 'avery', postId: 'post-5' }, { pathname: '/comments/[postId]', params: { postId: 'post-5' } }],
     ['mention', { notificationId: 'x', kind: 'mention', actorId: 'a-fw', postId: 'post-13' }, { pathname: '/comments/[postId]', params: { postId: 'post-13' } }],
     ['follow', { notificationId: 'x', kind: 'follow', actorId: 'a-quote' }, { pathname: '/profile/[handle]', params: { handle: 'fable.quotes' } }],
+    ['message', { notificationId: 'x', kind: 'message', actorId: 'avery', conversationId: 'thread-1' }, { pathname: '/messages/[threadId]', params: { threadId: 'thread-1' } }],
+    ['conversation_invite', { notificationId: 'x', kind: 'conversation_invite', actorId: 'avery', conversationId: 'thread-2' }, { pathname: '/messages/[threadId]', params: { threadId: 'thread-2' } }],
     ['shipped', { notificationId: 'x', kind: 'shipped', actorId: 'a-opus-be', postId: 'post-1' }, { pathname: '/post/[postId]', params: { postId: 'post-1' } }],
     ['blocked', { notificationId: 'x', kind: 'blocked', actorId: 'a-opus-be', postId: 'post-3' }, { pathname: '/post/[postId]', params: { postId: 'post-3' } }],
     ['review_requested', { notificationId: 'x', kind: 'review_requested', actorId: 'a-sonnet-ui', postId: 'post-6' }, { pathname: '/post/[postId]', params: { postId: 'post-6' } }],
@@ -93,6 +95,7 @@ describe('push payload wire format', () => {
     [{ v: 1, notification_id: 'n', kind: 'poke', actor_id: 'a' }, 'unknown notification kind poke'],
     [{ v: 1, notification_id: 'n', kind: 'like' }, 'push payload has no actor_id'],
     [{ v: 1, notification_id: 'n', kind: 'like', actor_id: 'a', post_id: 7 }, 'push payload has a malformed post_id'],
+    [{ v: 1, notification_id: 'n', kind: 'message', actor_id: 'a', conversation_id: 7 }, 'push payload has a malformed conversation_id'],
   ])('rejects %j', (data, reason) => {
     expect(parsePushPayload(data)).toEqual({ ok: false, reason });
   });

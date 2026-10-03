@@ -1,4 +1,3 @@
-import Constants from 'expo-constants';
 import { isRunningInExpoGo } from 'expo';
 import { Platform } from 'react-native';
 import { useSyncExternalStore } from 'react';
@@ -114,13 +113,8 @@ export async function shouldAskForPush(): Promise<boolean> {
   return !p.granted && p.status === 'undetermined' && p.canAskAgain;
 }
 
-function easProjectId(): string | undefined {
-  const extra = Constants.expoConfig?.extra as { eas?: { projectId?: string } } | undefined;
-  return extra?.eas?.projectId ?? Constants.easConfig?.projectId;
-}
-
 /**
- * Gets this device's Expo push token and registers it with the server. Failures land in
+ * Gets this device's native APNs token and registers it with the server. Failures land in
  * `status.problem` (shown in settings) and the console, not thrown: a device that can't
  * get a remote token can still show local notifications.
  */
@@ -131,16 +125,17 @@ export async function registerPushToken(): Promise<void> {
     console.warn(`[push] ${problem}`);
     setStatus({ problem });
   };
-  if (isRunningInExpoGo() && Platform.OS === 'android') {
-    return fail('Expo Go on Android cannot receive remote pushes; use a development build. Local notifications still work.');
+  if (isRunningInExpoGo()) {
+    return fail('Remote push needs the Tardy development or TestFlight build. Expo Go can still show local test notifications.');
   }
-  const projectId = easProjectId();
-  if (!projectId) {
-    return fail('No EAS project id configured (expo.extra.eas.projectId), so this device has no push token. Local notifications still work.');
+  if (Platform.OS !== 'ios') {
+    return fail('The current Tardy push worker delivers through APNs; Android delivery is not enabled yet.');
   }
   try {
-    const { data: token } = await N.getExpoPushTokenAsync({ projectId });
-    await api.registerPushToken({ token, provider: 'expo', platform: Platform.OS === 'ios' ? 'ios' : 'android' });
+    const device = await N.getDevicePushTokenAsync();
+    if (typeof device.data !== 'string') throw new Error('iOS returned a non-string APNs token');
+    const token = device.data;
+    await api.registerPushToken({ token, environment: __DEV__ ? 'sandbox' : 'production', topic: 'dev.fpl.tardy' });
     setStatus({ token, problem: null });
   } catch (error) {
     fail(`Couldn't register for push: ${error instanceof Error ? error.message : String(error)}`);
@@ -152,6 +147,22 @@ export async function unregisterPush(): Promise<void> {
   if (!status.token) return;
   await api.unregisterPushToken(status.token);
   setStatus({ token: null });
+}
+
+/** Development smoke test for permission, foreground presentation, and tap routing. */
+export async function sendLocalTestNotification(): Promise<void> {
+  if (!__DEV__) throw new Error('Local test notifications are development-only');
+  const N = notificationsModule();
+  if (!N) throw new Error(status.problem ?? 'Notifications are unavailable in this build');
+  if (status.permission !== 'granted') throw new Error('Turn on notifications first');
+  await N.scheduleNotificationAsync({
+    content: {
+      title: 'Don’t be Tardy',
+      body: 'Push presentation is working on this phone.',
+      data: { kind: 'mention' },
+    },
+    trigger: null,
+  });
 }
 
 // MARK: presentation

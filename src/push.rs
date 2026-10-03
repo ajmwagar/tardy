@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Row, postgres::PgPoolOptions};
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use utoipa::ToSchema;
@@ -57,9 +58,36 @@ pub struct AppNotification {
     pub actor_id: Uuid,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub post_id: Option<Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conversation_id: Option<Uuid>,
     pub text: String,
     pub created_at_ms: i64,
     pub read: bool,
+}
+
+pub const NOTIFICATION_CATEGORIES: [(&str, bool); 9] = [
+    ("blocked", true),
+    ("review_requested", true),
+    ("shipped", true),
+    ("message", true),
+    ("conversation_invite", true),
+    ("comment", false),
+    ("mention", false),
+    ("like", false),
+    ("follow", false),
+];
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct NotificationPreferences {
+    pub defaults: BTreeMap<String, bool>,
+    pub overrides: Vec<NotificationPreferenceOverride>,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct NotificationPreferenceOverride {
+    pub project_id: Uuid,
+    pub category: String,
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -106,6 +134,7 @@ pub struct ClaimedDelivery {
     pub environment: ApnsEnvironment,
     pub topic: String,
     pub notification_id: Uuid,
+    pub category: String,
     pub title: String,
     pub body: String,
     pub deep_link: Option<String>,
@@ -240,6 +269,20 @@ impl PgPushStore {
         )
     }
 
+    pub async fn unregister_token(&self, account_id: Uuid, token: &str) -> Result<(), PushError> {
+        let digest = device_token_digest(token)?;
+        sqlx::query(
+            "UPDATE push_devices SET active=false,invalidated_at=now(),updated_at=now()
+             WHERE account_id=$1 AND token_digest=$2 AND active",
+        )
+        .bind(account_id)
+        .bind(digest)
+        .execute(&self.pool)
+        .await?;
+        // Idempotent by design: signing out twice must not strand the client.
+        Ok(())
+    }
+
     pub async fn set_preference(
         &self,
         account_id: Uuid,
@@ -259,6 +302,32 @@ impl PgPushStore {
         Ok(preference)
     }
 
+    pub async fn preferences(
+        &self,
+        account_id: Uuid,
+    ) -> Result<NotificationPreferences, PushError> {
+        let mut defaults: BTreeMap<String, bool> = NOTIFICATION_CATEGORIES
+            .into_iter()
+            .map(|(category, enabled)| (category.to_owned(), enabled))
+            .collect();
+        let rows = sqlx::query(
+            "SELECT category,enabled FROM notification_preferences WHERE account_id=$1",
+        )
+        .bind(account_id)
+        .fetch_all(&self.pool)
+        .await?;
+        for row in rows {
+            let category: String = row.try_get("category")?;
+            if defaults.contains_key(&category) {
+                defaults.insert(category, row.try_get("enabled")?);
+            }
+        }
+        Ok(NotificationPreferences {
+            defaults,
+            overrides: Vec::new(),
+        })
+    }
+
     pub async fn notifications(
         &self,
         account_id: Uuid,
@@ -266,7 +335,8 @@ impl PgPushStore {
     ) -> Result<Vec<AppNotification>, PushError> {
         let rows = sqlx::query(
             "SELECT id,category,body,created_at,read_at,
-                    data->>'actor_id' AS actor_id,data->>'post_id' AS post_id
+                    data->>'actor_id' AS actor_id,data->>'post_id' AS post_id,
+                    data->>'conversation_id' AS conversation_id
              FROM push_notifications
              WHERE account_id=$1 AND data ? 'actor_id'
              ORDER BY created_at DESC,id DESC LIMIT $2",
@@ -286,11 +356,19 @@ impl PgPushStore {
                     .map(|id| id.parse())
                     .transpose()
                     .map_err(|_| sqlx::Error::Decode("invalid notification post_id".into()))?;
+                let conversation_id = row
+                    .try_get::<Option<String>, _>("conversation_id")?
+                    .map(|id| id.parse())
+                    .transpose()
+                    .map_err(|_| {
+                        sqlx::Error::Decode("invalid notification conversation_id".into())
+                    })?;
                 Ok(AppNotification {
                     id: row.try_get("id")?,
                     kind: row.try_get("category")?,
                     actor_id,
                     post_id,
+                    conversation_id,
                     text: row.try_get("body")?,
                     created_at_ms: row
                         .try_get::<DateTime<Utc>, _>("created_at")?
@@ -310,7 +388,7 @@ impl PgPushStore {
     ) -> Result<u64, PushError> {
         Ok(sqlx::query(
             "UPDATE push_notifications SET read_at=COALESCE(read_at,now())
-             WHERE account_id=$1 AND created_at<=$2 AND read_at IS NULL",
+             WHERE account_id=$1 AND created_at < $2 + interval '1 millisecond' AND read_at IS NULL",
         )
         .bind(account_id)
         .bind(through)
@@ -322,38 +400,67 @@ impl PgPushStore {
     pub async fn enqueue(&self, notification: NewNotification) -> Result<Uuid, PushError> {
         validate_name(&notification.category)?;
         let mut transaction = self.pool.begin().await?;
-        let notification_id = notification_id_for_event(notification.source_event_id);
-        sqlx::query(
-            "INSERT INTO push_notifications
-               (id,source_event_id,account_id,category,title,body,deep_link,data)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-             ON CONFLICT (source_event_id) DO NOTHING",
-        )
-        .bind(notification_id)
-        .bind(notification.source_event_id)
-        .bind(notification.account_id)
-        .bind(&notification.category)
-        .bind(&notification.title)
-        .bind(&notification.body)
-        .bind(&notification.deep_link)
-        .bind(Value::Object(notification.data))
-        .execute(&mut *transaction)
-        .await?;
-        sqlx::query(
-            "INSERT INTO push_deliveries (id,notification_id,device_id)
-             SELECT gen_random_uuid(),n.id,d.id FROM push_notifications n
-             JOIN push_devices d ON d.account_id=n.account_id
-             LEFT JOIN notification_preferences p ON p.account_id=n.account_id AND p.category=n.category
-             WHERE n.id=$1 AND d.active AND COALESCE(p.enabled,true)
-             ON CONFLICT (notification_id,device_id) DO NOTHING",
-        )
-        .bind(notification_id)
-        .execute(&mut *transaction)
-        .await?;
+        let notification_id = enqueue_notification(&mut transaction, &notification).await?;
         transaction.commit().await?;
         Ok(notification_id)
     }
 
+    /// Enqueue inside a caller-owned transaction so the domain event and its notification
+    /// cannot commit independently. The caller remains responsible for committing.
+    pub async fn enqueue_in(
+        transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        notification: &NewNotification,
+    ) -> Result<Uuid, PushError> {
+        validate_name(&notification.category)?;
+        enqueue_notification(transaction, notification).await
+    }
+}
+
+async fn enqueue_notification(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    notification: &NewNotification,
+) -> Result<Uuid, PushError> {
+    let notification_id = notification_id_for_event(notification.source_event_id);
+    sqlx::query(
+        "INSERT INTO push_notifications
+               (id,source_event_id,account_id,category,title,body,deep_link,data)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+             ON CONFLICT (source_event_id) DO NOTHING",
+    )
+    .bind(notification_id)
+    .bind(notification.source_event_id)
+    .bind(notification.account_id)
+    .bind(&notification.category)
+    .bind(&notification.title)
+    .bind(&notification.body)
+    .bind(&notification.deep_link)
+    .bind(Value::Object(notification.data.clone()))
+    .execute(&mut **transaction)
+    .await?;
+    sqlx::query(
+            "INSERT INTO push_deliveries (id,notification_id,device_id)
+             SELECT gen_random_uuid(),n.id,d.id FROM push_notifications n
+             JOIN push_devices d ON d.account_id=n.account_id
+             LEFT JOIN notification_preferences p ON p.account_id=n.account_id AND p.category=n.category
+             WHERE n.id=$1 AND d.active AND COALESCE(
+               p.enabled,
+               CASE n.category
+                 WHEN 'comment' THEN false
+                 WHEN 'mention' THEN false
+                 WHEN 'like' THEN false
+                 WHEN 'follow' THEN false
+                 ELSE true
+               END
+             )
+             ON CONFLICT (notification_id,device_id) DO NOTHING",
+        )
+        .bind(notification_id)
+        .execute(&mut **transaction)
+        .await?;
+    Ok(notification_id)
+}
+
+impl PgPushStore {
     pub async fn claim_deliveries(
         &self,
         worker: &str,
@@ -373,7 +480,7 @@ impl PgPushStore {
                lease_until=now()+interval '60 seconds',attempts=d.attempts+1
              FROM claimed c,push_notifications n,push_devices pd
              WHERE d.id=c.id AND n.id=d.notification_id AND pd.id=d.device_id
-             RETURNING d.id,d.device_id,pd.token,pd.environment,pd.topic,d.notification_id,n.title,n.body,
+             RETURNING d.id,d.device_id,pd.token,pd.environment,pd.topic,d.notification_id,n.category,n.title,n.body,
                n.deep_link,n.data,d.attempts",
         )
         .bind(limit)
@@ -609,6 +716,7 @@ fn delivery_from_row(row: sqlx::postgres::PgRow) -> Result<ClaimedDelivery, Push
         environment: parse_environment(row.try_get("environment")?)?,
         topic: row.try_get("topic")?,
         notification_id: row.try_get("notification_id")?,
+        category: row.try_get("category")?,
         title: row.try_get("title")?,
         body: row.try_get("body")?,
         deep_link: row.try_get("deep_link")?,

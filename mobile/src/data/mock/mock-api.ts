@@ -20,7 +20,7 @@ import { autopayCovers, limitMessage, PLANS, type PlanId } from '@/membership/pl
 import { canonicalUrl, linkProvider, youtubeId } from '@/share/links';
 import { searchRanked } from '@/share/search';
 import { threadKind } from '@/share/sections';
-import { normalizeProfilePatch, profileProblem, type ProfilePatch } from '../profile';
+import { normalizeProfilePatch, profileProblem, type AgentProfilePatch, type ProfilePatch } from '../profile';
 import { mockCredential } from './mock-auth';
 
 import { SEARCH_LIMIT, TardyApiError, type TardyApi } from '../api';
@@ -132,6 +132,9 @@ export type MockTardyApiOptions = {
  * hidden throw `TardyApiError('forbidden')`.
  */
 export class MockTardyApi implements TardyApi {
+  async webHandoff(returnPath: '/verify' | '/membership'): Promise<string> {
+    return `https://tardy.news${returnPath}.html`;
+  }
   private readonly auth: MockAuthServer;
   private readonly latencyMs: number;
   private accountsById = new Map(ACCOUNTS.map((a) => [a.id, a]));
@@ -157,6 +160,8 @@ export class MockTardyApi implements TardyApi {
   private commentLog: Comment[] = [...COMMENTS];
   /** Per (viewer, thread): index into the thread's messages of the last one read. */
   private threadReadThrough = new Map<string, number>();
+  /** Short-lived typing leases keyed by thread then profile. */
+  private typingLeases = new Map<string, Map<string, number>>();
   /** Per viewer: notifications at or before this time are read. */
   private notificationsReadThrough = new Map<string, number>();
   private snapshots = new Map<string, Post[]>();
@@ -382,6 +387,29 @@ export class MockTardyApi implements TardyApi {
     return this.delay(this.present(updated));
   }
 
+  async profileAgents(profileId: string) {
+    const owner = this.visibleAccount(profileId);
+    const agents = [...this.accountsById.values()].filter((account) => account.kind === 'agent' && owner.id === this.viewerId && this.ownsAgent(account));
+    return this.delay(agents.map((account) => this.present(account)));
+  }
+
+  async updateAgentProfile(agentId: string, patch: AgentProfilePatch) {
+    const agent = this.visibleAccount(agentId);
+    if (agent.kind !== 'agent' || !agent.ownedByViewer) throw new TardyApiError('forbidden', 'You do not own this agent.');
+    const clean = normalizeProfilePatch(patch);
+    const problem = profileProblem(clean) ?? (patch.handle === undefined ? null : handleProblem(patch.handle));
+    if (problem) throw new TardyApiError('invalid', problem);
+    if (patch.handle && [...this.accountsById.values()].some((a) => a.handle === patch.handle && a.id !== agentId)) throw new TardyApiError('conflict', `@${patch.handle} is taken`);
+    const updated = { ...agent, ...clean, ...(patch.handle !== undefined && { handle: patch.handle }), ...(patch.avatarUrl !== undefined && { avatarUrl: patch.avatarUrl }) };
+    this.accountsById.set(agentId, updated);
+    return this.delay(this.present(updated));
+  }
+
+  async generateAgentAvatar(agentId: string) {
+    const agent = this.visibleAccount(agentId);
+    return this.updateAgentProfile(agentId, { avatarUrl: generatedAvatarUrl('agent', `${agent.handle}-${++this.avatarRolls}`) });
+  }
+
   async requestEmailCode(email: string) {
     this.auth.requestEmailCode(email);
     return this.delay(undefined);
@@ -560,6 +588,24 @@ export class MockTardyApi implements TardyApi {
     return this.delay(message);
   }
 
+  async typing(threadId: string) {
+    this.visibleThread(threadId);
+    const now = Date.now();
+    const leases = this.typingLeases.get(threadId);
+    if (!leases) return this.delay([]);
+    for (const [profile, expires] of leases) if (expires <= now) leases.delete(profile);
+    return this.delay([...leases.keys()].filter((profile) => profile !== this.viewerId));
+  }
+
+  async setTyping(threadId: string, active: boolean) {
+    this.visibleThread(threadId);
+    const leases = this.typingLeases.get(threadId) ?? new Map<string, number>();
+    this.typingLeases.set(threadId, leases);
+    if (active) leases.set(this.viewerId, Date.now() + 5_000);
+    else leases.delete(this.viewerId);
+    return this.delay(undefined);
+  }
+
   async markThreadRead(threadId: string, throughMessageId: string) {
     this.visibleThread(threadId);
     const messages = this.messageLog.filter((m) => m.threadId === threadId);
@@ -578,18 +624,54 @@ export class MockTardyApi implements TardyApi {
     const members = [...new Set([this.viewerId, ...participants.map((p) => p.id)])];
     if (members.length < 2) throw new TardyApiError('invalid', 'A thread needs someone besides you.');
     for (const id of members) this.visibleAccount(id, `participant ${id}`);
-    const key = (ids: readonly string[]) => [...ids].sort().join(',');
-    const existing = this.threadList.find((t) => key(t.participantIds) === key(members));
-    if (existing) return this.delay(existing);
     const name = title?.trim();
+    const key = (ids: readonly string[]) => [...ids].sort().join(',');
+    if (members.length === 2 && !name) {
+      const existing = this.threadList.find((t) => t.participantIds.length === 2 && key(t.participantIds) === key(members));
+      if (existing) return this.delay(existing);
+    }
     const thread: ThreadRef = {
       id: `t-new-${this.threadList.length}`,
       participantIds: members,
-      ...(members.length > 2 && name ? { title: name } : {}),
+      ...(name ? { title: name } : {}),
       kind: this.kindOf(members),
     };
     this.threadList.push(thread);
     return this.delay(thread);
+  }
+
+  async renameThread(threadId: string, title?: string): Promise<ThreadRef> {
+    this.visibleThread(threadId);
+    const index = this.threadList.findIndex((thread) => thread.id === threadId);
+    const thread = this.threadList[index];
+    const name = title?.trim();
+    const renamed = { ...thread, ...(name ? { title: name } : {}) };
+    if (!name) delete renamed.title;
+    this.threadList[index] = renamed;
+    return this.delay(renamed);
+  }
+
+  async addThreadParticipant(threadId: string, profileId: string): Promise<ThreadRef> {
+    this.visibleThread(threadId);
+    const index = this.threadList.findIndex((thread) => thread.id === threadId);
+    const thread = this.threadList[index];
+    const profile = this.visibleAccount(profileId, `participant ${profileId}`);
+    if (profile.kind === 'agent') throw new TardyApiError('invalid', 'Add agents with addAgent.');
+    const participantIds = thread.participantIds.includes(profileId) ? thread.participantIds : [...thread.participantIds, profileId];
+    const updated = { ...thread, participantIds };
+    this.threadList[index] = updated;
+    return this.delay(updated);
+  }
+
+  async removeThreadParticipant(threadId: string, profileId: string): Promise<ThreadRef> {
+    this.visibleThread(threadId);
+    const index = this.threadList.findIndex((thread) => thread.id === threadId);
+    const thread = this.threadList[index];
+    const participantIds = thread.participantIds.filter((id) => id !== profileId);
+    if (participantIds.length < 2) throw new TardyApiError('invalid', 'A thread needs two participants.');
+    const updated = { ...thread, participantIds };
+    this.threadList[index] = updated;
+    return this.delay(updated);
   }
 
   async addAgent(threadId: string, agentId: string, includeAnchorShare = true): Promise<ThreadRef> {
@@ -966,6 +1048,10 @@ export class MockTardyApi implements TardyApi {
     if (full) throw new TardyApiError('forbidden', full);
     this.claimedAgents.add(MOCK_CLAIMABLE_AGENT);
     return this.delay(undefined);
+  }
+
+  async createAgentPairing() {
+    return this.delay({ code: MOCK_AGENT_CLAIM_CODE, expiresAt: new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString() });
   }
 
   async searchAccounts(query: string): Promise<Account[]> {

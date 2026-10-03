@@ -16,27 +16,33 @@ use crate::metrics::Metrics;
 use crate::onboarding::{AccountRegistry, OnboardingError, TemporaryTardyAccount};
 use crate::pg_accounts::{HumanProfile, HumanSession, PgAccountError, PgAccountStore};
 use crate::push::{
-    AppNotification, NotificationPreference, PgPushStore, PushDevice, PushError, RegisterPushDevice,
+    AppNotification, NotificationPreference, NotificationPreferences, PgPushStore, PushDevice,
+    PushError, RegisterPushDevice,
 };
 use crate::ranking::FeedRanker;
-use crate::search::{SearchError, SearchService};
+use crate::search::{SearchDocument, SearchError, SearchService};
 use crate::social::{
-    AppAccount, AppEngagementAction, Comment, Conversation, ConversationMessage,
-    ConversationSummary, IdentityKind, PgSocialStore, PostVisibility, SharedLink, SocialError,
-    TardyPost,
+    AppAccount, AppEngagementAction, AppFeedPost, AppSearchResult, Comment, Conversation,
+    ConversationMessage, ConversationSummary, IdentityKind, PgSocialStore, PostMedia,
+    PostVisibility, SetBrandAffiliate, SharedLink, SocialError, TardyPost,
 };
 use crate::store::{MemoryStore, NewLive, NewProfile, NewReel, Store, StoreError};
 use crate::subscriptions::{
     FeedEvent, NewSubscription, PgSubscriptionStore, Subscription, SubscriptionError,
 };
-use axum::extract::{Path, Query, State};
-use axum::http::{HeaderMap, StatusCode, header};
+use crate::web_billing::{BillingError, PgWebBillingStore, WEB_SESSION_COOKIE};
+use axum::body::Bytes;
+use axum::extract::{DefaultBodyLimit, Path, Query, State};
+use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post, put};
+use axum::routing::{get, patch, post, put};
 use axum::{Json, Router, middleware};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
+use tokio_util::io::ReaderStream;
+use tower_http::cors::CorsLayer;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
@@ -55,6 +61,7 @@ pub struct AppState {
     pub social: Option<Arc<PgSocialStore>>,
     pub audio: Option<Arc<PgAudioStore>>,
     pub apple_auth: Option<Arc<AppleAuthenticator>>,
+    pub web_billing: Option<Arc<PgWebBillingStore>>,
 }
 
 pub struct AdsRuntime {
@@ -83,6 +90,7 @@ impl AppState {
             social: None,
             audio: None,
             apple_auth: None,
+            web_billing: None,
         })
     }
 
@@ -105,6 +113,7 @@ impl AppState {
             social: None,
             audio: None,
             apple_auth: None,
+            web_billing: None,
         })
     }
 
@@ -127,11 +136,17 @@ impl AppState {
             social: None,
             audio: None,
             apple_auth: None,
+            web_billing: None,
         })
     }
 
     pub fn with_push_store(mut self, push: PgPushStore) -> Self {
         self.push = Some(Arc::new(push));
+        self
+    }
+
+    pub fn with_media_service(mut self, media: MediaService) -> Self {
+        self.media = Arc::new(media);
         self
     }
 
@@ -165,6 +180,11 @@ impl AppState {
         self
     }
 
+    pub fn with_web_billing(mut self, value: PgWebBillingStore) -> Self {
+        self.web_billing = Some(Arc::new(value));
+        self
+    }
+
     pub async fn purge_expired_unclaimed_tardies(&self) -> Result<usize, ApiError> {
         let expired = purge_accounts(self, now_ms()?).await?;
         if !expired.is_empty() {
@@ -177,21 +197,58 @@ impl AppState {
 
 pub fn router(state: Arc<AppState>) -> Router {
     let metrics = state.metrics.clone();
+    let web_origin =
+        std::env::var("TARDY_WEB_BASE_URL").unwrap_or_else(|_| "https://tardy.news".into());
+    let cors = CorsLayer::new()
+        .allow_origin(
+            web_origin
+                .parse::<axum::http::HeaderValue>()
+                .expect("TARDY_WEB_BASE_URL must be an HTTP origin"),
+        )
+        .allow_credentials(true)
+        .allow_methods([Method::GET, Method::POST, Method::DELETE])
+        .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]);
     Router::new()
         .route("/healthz", get(|| async { StatusCode::NO_CONTENT }))
         .route("/metrics", get(metrics_endpoint))
         .route("/openapi.json", get(openapi_endpoint))
+        .route("/v1/verification/products", get(verification_products))
+        .route("/v1/web/handoffs", post(create_web_handoff))
+        .route("/v1/web/session/exchange", post(exchange_web_handoff))
+        .route("/v1/web/session", axum::routing::delete(delete_web_session))
+        .route("/v1/web/billing", get(web_billing_status))
+        .route(
+            "/v1/web/billing/stripe/checkout",
+            post(stripe_verification_checkout),
+        )
+        .route("/v1/web/billing/stripe/portal", post(stripe_billing_portal))
+        .route("/v1/web/billing/stripe/webhook", post(stripe_webhook))
         .route("/llms.txt", get(llms_txt))
         .route("/mcp", post(crate::mcp::endpoint))
         .route("/v1/sessions", post(create_session))
         .route("/v1/dev/session", post(development_session))
         .route("/v1/session", get(current_session).delete(delete_session))
         .route("/v1/profile", get(current_profile).patch(update_profile))
+        .route("/v1/profile/avatar/generate", post(generate_profile_avatar))
+        .route("/v1/avatars/{seed}", get(generated_avatar))
+        .route("/v1/profile/handle", put(set_profile_handle))
+        .route("/v1/profile/suggested-follows", get(suggested_follows))
         .route("/v1/profile/following", get(current_following))
         .route("/v1/profiles", post(create_profile).get(list_profiles))
+        .route("/v1/profiles/search", get(search_profiles))
         .route("/v1/profiles/by-id/{id}", get(get_profile_by_id))
         .route("/v1/profiles/by-id/{id}/posts", get(get_profile_posts))
+        .route("/v1/profiles/by-id/{id}/agents", get(get_profile_agents))
         .route("/v1/profiles/{handle}", get(get_profile))
+        .route("/v1/agents/{id}/profile", patch(update_agent_profile))
+        .route(
+            "/v1/agents/{id}/avatar/generate",
+            post(generate_agent_avatar),
+        )
+        .route(
+            "/v1/brands/{brand_id}/affiliates/{profile_id}",
+            put(set_brand_affiliate).delete(clear_brand_affiliate),
+        )
         .route(
             "/v1/profiles/{profile_id}/follow",
             put(follow_profile).delete(unfollow_profile),
@@ -209,13 +266,25 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/onboarding/agent-codes", post(issue_agent_code))
         .route("/v1/onboarding/claims", post(claim_agent_code))
         .route("/v1/onboarding/tardies", post(register_tardy_account))
+        .route(
+            "/v1/onboarding/tardies/connect",
+            post(connect_tardy_account),
+        )
         .route("/v1/onboarding/tardy-claims", post(claim_tardy_account))
+        .route("/v1/onboarding/complete", post(complete_onboarding))
         .route("/v1/uploads", post(authorize_upload))
         .route("/v1/uploads/{id}/complete", post(complete_upload))
         .route("/v1/reels", post(publish_reel))
         .route("/v1/reels/{id}/engagements", post(record_engagement))
         .route("/v1/saved-posts", get(list_saved_posts))
         .route("/v1/saved-posts/{id}", put(save_post).delete(unsave_post))
+        .route("/v1/posts/{id}", get(get_app_post))
+        .route("/v1/posts/{id}/like", put(like_post).delete(unlike_post))
+        .route("/v1/posts/{id}/alarm", put(alarm_post).delete(unalarm_post))
+        .route(
+            "/v1/posts/{id}/repost",
+            put(repost_post).delete(unrepost_post),
+        )
         .route(
             "/v1/ai-consents/search",
             post(grant_search_consent).delete(revoke_search_consent),
@@ -230,10 +299,19 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/engagements", post(record_app_engagements))
         .route("/v1/stories", get(stories))
         .route("/v1/dev/blobs/{name}", get(local_blob))
+        .route(
+            "/v1/dev/uploads/{*key}",
+            get(local_upload)
+                .head(local_upload)
+                .put(put_local_upload)
+                .layer(DefaultBodyLimit::max(250 << 20)),
+        )
+        .route("/v1/dev/brags/{slug}/{name}", get(local_brag))
         .route("/v1/feed/hyper-tardy", get(hyper_tardy_feed))
         .route("/v1/agent-handoffs", post(agent_handoff))
         .route("/v1/agent-shares", post(share_to_agent))
         .route("/v1/social/shared-links", post(create_shared_link))
+        .route("/v1/social/shared-links/{id}", get(get_shared_link))
         .route(
             "/v1/social/conversations",
             post(create_social_conversation).get(list_social_conversations),
@@ -241,6 +319,28 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(
             "/v1/social/conversations/{id}/messages",
             post(send_social_message).get(list_social_messages),
+        )
+        .route(
+            "/v1/social/conversations/{id}",
+            put(rename_social_conversation),
+        )
+        .route(
+            "/v1/social/conversations/{id}/participants",
+            post(add_social_conversation_participant),
+        )
+        .route(
+            "/v1/social/conversations/{id}/participants/{profile_id}",
+            axum::routing::delete(remove_social_conversation_participant),
+        )
+        .route(
+            "/v1/social/conversations/{id}/messages/{message_id}/reaction",
+            put(set_social_message_reaction).delete(clear_social_message_reaction),
+        )
+        .route(
+            "/v1/social/conversations/{id}/typing",
+            get(list_social_typing)
+                .put(start_social_typing)
+                .delete(stop_social_typing),
         )
         .route(
             "/v1/social/conversations/{id}/read",
@@ -251,7 +351,14 @@ pub fn router(state: Arc<AppState>) -> Router {
             post(summon_social_agent),
         )
         .route("/v1/social/posts", post(publish_social_post))
-        .route("/v1/social/posts/{id}/comments", post(create_post_comment))
+        .route(
+            "/v1/social/posts/{id}/visibility",
+            put(set_social_post_visibility),
+        )
+        .route(
+            "/v1/social/posts/{id}/comments",
+            get(list_post_comments).post(create_post_comment),
+        )
         .route("/v1/audio/releases", post(create_audio_release))
         .route("/v1/audio/releases/{id}/tracks", post(add_audio_track))
         .route("/v1/social/posts/{id}/audio", post(attach_post_audio))
@@ -262,7 +369,11 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/v1/push/devices/{id}",
             axum::routing::delete(unregister_push_device),
         )
-        .route("/v1/push/preferences", put(set_notification_preference))
+        .route("/v1/push/devices/unregister", post(unregister_push_token))
+        .route(
+            "/v1/push/preferences",
+            get(get_notification_preferences).put(set_notification_preference),
+        )
         .route("/v1/notifications", get(list_notifications))
         .route("/v1/notifications/read", post(mark_notifications_read))
         .route("/v1/ad-campaigns", post(create_ad_campaign))
@@ -285,9 +396,158 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(poll_feed_subscription),
         )
         .with_state(state)
+        .layer(cors)
         .layer(middleware::from_fn(move |request, next| {
             crate::metrics::track(metrics.clone(), request, next)
         }))
+}
+
+async fn verification_products() -> Json<[crate::verification::VerificationProduct; 2]> {
+    Json(crate::verification::products())
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub(crate) struct CreateWebHandoff {
+    return_path: String,
+}
+
+async fn create_web_handoff(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<CreateWebHandoff>,
+) -> Result<Json<crate::web_billing::WebHandoff>, ApiError> {
+    let account_id = authenticated_account(&state, &headers).await?;
+    Ok(Json(
+        web_billing(&state)?
+            .issue_handoff(account_id, &body.return_path)
+            .await?,
+    ))
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub(crate) struct ExchangeWebHandoff {
+    code: String,
+}
+
+async fn exchange_web_handoff(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<ExchangeWebHandoff>,
+) -> Result<Response, ApiError> {
+    let session = web_billing(&state)?.exchange_handoff(&body.code).await?;
+    let secure = web_billing(&state)?.cookie_secure_attribute();
+    let cookie = format!(
+        "{WEB_SESSION_COOKIE}={}; Path=/v1/web; Max-Age=2592000; HttpOnly; SameSite=Lax{secure}",
+        session.cookie,
+    );
+    Ok((
+        [(header::SET_COOKIE, cookie)],
+        Json(serde_json::json!({ "return_path": session.return_path })),
+    )
+        .into_response())
+}
+
+async fn delete_web_session(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    if let Some(token) = web_cookie(&headers) {
+        web_billing(&state)?.revoke(token).await?;
+    }
+    Ok((
+        [(
+            header::SET_COOKIE,
+            format!(
+                "{WEB_SESSION_COOKIE}=; Path=/v1/web; Max-Age=0; HttpOnly; SameSite=Lax{}",
+                web_billing(&state)?.cookie_secure_attribute()
+            ),
+        )],
+        StatusCode::NO_CONTENT,
+    )
+        .into_response())
+}
+
+async fn web_billing_status(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<crate::web_billing::BillingStatus>, ApiError> {
+    let account = web_account(&state, &headers).await?;
+    Ok(Json(web_billing(&state)?.status(account).await?))
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub(crate) struct VerificationCheckout {
+    tier: crate::verification::VerificationTier,
+}
+
+async fn stripe_verification_checkout(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<VerificationCheckout>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_web_origin(&headers)?;
+    let account = web_account(&state, &headers).await?;
+    let url = web_billing(&state)?
+        .stripe_checkout(account, body.tier)
+        .await?;
+    Ok(Json(serde_json::json!({ "url": url })))
+}
+
+async fn stripe_billing_portal(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_web_origin(&headers)?;
+    let account = web_account(&state, &headers).await?;
+    let url = web_billing(&state)?.stripe_portal(account).await?;
+    Ok(Json(serde_json::json!({ "url": url })))
+}
+
+async fn stripe_webhook(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Result<StatusCode, ApiError> {
+    let signature = headers
+        .get("stripe-signature")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| ApiError::unauthorized("Stripe signature is required"))?;
+    web_billing(&state)?
+        .stripe_webhook(signature, &body)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+fn web_billing(state: &AppState) -> Result<&PgWebBillingStore, ApiError> {
+    state.web_billing.as_deref().ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        message: "website billing is not configured".into(),
+    })
+}
+
+async fn web_account(state: &AppState, headers: &HeaderMap) -> Result<Uuid, ApiError> {
+    let token = web_cookie(headers)
+        .ok_or_else(|| ApiError::unauthorized("website session is required"))?
+        .to_owned();
+    Ok(web_billing(state)?.authenticate(&token).await?)
+}
+
+fn web_cookie(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(header::COOKIE)?
+        .to_str()
+        .ok()?
+        .split(';')
+        .map(str::trim)
+        .find_map(|part| part.strip_prefix(&format!("{WEB_SESSION_COOKIE}=")))
+}
+
+fn require_web_origin(headers: &HeaderMap) -> Result<(), ApiError> {
+    let expected =
+        std::env::var("TARDY_WEB_BASE_URL").unwrap_or_else(|_| "https://tardy.news".into());
+    match headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) {
+        Some(origin) if origin.trim_end_matches('/') == expected.trim_end_matches('/') => Ok(()),
+        _ => Err(ApiError::forbidden("website origin is not allowed")),
+    }
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -314,6 +574,103 @@ async fn record_app_engagements(
             other => other.into(),
         })?;
     Ok(StatusCode::ACCEPTED)
+}
+
+async fn like_post(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    social_store(&state)?
+        .set_post_liked(authenticated_actor(&state, &headers).await?, id, true)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn unlike_post(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    social_store(&state)?
+        .set_post_liked(authenticated_actor(&state, &headers).await?, id, false)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn alarm_post(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    social_store(&state)?
+        .set_post_marker(
+            authenticated_actor(&state, &headers).await?,
+            id,
+            "alarm",
+            true,
+        )
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn unalarm_post(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    social_store(&state)?
+        .set_post_marker(
+            authenticated_actor(&state, &headers).await?,
+            id,
+            "alarm",
+            false,
+        )
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn repost_post(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    social_store(&state)?
+        .set_post_marker(
+            authenticated_actor(&state, &headers).await?,
+            id,
+            "repost",
+            true,
+        )
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn unrepost_post(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    social_store(&state)?
+        .set_post_marker(
+            authenticated_actor(&state, &headers).await?,
+            id,
+            "repost",
+            false,
+        )
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn get_app_post(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<AppFeedPost>, ApiError> {
+    let viewer = Some(authenticated_actor(&state, &headers).await?);
+    let mut post = social_store(&state)?.app_post(viewer, id).await?;
+    localize_posts(&state, std::slice::from_mut(&mut post));
+    Ok(Json(post))
 }
 
 /// Session restoration is an explicit route even before the provider exchange lands.
@@ -347,6 +704,12 @@ pub(crate) struct AccountView {
     avatar_url: String,
     bio: String,
     verified: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verification_tier: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    super_tardy_slot: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    brand_affiliate: Option<crate::social::BrandAffiliate>,
     followers: u64,
     following: u64,
     post_count: u64,
@@ -383,14 +746,8 @@ async fn create_session(
                 status: StatusCode::SERVICE_UNAVAILABLE,
                 message: "Sign in with Apple is not configured".into(),
             })?;
-            let verification_started = std::time::Instant::now();
             let identity = verifier.verify(&identity_token, &nonce).await?;
-            tracing::info!(
-                elapsed_ms = verification_started.elapsed().as_millis(),
-                "verified Apple identity token"
-            );
-            let persistence_started = std::time::Instant::now();
-            let session = accounts
+            accounts
                 .sign_in_apple(
                     &identity.subject,
                     identity.email.as_deref(),
@@ -398,30 +755,45 @@ async fn create_session(
                     &identity.assertion_digest,
                     now_ms()?,
                 )
-                .await?;
-            tracing::info!(
-                elapsed_ms = persistence_started.elapsed().as_millis(),
-                "persisted Apple session"
-            );
-            session
+                .await?
         }
     };
-    Ok((StatusCode::CREATED, Json(signed_in_view(session))))
+    Ok((
+        StatusCode::CREATED,
+        Json(signed_in_view(&state, session).await?),
+    ))
+}
+
+#[derive(Deserialize)]
+struct DevelopmentSessionRequest {
+    email: Option<String>,
 }
 
 async fn development_session(
     State(state): State<Arc<AppState>>,
+    Json(body): Json<DevelopmentSessionRequest>,
 ) -> Result<(StatusCode, Json<SignedInView>), ApiError> {
     if std::env::var("TARDY_ENABLE_DEV_AUTH").as_deref() != Ok("yes") {
         return Err(ApiError::not_found("not found"));
     }
+    let configured_email = std::env::var("TARDY_DEV_AUTH_EMAIL").ok();
+    let email = body
+        .email
+        .as_deref()
+        .filter(|email| !email.trim().is_empty())
+        .or(configured_email.as_deref())
+        .unwrap_or("orangej20@gmail.com")
+        .to_owned();
     let session = state
         .pg_accounts
         .as_ref()
         .ok_or_else(|| ApiError::internal("PostgreSQL accounts are not configured"))?
-        .development_session("orangej20@gmail.com", now_ms()?)
+        .development_session(&email, now_ms()?)
         .await?;
-    Ok((StatusCode::CREATED, Json(signed_in_view(session))))
+    Ok((
+        StatusCode::CREATED,
+        Json(signed_in_view(&state, session).await?),
+    ))
 }
 
 async fn current_session(
@@ -438,7 +810,7 @@ async fn current_session(
         .resume_human_session(token, now_ms()?)
         .await
         .map_err(|_| ApiError::unauthorized("invalid bearer token"))?;
-    Ok(Json(signed_in_view(session)))
+    Ok(Json(signed_in_view(&state, session).await?))
 }
 
 async fn delete_session(
@@ -468,13 +840,79 @@ async fn current_profile(
         .ok_or_else(|| ApiError::internal("PostgreSQL accounts are not configured"))?
         .human_profile_for_account(account)
         .await?;
-    Ok(Json(account_view(profile)))
+    Ok(Json(account_view(&state, profile).await?))
 }
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct UpdateProfile {
     display_name: Option<String>,
     bio: Option<String>,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct UpdateAgentProfile {
+    handle: Option<String>,
+    display_name: Option<String>,
+    bio: Option<String>,
+    avatar_url: Option<String>,
+}
+
+async fn get_profile_agents(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<AppAccount>>, ApiError> {
+    let viewer = authenticated_account(&state, &headers).await?;
+    let mut agents = social_store(&state)?.owned_agents_for_profile(id).await?;
+    social_store(&state)?
+        .mark_owned_accounts(viewer, &mut agents)
+        .await?;
+    localize_accounts(&mut agents);
+    Ok(Json(agents))
+}
+
+async fn update_agent_profile(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(body): Json<UpdateAgentProfile>,
+) -> Result<Json<AppAccount>, ApiError> {
+    if body.handle.is_none()
+        && body.display_name.is_none()
+        && body.bio.is_none()
+        && body.avatar_url.is_none()
+    {
+        return Err(ApiError::bad_request("agent profile update is empty"));
+    }
+    let owner = authenticated_account(&state, &headers).await?;
+    let mut account = social_store(&state)?
+        .update_owned_agent_profile(
+            owner,
+            id,
+            body.handle.as_deref(),
+            body.display_name.as_deref(),
+            body.bio.as_deref(),
+            body.avatar_url.as_deref(),
+        )
+        .await?;
+    account.owned_by_viewer = Some(true);
+    localize_accounts(std::slice::from_mut(&mut account));
+    Ok(Json(account))
+}
+
+async fn generate_agent_avatar(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<Json<AppAccount>, ApiError> {
+    let owner = authenticated_account(&state, &headers).await?;
+    let avatar_url = dicebear_avatar_url(IdentityKind::Agent, &Uuid::new_v4().to_string());
+    let mut account = social_store(&state)?
+        .update_owned_agent_profile(owner, id, None, None, None, Some(&avatar_url))
+        .await?;
+    account.owned_by_viewer = Some(true);
+    localize_accounts(std::slice::from_mut(&mut account));
+    Ok(Json(account))
 }
 
 async fn update_profile(
@@ -492,7 +930,110 @@ async fn update_profile(
         .ok_or_else(|| ApiError::internal("PostgreSQL accounts are not configured"))?
         .update_human_profile(account, body.display_name.as_deref(), body.bio.as_deref())
         .await?;
-    Ok(Json(account_view(profile)))
+    Ok(Json(account_view(&state, profile).await?))
+}
+
+async fn generate_profile_avatar(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<AccountView>, ApiError> {
+    let account = authenticated_account(&state, &headers).await?;
+    let seed = Uuid::new_v4();
+    let avatar_url = dicebear_avatar_url(IdentityKind::Human, &seed.to_string());
+    let profile = state
+        .pg_accounts
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("PostgreSQL accounts are not configured"))?
+        .set_human_avatar(account, &avatar_url)
+        .await?;
+    Ok(Json(account_view(&state, profile).await?))
+}
+
+async fn generated_avatar(Path(seed): Path<Uuid>) -> impl IntoResponse {
+    let bytes = seed.as_bytes();
+    let background = format!(
+        "#{:02x}{:02x}{:02x}",
+        bytes[0] / 2,
+        bytes[1] / 2,
+        bytes[2] / 2
+    );
+    let accent = format!(
+        "#{:02x}{:02x}{:02x}",
+        160 + bytes[3] % 96,
+        140 + bytes[4] % 116,
+        bytes[5]
+    );
+    let svg = format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160"><rect width="160" height="160" rx="36" fill="{background}"/><circle cx="80" cy="73" r="45" fill="{accent}"/><circle cx="63" cy="68" r="6" fill="#111"/><circle cx="97" cy="68" r="6" fill="#111"/><path d="M57 92 Q80 110 103 92" fill="none" stroke="#111" stroke-width="8" stroke-linecap="round"/><path d="M80 16 L91 36 H69 Z" fill="#ffd400"/></svg>"##
+    );
+    (
+        [
+            (header::CONTENT_TYPE, "image/svg+xml; charset=utf-8"),
+            (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+        ],
+        svg,
+    )
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct SetHandle {
+    handle: String,
+}
+
+async fn set_profile_handle(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<SetHandle>,
+) -> Result<Json<AccountView>, ApiError> {
+    let account = authenticated_account(&state, &headers).await?;
+    let profile = state
+        .pg_accounts
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("PostgreSQL accounts are not configured"))?
+        .set_human_handle(account, &body.handle)
+        .await?;
+    Ok(Json(account_view(&state, profile).await?))
+}
+
+async fn suggested_follows(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<AppAccount>>, ApiError> {
+    let account = authenticated_account(&state, &headers).await?;
+    let own_profile = state
+        .pg_accounts
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("PostgreSQL accounts are not configured"))?
+        .human_profile_for_account(account)
+        .await?
+        .profile_id;
+    let mut accounts = social_store(&state)?
+        .search_app_accounts(account, "", 50)
+        .await?;
+    accounts.retain(|candidate| candidate.id != own_profile);
+    localize_accounts(&mut accounts);
+    Ok(Json(accounts))
+}
+
+async fn complete_onboarding(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<SignedInView>, ApiError> {
+    let token = bearer_token(&headers)?
+        .ok_or_else(|| ApiError::unauthorized("bearer token is required"))?;
+    let accounts = state
+        .pg_accounts
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("PostgreSQL accounts are not configured"))?;
+    let session = accounts
+        .resume_human_session(token, now_ms()?)
+        .await
+        .map_err(|_| ApiError::unauthorized("invalid bearer token"))?;
+    accounts
+        .complete_human_onboarding(session.profile.account_id, now_ms()?)
+        .await?;
+    let session = accounts.resume_human_session(token, now_ms()?).await?;
+    Ok(Json(signed_in_view(&state, session).await?))
 }
 
 async fn current_following(
@@ -520,7 +1061,7 @@ async fn list_profiles(
     headers: HeaderMap,
     Query(query): Query<ProfilesQuery>,
 ) -> Result<Json<Vec<AppAccount>>, ApiError> {
-    let _ = authenticated_account(&state, &headers).await?;
+    let viewer_account = authenticated_account(&state, &headers).await?;
     let ids = query
         .ids
         .split(',')
@@ -532,35 +1073,217 @@ async fn list_profiles(
     if ids.len() > 100 {
         return Err(ApiError::bad_request("at most 100 profile ids are allowed"));
     }
-    Ok(Json(social_store(&state)?.app_accounts(&ids).await?))
+    let mut accounts = social_store(&state)?.app_accounts(&ids).await?;
+    social_store(&state)?
+        .mark_owned_accounts(viewer_account, &mut accounts)
+        .await?;
+    localize_accounts(&mut accounts);
+    Ok(Json(accounts))
 }
 
-fn signed_in_view(value: HumanSession) -> SignedInView {
+#[derive(Deserialize)]
+struct ProfileSearchQuery {
+    #[serde(default)]
+    q: String,
+}
+
+async fn search_profiles(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<ProfileSearchQuery>,
+) -> Result<Json<Vec<AppAccount>>, ApiError> {
+    let account = authenticated_account(&state, &headers).await?;
+    let mut accounts = social_store(&state)?
+        .search_app_accounts(account, &query.q, 50)
+        .await?;
+    localize_accounts(&mut accounts);
+    Ok(Json(accounts))
+}
+
+async fn signed_in_view(state: &AppState, value: HumanSession) -> Result<SignedInView, ApiError> {
     let onboarded_at_ms = value.profile.onboarded_at_ms;
-    SignedInView {
+    Ok(SignedInView {
         session: SessionView {
             token: value.token,
             account_id: value.profile.profile_id,
             provider: value.provider,
             expires_at_ms: value.expires_at_ms,
         },
-        account: account_view(value.profile),
+        account: account_view(state, value.profile).await?,
         onboarded_at_ms,
+    })
+}
+
+async fn account_view(state: &AppState, value: HumanProfile) -> Result<AccountView, ApiError> {
+    let account = social_store(state)?
+        .app_account_by_id(value.profile_id)
+        .await?;
+    Ok(AccountView {
+        id: account.id,
+        kind: "human",
+        handle: account.handle,
+        display_name: account.display_name,
+        avatar_url: if account.avatar_url.is_empty()
+            || account.avatar_url == "https://tardy.news/favicon.svg"
+        {
+            dicebear_avatar_url(IdentityKind::Human, &value.handle)
+        } else {
+            account.avatar_url
+        },
+        bio: account.bio,
+        verified: account.verified,
+        verification_tier: account.verification_tier,
+        super_tardy_slot: account.super_tardy_slot,
+        brand_affiliate: account.brand_affiliate,
+        followers: account.followers.max(0) as u64,
+        following: account.following.max(0) as u64,
+        post_count: account.post_count.max(0) as u64,
+    })
+}
+
+async fn set_brand_affiliate(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((brand_id, profile_id)): Path<(Uuid, Uuid)>,
+    Json(body): Json<SetBrandAffiliate>,
+) -> Result<Json<AppAccount>, ApiError> {
+    let account_id = authenticated_account(&state, &headers).await?;
+    Ok(Json(
+        social_store(&state)?
+            .set_brand_affiliate(account_id, brand_id, profile_id, body.label.as_deref())
+            .await?,
+    ))
+}
+
+async fn clear_brand_affiliate(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((brand_id, profile_id)): Path<(Uuid, Uuid)>,
+) -> Result<StatusCode, ApiError> {
+    let account_id = authenticated_account(&state, &headers).await?;
+    social_store(&state)?
+        .clear_brand_affiliate(account_id, brand_id, profile_id)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+const LOCAL_MEDIA: [(&str, &str, u64); 7] = [
+    ("news.jpg", "news.mp4", 12_000),
+    ("podcast.jpg", "podcast.mp4", 12_000),
+    ("launch.jpg", "launch.mp4", 13_000),
+    ("explainer.jpg", "explainer.mp4", 11_000),
+    ("ugc.jpg", "ugc.mp4", 11_000),
+    ("brainrot.jpg", "brainrot.mp4", 10_000),
+    ("clankercast-ep1.jpg", "clankercast-ep1.mp4", 32_600),
+];
+
+const DEV_BRAGS: [(&str, &str, u64); 4] = [
+    (
+        "10000000-0000-0000-0000-000000000001",
+        "2026-10-01-brainrot-week",
+        32_000,
+    ),
+    (
+        "10000000-0000-0000-0000-000000000002",
+        "2026-10-01-clankercast-ep1",
+        32_600,
+    ),
+    (
+        "10000000-0000-0000-0000-000000000003",
+        "2026-10-01-launch-ad-bank",
+        22_700,
+    ),
+    (
+        "10000000-0000-0000-0000-000000000004",
+        "2026-10-01-launch-open-in-tardy",
+        20_000,
+    ),
+];
+
+fn local_blob_url(state: &AppState, name: &str) -> Option<String> {
+    std::env::var_os("TARDY_LOCAL_BLOB_DIR")
+        .map(|_| format!("{}/v1/dev/blobs/{name}", state.public_base_url))
+}
+
+fn media_object_url(state: &AppState, key: &str) -> Option<String> {
+    std::env::var("TARDY_MEDIA_BASE_URL")
+        .ok()
+        .map(|base| {
+            format!(
+                "{}/{}",
+                base.trim_end_matches('/'),
+                key.trim_start_matches('/')
+            )
+        })
+        .or_else(|| local_blob_url(state, key))
+}
+
+fn dicebear_avatar_url(kind: IdentityKind, seed: &str) -> String {
+    let style = match kind {
+        IdentityKind::Agent => "bottts-neutral",
+        IdentityKind::Project => "shapes",
+        IdentityKind::Channel => "glass",
+        IdentityKind::Human => "notionists",
+    };
+    let encoded_seed: String = url::form_urlencoded::byte_serialize(seed.as_bytes()).collect();
+    format!("https://api.dicebear.com/9.x/{style}/png?seed={encoded_seed}&size=160")
+}
+
+fn localize_accounts(accounts: &mut [AppAccount]) {
+    for account in accounts {
+        if account.avatar_url.is_empty() || account.avatar_url == "https://tardy.news/favicon.svg" {
+            account.avatar_url = dicebear_avatar_url(account.kind, &account.handle);
+        }
     }
 }
 
-fn account_view(value: HumanProfile) -> AccountView {
-    AccountView {
-        id: value.profile_id,
-        kind: "human",
-        handle: value.handle,
-        display_name: value.display_name,
-        avatar_url: value.avatar_url,
-        bio: value.bio,
-        verified: false,
-        followers: 0,
-        following: 0,
-        post_count: 0,
+fn localize_posts(state: &AppState, posts: &mut [AppFeedPost]) {
+    if std::env::var_os("TARDY_LOCAL_BLOB_DIR").is_none() {
+        return;
+    }
+    for post in posts {
+        if !post.media.is_empty() {
+            continue;
+        }
+        if let Some((_, slug, duration_ms)) = DEV_BRAGS
+            .iter()
+            .find(|(id, _, _)| post.id.to_string() == *id)
+        {
+            let base = format!("{}/v1/dev/brags/{slug}", state.public_base_url);
+            post.format = "reel";
+            post.media.push(serde_json::json!({
+                "type":"video",
+                "url":format!("{base}/brag.mp4"),
+                "poster_url":format!("{base}/brag.jpg"),
+                "width":1080,
+                "height":1920,
+                "duration_ms":duration_ms
+            }));
+            continue;
+        }
+        let (poster, video, duration_ms) =
+            LOCAL_MEDIA[usize::from(post.id.as_bytes()[0]) % LOCAL_MEDIA.len()];
+        let poster_url = local_blob_url(state, poster).unwrap_or_default();
+        // Keep a useful mix in development: every third seeded post exercises the video
+        // player, while the others exercise image cards and avatar loading.
+        if post.id.as_bytes()[1] % 3 == 0 {
+            post.format = "reel";
+            post.media.push(serde_json::json!({
+                "type":"video",
+                "url":local_blob_url(state, video).unwrap_or_default(),
+                "poster_url":poster_url,
+                "width":1080,
+                "height":1920,
+                "duration_ms":duration_ms
+            }));
+        } else {
+            post.media.push(serde_json::json!({
+                "type":"image",
+                "url":poster_url,
+                "width":1080,
+                "height":1920
+            }));
+        }
     }
 }
 
@@ -570,12 +1293,17 @@ async fn create_feed_subscription(
     Json(body): Json<NewSubscription>,
 ) -> Result<(StatusCode, Json<Subscription>), ApiError> {
     let account = authenticated_account(&state, &headers).await?;
-    if let Some(profile_id) = body.profile_id
-        && !account_owns_profile(&state, account, profile_id).await?
-    {
-        return Err(ApiError::forbidden(
-            "account does not own agent inbox profile",
-        ));
+    if let Some(profile_id) = body.profile_id {
+        // A claimed Tardy keeps its own narrowly scoped acting credential. Let that
+        // credential manage the profile's inbox without handing the agent its human
+        // owner's bearer token. Human owners remain authorized through ownership.
+        let owns = account_owns_profile(&state, account, profile_id).await?;
+        let can_act = account_can_act(&state, account, profile_id).await?;
+        if !owns && !can_act {
+            return Err(ApiError::forbidden(
+                "account cannot manage agent inbox profile",
+            ));
+        }
     }
     Ok((
         StatusCode::CREATED,
@@ -770,15 +1498,39 @@ async fn unregister_push_device(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct UnregisterPushToken {
+    token: String,
+}
+
+async fn unregister_push_token(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<UnregisterPushToken>,
+) -> Result<StatusCode, ApiError> {
+    push_store(&state)?
+        .unregister_token(authenticated_account(&state, &headers).await?, &body.token)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn set_notification_preference(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(body): Json<NotificationPreference>,
-) -> Result<Json<NotificationPreference>, ApiError> {
+) -> Result<Json<NotificationPreferences>, ApiError> {
     let account_id = authenticated_account(&state, &headers).await?;
-    Ok(Json(
-        push_store(&state)?.set_preference(account_id, body).await?,
-    ))
+    let push = push_store(&state)?;
+    push.set_preference(account_id, body).await?;
+    Ok(Json(push.preferences(account_id).await?))
+}
+
+async fn get_notification_preferences(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<NotificationPreferences>, ApiError> {
+    let account_id = authenticated_account(&state, &headers).await?;
+    Ok(Json(push_store(&state)?.preferences(account_id).await?))
 }
 
 async fn list_notifications(
@@ -857,7 +1609,14 @@ async fn create_profile(
     bind_account_profile(&state, account_id, value.id).await?;
     if let Some(social) = &state.social {
         social
-            .register_identity(account_id, value.id, &value.handle, body.kind)
+            .register_identity(
+                account_id,
+                value.id,
+                &value.handle,
+                body.kind,
+                &value.display_name,
+                &value.bio,
+            )
             .await?;
     }
     Ok((StatusCode::CREATED, Json(value)))
@@ -902,9 +1661,44 @@ async fn create_shared_link(
     ))
 }
 
+async fn get_shared_link(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<SharedLink>, ApiError> {
+    authenticated_account(&state, &headers).await?;
+    let mut link = social_store(&state)?.shared_link(id).await?;
+    if let Some(key) = link.media_url.take() {
+        link.media_url = media_object_url(&state, &key);
+    }
+    if let Some(key) = link.thumbnail_url.take() {
+        link.thumbnail_url = if key.starts_with("http://") || key.starts_with("https://") {
+            Some(key)
+        } else {
+            media_object_url(&state, &key)
+        };
+    }
+    Ok(Json(link))
+}
+
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct CreateSocialConversation {
-    recipient_profile_id: Uuid,
+    #[serde(default)]
+    recipient_profile_id: Option<Uuid>,
+    #[serde(default)]
+    participant_profile_ids: Vec<Uuid>,
+    #[serde(default)]
+    title: Option<String>,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct RenameSocialConversation {
+    title: Option<String>,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct AddConversationParticipant {
+    profile_id: Uuid,
 }
 
 async fn create_social_conversation(
@@ -912,13 +1706,18 @@ async fn create_social_conversation(
     headers: HeaderMap,
     Json(body): Json<CreateSocialConversation>,
 ) -> Result<(StatusCode, Json<Conversation>), ApiError> {
+    let mut recipients = body.participant_profile_ids;
+    if let Some(recipient) = body.recipient_profile_id {
+        recipients.push(recipient);
+    }
     Ok((
         StatusCode::CREATED,
         Json(
             social_store(&state)?
-                .create_conversation(
+                .create_group_conversation(
                     authenticated_actor(&state, &headers).await?,
-                    body.recipient_profile_id,
+                    &recipients,
+                    body.title.as_deref(),
                 )
                 .await?,
         ),
@@ -932,6 +1731,52 @@ async fn list_social_conversations(
     Ok(Json(
         social_store(&state)?
             .conversations(authenticated_actor(&state, &headers).await?)
+            .await?,
+    ))
+}
+
+async fn rename_social_conversation(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(body): Json<RenameSocialConversation>,
+) -> Result<Json<Conversation>, ApiError> {
+    Ok(Json(
+        social_store(&state)?
+            .rename_conversation(
+                authenticated_actor(&state, &headers).await?,
+                id,
+                body.title.as_deref(),
+            )
+            .await?,
+    ))
+}
+
+async fn add_social_conversation_participant(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(body): Json<AddConversationParticipant>,
+) -> Result<Json<Conversation>, ApiError> {
+    Ok(Json(
+        social_store(&state)?
+            .add_participant(
+                authenticated_actor(&state, &headers).await?,
+                id,
+                body.profile_id,
+            )
+            .await?,
+    ))
+}
+
+async fn remove_social_conversation_participant(
+    State(state): State<Arc<AppState>>,
+    Path((id, profile_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+) -> Result<Json<Conversation>, ApiError> {
+    Ok(Json(
+        social_store(&state)?
+            .remove_participant(authenticated_actor(&state, &headers).await?, id, profile_id)
             .await?,
     ))
 }
@@ -961,6 +1806,86 @@ async fn mark_social_conversation_read(
 pub(crate) struct SendSocialMessage {
     body: String,
     shared_link_id: Option<Uuid>,
+    #[serde(default)]
+    media: Vec<SendMessageMedia>,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct SendMessageMedia {
+    asset_id: Uuid,
+    width: Option<u32>,
+    height: Option<u32>,
+    file_name: Option<String>,
+    alt_text: Option<String>,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct SetMessageReaction {
+    kind: String,
+}
+
+async fn set_social_message_reaction(
+    State(state): State<Arc<AppState>>,
+    Path((id, message_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    Json(body): Json<SetMessageReaction>,
+) -> Result<Json<ConversationMessage>, ApiError> {
+    Ok(Json(
+        social_store(&state)?
+            .react_to_message(
+                authenticated_actor(&state, &headers).await?,
+                id,
+                message_id,
+                &body.kind,
+            )
+            .await?,
+    ))
+}
+
+async fn clear_social_message_reaction(
+    State(state): State<Arc<AppState>>,
+    Path((id, message_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+) -> Result<Json<ConversationMessage>, ApiError> {
+    Ok(Json(
+        social_store(&state)?
+            .clear_message_reaction(authenticated_actor(&state, &headers).await?, id, message_id)
+            .await?,
+    ))
+}
+
+async fn list_social_typing(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<Uuid>>, ApiError> {
+    Ok(Json(
+        social_store(&state)?
+            .typing(authenticated_actor(&state, &headers).await?, id)
+            .await?,
+    ))
+}
+
+async fn start_social_typing(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    social_store(&state)?
+        .set_typing(authenticated_actor(&state, &headers).await?, id, true)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn stop_social_typing(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    social_store(&state)?
+        .set_typing(authenticated_actor(&state, &headers).await?, id, false)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn send_social_message(
@@ -969,19 +1894,64 @@ async fn send_social_message(
     headers: HeaderMap,
     Json(body): Json<SendSocialMessage>,
 ) -> Result<(StatusCode, Json<ConversationMessage>), ApiError> {
-    Ok((
-        StatusCode::CREATED,
-        Json(
-            social_store(&state)?
-                .send_message(
-                    authenticated_actor(&state, &headers).await?,
-                    id,
-                    &body.body,
-                    body.shared_link_id,
-                )
-                .await?,
-        ),
-    ))
+    let actor = authenticated_actor(&state, &headers).await?;
+    let mut media = Vec::with_capacity(body.media.len());
+    for item in body.media {
+        let asset = state.media.ready_asset(actor, item.asset_id).await?;
+        let kind = match asset.kind {
+            crate::media::MediaKind::Poster if asset.content_type.starts_with("image/") => "image",
+            crate::media::MediaKind::VideoOriginal => "video",
+            crate::media::MediaKind::Voiceover | crate::media::MediaKind::AudioOriginal => "audio",
+            crate::media::MediaKind::Document => "document",
+            crate::media::MediaKind::MessageAttachment
+                if asset.content_type.starts_with("image/") =>
+            {
+                "image"
+            }
+            crate::media::MediaKind::MessageAttachment
+                if asset.content_type.starts_with("video/") =>
+            {
+                "video"
+            }
+            crate::media::MediaKind::MessageAttachment
+                if asset.content_type.starts_with("audio/") =>
+            {
+                "audio"
+            }
+            crate::media::MediaKind::MessageAttachment => "document",
+            _ => {
+                return Err(ApiError::bad_request(
+                    "media kind cannot be attached to a message",
+                ));
+            }
+        };
+        media.push(crate::social::MessageMedia {
+            asset_id: item.asset_id,
+            kind: kind.into(),
+            url: String::new(),
+            content_type: asset.content_type,
+            byte_length: asset.byte_length,
+            width: item.width,
+            height: item.height,
+            file_name: item.file_name,
+            alt_text: item.alt_text,
+        });
+    }
+    let mut message = social_store(&state)?
+        .send_message(actor, id, &body.body, body.shared_link_id, &media)
+        .await?;
+    hydrate_message_media(&state, &mut message).await?;
+    Ok((StatusCode::CREATED, Json(message)))
+}
+
+async fn hydrate_message_media(
+    state: &AppState,
+    message: &mut ConversationMessage,
+) -> Result<(), ApiError> {
+    for item in &mut message.media {
+        item.url = state.media.delivery_url(item.asset_id).await?;
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -998,16 +1968,18 @@ async fn list_social_messages(
     headers: HeaderMap,
     Query(query): Query<SocialMessageQuery>,
 ) -> Result<Json<Vec<ConversationMessage>>, ApiError> {
-    Ok(Json(
-        social_store(&state)?
-            .messages(
-                authenticated_actor(&state, &headers).await?,
-                id,
-                query.after,
-                query.limit,
-            )
-            .await?,
-    ))
+    let mut messages = social_store(&state)?
+        .messages(
+            authenticated_actor(&state, &headers).await?,
+            id,
+            query.after,
+            query.limit,
+        )
+        .await?;
+    for message in &mut messages {
+        hydrate_message_media(&state, message).await?;
+    }
+    Ok(Json(messages))
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -1046,6 +2018,8 @@ async fn summon_social_agent(
 pub(crate) struct PublishSocialPost {
     client_request_id: Uuid,
     caption: String,
+    #[serde(default)]
+    media: Vec<PostMedia>,
     shared_link_id: Option<Uuid>,
     visibility: PostVisibility,
 }
@@ -1059,15 +2033,38 @@ async fn publish_social_post(
         StatusCode::CREATED,
         Json(
             social_store(&state)?
-                .publish_post(
+                .publish_post_with_media(
                     authenticated_actor(&state, &headers).await?,
                     body.client_request_id,
                     &body.caption,
                     body.shared_link_id,
                     body.visibility,
+                    &body.media,
                 )
                 .await?,
         ),
+    ))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct SetPostVisibility {
+    visibility: PostVisibility,
+}
+
+async fn set_social_post_visibility(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(body): Json<SetPostVisibility>,
+) -> Result<Json<TardyPost>, ApiError> {
+    Ok(Json(
+        social_store(&state)?
+            .set_post_visibility(
+                authenticated_actor(&state, &headers).await?,
+                id,
+                body.visibility,
+            )
+            .await?,
     ))
 }
 
@@ -1076,6 +2073,18 @@ pub(crate) struct CreatePostComment {
     body: String,
     #[serde(default)]
     mentioned_profile_ids: Vec<Uuid>,
+}
+
+async fn list_post_comments(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<Comment>>, ApiError> {
+    Ok(Json(
+        social_store(&state)?
+            .comments(authenticated_actor(&state, &headers).await?, id)
+            .await?,
+    ))
 }
 
 async fn create_post_comment(
@@ -1364,27 +2373,66 @@ async fn run_search(
     headers: &HeaderMap,
     query: &str,
     limit: usize,
-) -> Result<Json<Vec<crate::search::SearchResult>>, ApiError> {
+) -> Result<Json<Vec<AppSearchResult>>, ApiError> {
     if !(1..=50).contains(&limit) {
         return Err(ApiError::bad_request("limit must be between 1 and 50"));
     }
+    if query.trim().is_empty() {
+        return Err(SearchError::EmptyQuery.into());
+    }
     let account_id = authenticated_account(state, headers).await?;
-    let provider = state.search.provider().ok_or(SearchError::Unavailable)?;
-    if !has_account_consent(
-        state,
-        account_id,
-        provider,
-        SEARCH_CONSENT_PURPOSE,
-        SEARCH_CONSENT_POLICY,
-    )
-    .await?
+    let viewer = authenticated_actor(state, headers).await?;
+    let provider = state.search.provider();
+    if let Some(provider) = provider
+        && !has_account_consent(
+            state,
+            account_id,
+            provider,
+            SEARCH_CONSENT_PURPOSE,
+            SEARCH_CONSENT_POLICY,
+        )
+        .await?
     {
         return Err(ApiError::forbidden(
             "explicit search AI consent is required",
         ));
     }
-    let candidates = state.store.feed_candidates(None)?;
-    Ok(Json(state.search.search(query, candidates, limit).await?))
+
+    // Never send private text to an external provider. Local PostgreSQL search may
+    // include private posts the selected profile can already see.
+    let candidate_viewer = provider.is_none().then_some(viewer);
+    let candidate_limit = if provider.is_some() { 100 } else { limit };
+    let mut candidates = social_store(state)?
+        .search_app_posts(candidate_viewer, query, candidate_limit as i64)
+        .await?;
+    if provider.is_some() && !candidates.is_empty() {
+        let documents = candidates
+            .iter()
+            .map(|result| SearchDocument {
+                id: result.post.id,
+                text: result.post.caption.clone(),
+            })
+            .collect::<Vec<_>>();
+        let ranked = state
+            .search
+            .rerank_documents(query, &documents, limit)
+            .await?;
+        candidates = ranked
+            .into_iter()
+            .map(|ranked| {
+                let mut result = candidates
+                    .get(ranked.index)
+                    .cloned()
+                    .ok_or(SearchError::InvalidResult)?;
+                result.relevance_score = ranked.score;
+                Ok(result)
+            })
+            .collect::<Result<Vec<_>, SearchError>>()?;
+    }
+    for result in &mut candidates {
+        localize_posts(state, std::slice::from_mut(&mut result.post));
+    }
+    Ok(Json(candidates))
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -1482,7 +2530,8 @@ async fn feed(
     }
     let viewer = optional_authenticated_actor(&state, &headers).await?;
     if let Some(social) = &state.social {
-        let items = social.app_feed(viewer, query.limit as i64).await?;
+        let mut items = social.app_feed(viewer, query.limit as i64).await?;
+        localize_posts(&state, &mut items);
         return Ok(Json(serde_json::json!({"items":items,"next_cursor":null})).into_response());
     }
     let candidates = state.store.feed_candidates(viewer)?;
@@ -1517,9 +2566,17 @@ async fn reels_feed(
         return Err(ApiError::bad_request("limit must be between 1 and 100"));
     }
     let viewer = Some(authenticated_actor(&state, &headers).await?);
-    let items = social_store(&state)?
+    let mut items = social_store(&state)?
         .app_posts(viewer, None, query.limit as i64)
         .await?;
+    localize_posts(&state, &mut items);
+    // Reels is a video-only surface. Home may truthfully mix photo and video posts,
+    // but passing photos to the reel client produces an intentionally empty black canvas.
+    items.retain(|post| {
+        post.media
+            .first()
+            .is_some_and(|media| media["type"] == "video")
+    });
     Ok(Json(serde_json::json!({"items":items,"next_cursor":null})))
 }
 
@@ -1542,6 +2599,7 @@ async fn stories(
         "explainer.jpg",
         "ugc.jpg",
     ];
+    const STORIES_PER_AUTHOR: usize = 5;
     let mut groups: Vec<(Uuid, Vec<serde_json::Value>)> = Vec::new();
     for post in posts {
         let file = media[usize::from(post.id.as_bytes()[0]) % media.len()];
@@ -1558,7 +2616,11 @@ async fn stories(
             "seen": false
         });
         if let Some((_, stories)) = groups.iter_mut().find(|(id, _)| *id == post.author_id) {
-            stories.push(story);
+            // This development adapter turns recent feed posts into stories. Keep it a
+            // preview tray, not an unbounded replay of a prolific source's entire feed.
+            if stories.len() < STORIES_PER_AUTHOR {
+                stories.push(story);
+            }
         } else {
             groups.push((post.author_id, vec![story]));
         }
@@ -1573,7 +2635,11 @@ async fn stories(
 
 /// Public development-only blob transport. It deliberately accepts one filename rather
 /// than an arbitrary path, preventing traversal outside `TARDY_LOCAL_BLOB_DIR`.
-async fn local_blob(Path(name): Path<String>) -> Result<Response, ApiError> {
+async fn local_blob(
+    Path(name): Path<String>,
+    method: Method,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
     if name.is_empty()
         || name.contains("..")
         || !name
@@ -1584,12 +2650,126 @@ async fn local_blob(Path(name): Path<String>) -> Result<Response, ApiError> {
     }
     let root = std::env::var_os("TARDY_LOCAL_BLOB_DIR")
         .ok_or_else(|| ApiError::not_found("local blobs are disabled"))?;
-    let bytes = tokio::fs::read(std::path::Path::new(&root).join(&name))
+    serve_local_file(
+        std::path::Path::new(&root).join(&name),
+        &name,
+        method,
+        headers,
+    )
+    .await
+}
+
+fn local_upload_path(key: &str) -> Result<std::path::PathBuf, ApiError> {
+    if key
+        .split('/')
+        .any(|part| part.is_empty() || part == "." || part == "..")
+    {
+        return Err(ApiError::bad_request("invalid upload key"));
+    }
+    let root = std::env::var_os("TARDY_LOCAL_BLOB_DIR")
+        .ok_or_else(|| ApiError::not_found("local uploads are disabled"))?;
+    Ok(std::path::Path::new(&root).join("uploads").join(key))
+}
+
+async fn put_local_upload(
+    Path(key): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<StatusCode, ApiError> {
+    let path = local_upload_path(&key)?;
+    let declared = headers
+        .get(header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<usize>().ok())
+        .ok_or_else(|| ApiError::bad_request("content-length is required"))?;
+    if declared != body.len() {
+        return Err(ApiError::bad_request("content-length does not match body"));
+    }
+    let content_type = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(|| ApiError::bad_request("content-type is required"))?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| ApiError::bad_request("invalid upload key"))?;
+    tokio::fs::create_dir_all(parent)
+        .await
+        .map_err(|error| ApiError::internal(format!("create local upload directory: {error}")))?;
+    tokio::fs::write(&path, &body)
+        .await
+        .map_err(|error| ApiError::internal(format!("write local upload: {error}")))?;
+    tokio::fs::write(path.with_extension("tardy-content-type"), content_type)
+        .await
+        .map_err(|error| ApiError::internal(format!("write local upload metadata: {error}")))?;
+    if let Some(checksum) = headers
+        .get("x-tardy-checksum-sha256")
+        .and_then(|value| value.to_str().ok())
+    {
+        tokio::fs::write(path.with_extension("tardy-sha256"), checksum)
+            .await
+            .map_err(|error| ApiError::internal(format!("write local checksum: {error}")))?;
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn local_upload(
+    Path(key): Path<String>,
+    method: Method,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let path = local_upload_path(&key)?;
+    let content_type = tokio::fs::read_to_string(path.with_extension("tardy-content-type"))
+        .await
+        .map_err(|_| ApiError::not_found("upload not found"))?;
+    let name = key.rsplit('/').next().unwrap_or("upload");
+    let mut response = serve_local_file(path, name, method, headers).await?;
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        content_type
+            .parse()
+            .map_err(|_| ApiError::internal("invalid stored content type"))?,
+    );
+    Ok(response)
+}
+
+async fn local_brag(
+    Path((slug, name)): Path<(String, String)>,
+    method: Method,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    if !DEV_BRAGS.iter().any(|(_, allowed, _)| *allowed == slug)
+        || !matches!(name.as_str(), "brag.mp4" | "brag.jpg")
+    {
+        return Err(ApiError::not_found("brag media not found"));
+    }
+    let root = std::env::var_os("TARDY_BRAG_DIR")
+        .ok_or_else(|| ApiError::not_found("local brags are disabled"))?;
+    serve_local_file(
+        std::path::Path::new(&root).join(slug).join(&name),
+        &name,
+        method,
+        headers,
+    )
+    .await
+}
+
+async fn serve_local_file(
+    path: std::path::PathBuf,
+    name: &str,
+    method: Method,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let mut file = tokio::fs::File::open(&path)
         .await
         .map_err(|error| match error.kind() {
             std::io::ErrorKind::NotFound => ApiError::not_found("blob not found"),
-            _ => ApiError::internal(format!("read local blob: {error}")),
+            _ => ApiError::internal(format!("open local blob: {error}")),
         })?;
+    let size = file
+        .metadata()
+        .await
+        .map_err(|error| ApiError::internal(format!("stat local blob: {error}")))?
+        .len();
     let content_type = match std::path::Path::new(&name)
         .extension()
         .and_then(|value| value.to_str())
@@ -1601,14 +2781,71 @@ async fn local_blob(Path(name): Path<String>) -> Result<Response, ApiError> {
         Some("webm") => "video/webm",
         _ => "application/octet-stream",
     };
-    Ok((
-        [
-            (header::CONTENT_TYPE, content_type),
-            (header::CACHE_CONTROL, "public, max-age=3600"),
-        ],
-        bytes,
-    )
-        .into_response())
+    let range = headers
+        .get(header::RANGE)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| parse_byte_range(value, size))
+        .transpose()?;
+    let (status, start, end) = match range {
+        Some((start, end)) => (StatusCode::PARTIAL_CONTENT, start, end),
+        None => (StatusCode::OK, 0, size.saturating_sub(1)),
+    };
+    let length = if size == 0 { 0 } else { end - start + 1 };
+    file.seek(std::io::SeekFrom::Start(start))
+        .await
+        .map_err(|error| ApiError::internal(format!("seek local blob: {error}")))?;
+    let body = if method == Method::HEAD {
+        axum::body::Body::empty()
+    } else {
+        axum::body::Body::from_stream(ReaderStream::new(file.take(length)))
+    };
+    let mut response = Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, content_type)
+        .header(header::CONTENT_LENGTH, length)
+        .header(header::ACCEPT_RANGES, "bytes")
+        .header(header::CACHE_CONTROL, "public, max-age=3600");
+    if status == StatusCode::PARTIAL_CONTENT {
+        response = response.header(header::CONTENT_RANGE, format!("bytes {start}-{end}/{size}"));
+    }
+    response
+        .body(body)
+        .map_err(|error| ApiError::internal(format!("build blob response: {error}")))
+}
+
+fn parse_byte_range(value: &str, size: u64) -> Result<(u64, u64), ApiError> {
+    let value = value
+        .strip_prefix("bytes=")
+        .ok_or_else(|| ApiError::range_not_satisfiable("unsupported range unit"))?;
+    if value.contains(',') || size == 0 {
+        return Err(ApiError::range_not_satisfiable("range is not satisfiable"));
+    }
+    let (start, end) = value
+        .split_once('-')
+        .ok_or_else(|| ApiError::range_not_satisfiable("invalid byte range"))?;
+    let (start, end) = if start.is_empty() {
+        let suffix = end
+            .parse::<u64>()
+            .map_err(|_| ApiError::range_not_satisfiable("invalid byte range"))?;
+        let length = suffix.min(size);
+        (size - length, size - 1)
+    } else {
+        let start = start
+            .parse::<u64>()
+            .map_err(|_| ApiError::range_not_satisfiable("invalid byte range"))?;
+        let end = if end.is_empty() {
+            size - 1
+        } else {
+            end.parse::<u64>()
+                .map_err(|_| ApiError::range_not_satisfiable("invalid byte range"))?
+                .min(size - 1)
+        };
+        (start, end)
+    };
+    if start >= size || end < start {
+        return Err(ApiError::range_not_satisfiable("range is not satisfiable"));
+    }
+    Ok((start, end))
 }
 
 /// Discovery is intentionally deterministic until the consented reranker is available:
@@ -1622,9 +2859,10 @@ async fn explore_feed(
         return Err(ApiError::bad_request("limit must be between 1 and 100"));
     }
     let viewer = Some(authenticated_actor(&state, &headers).await?);
-    let items = social_store(&state)?
+    let mut items = social_store(&state)?
         .app_posts(viewer, None, query.limit as i64)
         .await?;
+    localize_posts(&state, &mut items);
     Ok(Json(serde_json::json!({"items":items,"next_cursor":null})))
 }
 
@@ -1704,7 +2942,13 @@ async fn share_to_agent(
     if let Some(subscriptions) = &state.subscriptions {
         subscriptions.publish_direct_message(&message).await?;
         subscriptions
-            .publish_agent_share(Uuid::new_v4(), body.target_profile_id, &handoff)
+            .publish_agent_share(
+                Uuid::new_v4(),
+                body.target_profile_id,
+                &handoff,
+                thread.id,
+                message.sequence,
+            )
             .await?;
     }
     Ok((
@@ -1744,8 +2988,13 @@ async fn get_profile(
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, ApiError> {
     if let Some(social) = &state.social {
-        let _ = authenticated_account(&state, &headers).await?;
-        return Ok(Json(social.app_account_by_handle(&handle).await?).into_response());
+        let viewer_account = authenticated_account(&state, &headers).await?;
+        let mut account = social.app_account_by_handle(&handle).await?;
+        social
+            .mark_owned_accounts(viewer_account, std::slice::from_mut(&mut account))
+            .await?;
+        localize_accounts(std::slice::from_mut(&mut account));
+        return Ok(Json(account).into_response());
     }
     Ok(Json(state.store.public_profile(
         &handle,
@@ -1759,8 +3008,13 @@ async fn get_profile_by_id(
     Path(id): Path<Uuid>,
     headers: HeaderMap,
 ) -> Result<Json<AppAccount>, ApiError> {
-    let _ = authenticated_account(&state, &headers).await?;
-    Ok(Json(social_store(&state)?.app_account_by_id(id).await?))
+    let viewer_account = authenticated_account(&state, &headers).await?;
+    let mut account = social_store(&state)?.app_account_by_id(id).await?;
+    social_store(&state)?
+        .mark_owned_accounts(viewer_account, std::slice::from_mut(&mut account))
+        .await?;
+    localize_accounts(std::slice::from_mut(&mut account));
+    Ok(Json(account))
 }
 
 async fn get_profile_posts(
@@ -1774,9 +3028,10 @@ async fn get_profile_posts(
     }
     let viewer = Some(authenticated_actor(&state, &headers).await?);
     social_store(&state)?.app_account_by_id(id).await?;
-    let items = social_store(&state)?
+    let mut items = social_store(&state)?
         .app_posts(viewer, Some(id), query.limit as i64)
         .await?;
+    localize_posts(&state, &mut items);
     Ok(Json(serde_json::json!({"items":items,"next_cursor":null})))
 }
 
@@ -1918,6 +3173,63 @@ async fn register_tardy_account(
 }
 
 #[derive(Deserialize, ToSchema)]
+pub(crate) struct ConnectTardyAccount {
+    code: String,
+    handle: String,
+    display_name: String,
+    #[serde(default)]
+    bio: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct ConnectedTardyAccount {
+    account_id: Uuid,
+    api_token: String,
+    profile_id: Uuid,
+    handle: String,
+    expires_at_ms: u64,
+}
+
+async fn connect_tardy_account(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<ConnectTardyAccount>,
+) -> Result<(StatusCode, Json<ConnectedTardyAccount>), ApiError> {
+    purge_expired_tardies(&state).await?;
+    validate_handle(&body.handle)?;
+    let temporary = connect_registered_tardy(&state, &body.code, now_ms()?).await?;
+    let profile = state.store.create_profile(NewProfile {
+        handle: body.handle,
+        display_name: body.display_name,
+        bio: body.bio,
+        privacy: ProfilePrivacy::default(),
+        created_at_ms: now_ms()?,
+    })?;
+    bind_account_profile(&state, temporary.account_id, profile.id).await?;
+    if let Some(social) = &state.social {
+        social
+            .register_identity(
+                temporary.account_id,
+                profile.id,
+                &profile.handle,
+                IdentityKind::Agent,
+                &profile.display_name,
+                &profile.bio,
+            )
+            .await?;
+    }
+    Ok((
+        StatusCode::CREATED,
+        Json(ConnectedTardyAccount {
+            account_id: temporary.account_id,
+            api_token: temporary.api_token,
+            profile_id: profile.id,
+            handle: profile.handle,
+            expires_at_ms: temporary.expires_at_ms,
+        }),
+    ))
+}
+
+#[derive(Deserialize, ToSchema)]
 pub(crate) struct ClaimTardyAccount {
     code: String,
 }
@@ -1975,10 +3287,14 @@ async fn complete_upload(
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, ApiError> {
     let actor = authenticated_actor(&state, &headers).await?;
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(state.media.complete(actor, id, now_ms()?).await?),
-    ))
+    let asset = state.media.complete(actor, id, now_ms()?).await?;
+    let url = state.media.delivery_url(asset.id).await?;
+    let mut view = serde_json::to_value(asset)
+        .map_err(|error| ApiError::internal(format!("serialize completed upload: {error}")))?;
+    view.as_object_mut()
+        .ok_or_else(|| ApiError::internal("completed upload did not serialize as an object"))?
+        .insert("url".into(), serde_json::Value::String(url));
+    Ok((StatusCode::ACCEPTED, Json(view)))
 }
 
 pub(crate) fn selected_profile(headers: &HeaderMap) -> Result<Option<Uuid>, ApiError> {
@@ -2083,6 +3399,16 @@ async fn register_tardy(state: &AppState, at: u64) -> Result<TemporaryTardyAccou
     match &state.pg_accounts {
         Some(store) => Ok(store.register_tardy(at).await?),
         None => Ok(state.accounts.register_tardy(at)?),
+    }
+}
+async fn connect_registered_tardy(
+    state: &AppState,
+    code: &str,
+    at: u64,
+) -> Result<TemporaryTardyAccount, ApiError> {
+    match &state.pg_accounts {
+        Some(store) => Ok(store.connect_tardy(code, at).await?),
+        None => Ok(state.accounts.connect_tardy(code, at)?),
     }
 }
 async fn claim_registered_tardy(
@@ -2246,11 +3572,13 @@ fn build_agent_handoff(base: &str, target: String, subject: ShareSubject) -> Age
 
 fn validate_handle(value: &str) -> Result<(), ApiError> {
     let valid = (3..=32).contains(&value.len())
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
+        && value.bytes().all(|b| {
+            b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'_' | b'-' | b'.')
+        });
     valid.then_some(()).ok_or_else(|| {
-        ApiError::bad_request("handle must be 3-32 lowercase letters, digits, or underscores")
+        ApiError::bad_request(
+            "handle must be 3-32 lowercase letters, digits, dots, hyphens, or underscores",
+        )
     })
 }
 
@@ -2291,6 +3619,12 @@ impl ApiError {
     fn unprocessable(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::UNPROCESSABLE_ENTITY,
+            message: message.into(),
+        }
+    }
+    fn range_not_satisfiable(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::RANGE_NOT_SATISFIABLE,
             message: message.into(),
         }
     }
@@ -2386,9 +3720,16 @@ impl From<PgAccountError> for ApiError {
                 status: StatusCode::CONFLICT,
                 message: value.to_string(),
             },
-            PgAccountError::InvalidEmail
-            | PgAccountError::InvalidDisplayName
-            | PgAccountError::InvalidBio => Self::bad_request(value.to_string()),
+            PgAccountError::InvalidEmail => Self::bad_request(value.to_string()),
+            PgAccountError::AssertionReplayed => Self::unauthorized(value.to_string()),
+            PgAccountError::InvalidHandle => Self::bad_request(value.to_string()),
+            PgAccountError::HandleConflict => Self {
+                status: StatusCode::CONFLICT,
+                message: value.to_string(),
+            },
+            PgAccountError::InvalidDisplayName | PgAccountError::InvalidBio => {
+                Self::bad_request(value.to_string())
+            }
             PgAccountError::Database(_) | PgAccountError::Timestamp => {
                 Self::internal(value.to_string())
             }
@@ -2486,6 +3827,32 @@ impl From<AdsError> for ApiError {
     }
 }
 
+impl From<BillingError> for ApiError {
+    fn from(value: BillingError) -> Self {
+        match value {
+            BillingError::InvalidHandoff | BillingError::InvalidSession => {
+                Self::unauthorized(value.to_string())
+            }
+            BillingError::Unconfigured => Self {
+                status: StatusCode::SERVICE_UNAVAILABLE,
+                message: value.to_string(),
+            },
+            BillingError::SuperTardySoldOut => Self {
+                status: StatusCode::CONFLICT,
+                message: value.to_string(),
+            },
+            BillingError::Invalid(_) => Self::bad_request(value.to_string()),
+            BillingError::Provider(_) => Self {
+                status: StatusCode::BAD_GATEWAY,
+                message: value.to_string(),
+            },
+            BillingError::Database(_) | BillingError::Verification(_) => {
+                Self::internal(value.to_string())
+            }
+        }
+    }
+}
+
 impl From<SubscriptionError> for ApiError {
     fn from(value: SubscriptionError) -> Self {
         match value {
@@ -2512,7 +3879,9 @@ impl From<SocialError> for ApiError {
             SocialError::Database(sqlx::Error::RowNotFound) => {
                 Self::not_found("social resource not found")
             }
-            SocialError::Database(_) => Self::internal(value.to_string()),
+            SocialError::Database(_) | SocialError::Notification(_) => {
+                Self::internal(value.to_string())
+            }
         }
     }
 }
@@ -2536,12 +3905,42 @@ impl From<AudioError> for ApiError {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn profile_avatar_defaults_are_kind_specific_and_never_reel_media() {
+        let human = super::dicebear_avatar_url(IdentityKind::Human, "avery fpl");
+        let agent = super::dicebear_avatar_url(IdentityKind::Agent, "builder");
+        let project = super::dicebear_avatar_url(IdentityKind::Project, "tardy");
+        let channel = super::dicebear_avatar_url(IdentityKind::Channel, "hacker-news");
+        assert!(
+            human.contains("/notionists/png?seed=avery+fpl&size=160"),
+            "{human}"
+        );
+        assert!(agent.contains("/bottts-neutral/png?seed=builder&size=160"));
+        assert!(project.contains("/shapes/png?seed=tardy&size=160"));
+        assert!(channel.contains("/glass/png?seed=hacker-news&size=160"));
+        for avatar in [human, agent, project, channel] {
+            assert!(!avatar.contains("/v1/dev/blobs/"));
+            assert!(!avatar.ends_with(".jpg"));
+            assert!(!avatar.ends_with(".mp4"));
+        }
+    }
+
     use super::*;
     use crate::search::{RankedDocument, Reranker, SearchDocument};
     use axum::body::{Body, to_bytes};
     use axum::http::{Request, header::CONTENT_TYPE};
     use serde_json::{Value, json};
     use tower::ServiceExt;
+
+    #[test]
+    fn local_blob_ranges_support_video_clients() {
+        assert_eq!(parse_byte_range("bytes=0-99", 1_000).unwrap(), (0, 99));
+        assert_eq!(parse_byte_range("bytes=900-", 1_000).unwrap(), (900, 999));
+        assert_eq!(parse_byte_range("bytes=-100", 1_000).unwrap(), (900, 999));
+        assert!(parse_byte_range("bytes=1000-", 1_000).is_err());
+        assert!(parse_byte_range("items=0-10", 1_000).is_err());
+        assert!(parse_byte_range("bytes=0-1,4-5", 1_000).is_err());
+    }
 
     struct TestReranker;
 
@@ -2673,7 +4072,7 @@ mod tests {
             "POST",
             "/v1/search",
             json!({"query":"Rust", "limit":10}),
-            None,
+            Some(&profile_id),
             Some(&token),
         )
         .await;
@@ -2684,29 +4083,31 @@ mod tests {
             "POST",
             "/v1/ai-consents/search",
             Value::Null,
-            None,
+            Some(&profile_id),
             Some(&token),
         )
         .await;
         assert_eq!(status, StatusCode::OK);
-        let (status, results) = request(
+        let (status, _) = request(
             &app,
             "POST",
             "/v1/search",
             json!({"query":"Rust", "limit":10}),
-            None,
+            Some(&profile_id),
             Some(&token),
         )
         .await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(results[0]["item"]["id"], reel.id.to_string());
+        // Consent now lets the request reach the durable social-search boundary. This
+        // unit state intentionally has no PgSocialStore; PostgreSQL integration tests
+        // cover successful candidate retrieval.
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
 
         let (status, _) = request(
             &app,
             "DELETE",
             "/v1/ai-consents/search",
             Value::Null,
-            None,
+            Some(&profile_id),
             Some(&token),
         )
         .await;
@@ -2716,7 +4117,7 @@ mod tests {
             "POST",
             "/v1/search",
             json!({"query":"Rust", "limit":10}),
-            None,
+            Some(&profile_id),
             Some(&token),
         )
         .await;

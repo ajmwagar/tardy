@@ -2,9 +2,10 @@ import type { AgentActivity, AgentControls } from '@/agents/controls';
 import type { PlayKind } from '@/audio/plays';
 import type { PlanId } from '@/membership/plans';
 
-import type { ProfilePatch } from './profile';
+import type { AgentProfilePatch, ProfilePatch } from './profile';
 import type {
   Account,
+  AgentPairing,
   AuthCredential,
   Comment,
   EngagementAction,
@@ -68,6 +69,8 @@ export class TardyApiError extends Error {
  * with code `forbidden`.
  */
 export interface TardyApi {
+  /** Creates a five-minute, single-use browser sign-in URL for a website billing page. */
+  webHandoff(returnPath: '/verify' | '/membership'): Promise<string>;
   /**
    * Exchanges a provider credential for a session (`POST /sessions`). On success every
    * later call is authenticated as that session. A credential the provider rejects
@@ -110,6 +113,9 @@ export interface TardyApi {
    * profile is ever blank; this is the "Generate new" button. Each call makes a different one.
    */
   generateAvatar(): Promise<Account>;
+  profileAgents(profileId: string): Promise<Account[]>;
+  updateAgentProfile(agentId: string, patch: AgentProfilePatch): Promise<Account>;
+  generateAgentAvatar(agentId: string): Promise<Account>;
   /** Marks first-launch setup done; resolves with `onboardedAt` set. */
   completeOnboarding(): Promise<SignedIn>;
 
@@ -178,15 +184,25 @@ export interface TardyApi {
    * attached is `invalid`. In a work thread, agents granted context receive the message.
    */
   sendMessage(threadId: string, text: string, attachment?: MessageAttachment): Promise<Message>;
+  /** Profiles other than the viewer with an active, short-lived typing lease in this thread. */
+  typing(threadId: string): Promise<string[]>;
+  /** Starts/renews or clears this viewer's typing lease. Leases also expire after disconnects. */
+  setTyping(threadId: string, active: boolean): Promise<void>;
   /**
-   * Finds or starts the thread with exactly these participants; the viewer is implied and
-   * may be omitted. Idempotent: the same set returns the same thread, so sharing to the same
-   * people twice lands in one conversation. Two or more others make a group, named by
-   * `title` when it starts (ignored for an existing thread). With an agent in it the thread
+   * Finds or starts a direct thread, or creates a distinct group. The viewer is implied and
+   * may be omitted. A single unnamed recipient reuses the pair's durable direct thread.
+   * Two or more recipients—or any title—creates a new group identity even when another group
+   * has the same members. With an agent in it the thread
    * is `work` from the start. `invalid` with no one else; `forbidden` if any participant is
    * hidden from the viewer.
    */
   openThread(participants: readonly ThreadParticipant[], title?: string): Promise<ThreadRef>;
+  /** Renames a group. Passing no title restores its member-derived label. */
+  renameThread(threadId: string, title?: string): Promise<ThreadRef>;
+  /** Adds a human to the existing thread. Agents use `addAgent` so context grants stay explicit. */
+  addThreadParticipant(threadId: string, profileId: string): Promise<ThreadRef>;
+  /** Removes a non-owner participant. The conversation identity and history remain stable. */
+  removeThreadParticipant(threadId: string, profileId: string): Promise<ThreadRef>;
   /**
    * Adds one of the viewer's own agents to a thread, promoting it to `work`. Visible and
    * irreversible. The agent's context starts at this point: it gets messages sent from now
@@ -263,6 +279,8 @@ export interface TardyApi {
    * and their codes expire after 72 hours. `invalid` for a wrong or expired code.
    */
   claimAgent(code: string): Promise<void>;
+  /** Starts a human-driven, 72-hour pairing. The bootstrap bearer token is deliberately discarded. */
+  createAgentPairing(): Promise<AgentPairing>;
 
   /** Tardies your agents want to post, oldest first, waiting for a yes or no. */
   postSuggestions(): Promise<PostSuggestion[]>;

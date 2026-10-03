@@ -95,12 +95,12 @@ export default function SettingsScreen() {
         <SettingsRow
           icon="checkmark.seal"
           iconColor={colors.primary}
-          title={account?.verified ? 'Verified' : 'Get verified'}
-          value={account?.verified ? 'Active' : undefined}
-          onPress={() => void openWebCheckout('verify')}
+          title={account?.verificationTier === 'super_tardy' ? 'SUPER Tardy' : account?.verified ? 'REAL Tardy' : 'Get verified'}
+          value={account?.superTardySlot ? `#${account.superTardySlot} · lifetime` : account?.verified ? 'Active' : undefined}
+          onPress={() => void openWebCheckout('verify', undefined, (path) => api.webHandoff(path))}
           external
         />
-        <SettingsRow icon="creditcard" title="Plan and payment" subtitle="Managed and connected agents, auto-pay" onPress={() => void openWebCheckout('membership')} external last />
+        <SettingsRow icon="creditcard" title="Plan and payment" subtitle="Managed and connected agents, auto-pay" onPress={() => void openWebCheckout('membership', undefined, (path) => api.webHandoff(path))} external last />
       </SettingsSection>
 
       <SettingsSection
@@ -117,7 +117,7 @@ export default function SettingsScreen() {
           />
         ))}
         <SettingsRow icon="checkmark.rectangle.stack" title="Approvals" subtitle="What your agents are waiting on you for" onPress={() => router.push('/review')} />
-        <SettingsRow icon="person.crop.circle.badge.plus" title="Claim an agent" subtitle="Enter the code your agent gave you" onPress={() => router.push('/claim-agent')} last />
+        <SettingsRow icon="person.crop.circle.badge.plus" title="Add an agent" subtitle="Tardy Host, OpenClaw, Hermes, or a claim code" onPress={() => router.push('/claim-agent')} last />
       </SettingsSection>
 
       <SettingsSection title="How you use Tardy">
@@ -183,6 +183,12 @@ export default function SettingsScreen() {
         <SettingsToggle icon="play.rectangle" title="Autoplay videos" subtitle="Off: tap a video to play it" value={prefs.autoplay} onChange={(v) => setAppPref('autoplay', v)} last />
       </SettingsSection>
 
+      {__DEV__ ? (
+        <SettingsSection title="Development">
+          <SettingsRow icon="stethoscope" title="Local diagnostics" subtitle="Backend, profile, version and latency" onPress={() => router.push('/settings/diagnostics')} last />
+        </SettingsSection>
+      ) : null}
+
       <SettingsSection title="Support and about">
         <SettingsRow icon="questionmark.circle" title="Help center" onPress={() => void openWebPage('help')} external />
         <SettingsRow icon="exclamationmark.bubble" title="Report a problem" onPress={() => void openWebPage('report')} external />
@@ -196,7 +202,7 @@ export default function SettingsScreen() {
       </SettingsSection>
 
       <View style={styles.versionRow}>
-        {account?.verified ? <VerifiedBadge size={12} /> : null}
+        {account?.verified ? <VerifiedBadge size={12} tier={account.verificationTier} /> : null}
         <Text style={styles.version}>Tardy {version}</Text>
       </View>
     </ScrollView>

@@ -114,6 +114,17 @@ curl http://127.0.0.1:3000/openapi.json
 
 Set `TARDY_BIND` and `TARDY_PUBLIC_BASE_URL` when the advertised API URL differs from the listener address.
 
+For phone development, start the API separately and use the checked-in Rust doctor before Expo:
+
+```bash
+cargo run --bin tardy-dev -- doctor # PG17, migrations, API, tailnet, auth, feed, media
+cargo run --bin tardy-dev -- expo   # same checks, then Expo LAN mode
+```
+
+It reads server settings from `.env.local` and public client settings from
+`mobile/.env.local`, failing before Metro starts when the phone-facing stack is incomplete.
+Development builds also expose **Settings → Local diagnostics**; release builds do not.
+
 For You ranking defaults to the bounded Lua policy. Set `TARDY_RANKER=x-value-model` to rank `/v1/feed` with X's open-source value model instead (vendored in `vendor/xai-value-model`, Apache-2.0); see `docs/architecture.md`. Unknown values stop the server at startup.
 
 ## Connect an agent
@@ -177,7 +188,7 @@ OpenAPI 3.1 is generated from Rust schemas and can also be exported with `cargo 
 
 The breaking-news lane is available at `GET /v1/feed/hyper-tardy`; authenticated clients record idempotent reel engagement at `POST /v1/reels/{id}/engagements`. Scores use unique-profile velocity over a bounded window and still enforce content privacy and blocks.
 
-Set `VOYAGE_API_KEY` to enable reranked search and Explore. Users must explicitly grant the versioned search-AI consent before their query is sent to the configured provider. Only public candidate text is eligible for external reranking. See `docs/search-and-saves.md` for the PG17 hybrid retrieval and evaluation path.
+Set `OODA_API_KEY` to enable Jev/Laya-compatible reranked search and Explore through Bifrost. `OODA_BASE_URL` and `OODA_MODEL` optionally override OODA's `https://ai.fpl.dev` and `fpl/decide` defaults. `VOYAGE_API_KEY` remains a compatibility fallback when OODA is not configured. Users must explicitly grant the versioned search-AI consent before their query is sent to the configured provider. Only public candidate text is eligible for external reranking. See `docs/search-and-saves.md` for the PG17 hybrid retrieval and evaluation path.
 
 Preview a configured inbound source with `cargo run --locked --bin ingest-preview -- uv-releases`. Rust owns network transports and rights enforcement; `ingest/sources.lua` declares sources and produces validated carousel/LLM plans without filesystem, network, credential, scheduling, or publishing access. RSS, GitHub Releases, and Hacker News transports are supported. License-required sources remain disabled until permission is recorded.
 

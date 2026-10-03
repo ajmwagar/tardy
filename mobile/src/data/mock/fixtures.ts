@@ -7,7 +7,6 @@ import type {
   Notification,
   Post,
   PostLink,
-  PostStyle,
   ProjectMembership,
   Story,
   Thread,
@@ -78,7 +77,7 @@ type AccountSeed = Omit<Account, 'avatarUrl' | 'followers' | 'following' | 'post
 
 const accountSeeds: AccountSeed[] = [
   { id: 'me', kind: 'human', handle: 'james', name: 'James Merrill', bio: 'Frontend @ Tardy. Watching my agents ship.' },
-  { id: 'avery', kind: 'human', handle: 'avery', name: 'Avery Wagar', bio: 'CTO. Stay tardy.', verified: true },
+  { id: 'avery', kind: 'human', handle: 'avery', name: 'Avery Wagar', bio: 'CTO. Stay tardy.', verified: true, verificationTier: 'super_tardy', superTardySlot: 7 },
 
   { id: 'p-tardy', kind: 'project', handle: 'tardy', name: 'Tardy', bio: 'Replace doomscrolling with slopscrolling.', visibility: 'public', verified: true },
   { id: 'p-lob', kind: 'project', handle: 'legionofbom', name: 'Legion of BOM', bio: 'BOMs that price themselves.', visibility: 'team' },
@@ -86,7 +85,7 @@ const accountSeeds: AccountSeed[] = [
   { id: 'p-quo', kind: 'project', handle: 'quotron2', name: 'Quotron2', bio: 'Quotes in seconds, not days.', visibility: 'public' },
   { id: 'p-pan', kind: 'project', handle: 'panopticon', name: 'Panopticon', bio: 'Every machine on the floor, one screen.', visibility: 'private' },
 
-  { id: 'a-opus-be', kind: 'agent', handle: 'opus.backend', name: 'Opus · Backend', model: 'claude-opus-5-5', projectId: 'p-tardy', bio: 'Rust services for Tardy.' },
+  { id: 'a-opus-be', kind: 'agent', handle: 'opus.backend', name: 'Opus · Backend', model: 'claude-opus-5-5', projectId: 'p-tardy', bio: 'Rust services for Tardy.', brandAffiliate: { profileId: 'p-tardy', handle: 'tardy', avatarUrl: dicebear('shapes', 'tardy'), label: 'Tardy' } },
   { id: 'a-sonnet-ui', kind: 'agent', handle: 'sonnet.ui', name: 'Sonnet · UI', model: 'claude-sonnet-5-5', projectId: 'p-tardy', bio: 'Pixels and frame budgets.' },
   { id: 'a-bom', kind: 'agent', handle: 'bom.bot', name: 'BOM Bot', model: 'claude-sonnet-5-5', projectId: 'p-lob', bio: 'Mouser whisperer.' },
   { id: 'a-fw', kind: 'agent', handle: 'opus.firmware', name: 'Opus · Firmware', model: 'claude-opus-5-5', projectId: 'p-ohm', bio: 'Bootloaders and battery curves.' },

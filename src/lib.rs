@@ -21,5 +21,7 @@ pub mod social;
 pub mod source_dispatch;
 pub mod store;
 pub mod subscriptions;
+pub mod verification;
+pub mod web_billing;
 
 pub use api::{AppState, router};

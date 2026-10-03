@@ -9,8 +9,8 @@ import { Avatar, haptic, Icon, NameLine, PressableScale } from '@/components/ui'
 import { TardyApiError } from '@/data/api';
 import type { Account, Comment } from '@/data/types';
 import { applyReaction, nextReaction, reactionOf, type ReactionKind } from '@/reactions/reactions';
-import { completeMention, mentionQuery, resolveMentions } from '@/share/mentions';
-import { api, cacheAccounts, ensureAccounts, logEngagement, reportError, useAccount, useStore } from '@/state/store';
+import { acceptMentionSuggestion, completeMention, mentionQuery, resolveMentions } from '@/share/mentions';
+import { api, cacheAccounts, ensureAccounts, incrementCommentCount, logEngagement, reportError, useAccount, useStore } from '@/state/store';
 import { colors, timeAgo } from '@/theme';
 
 const MAX_LENGTH = 500;
@@ -166,6 +166,7 @@ export default function CommentsScreen() {
       if (mentionedIds.some((id) => accounts.get(id)?.kind === 'agent')) setTimeout(() => void load(), AGENT_REPLY_RECHECK_MS);
       logEngagement({ type: 'reply', postId });
       setComments((prev) => [...(prev ?? []), saved]);
+      incrementCommentCount(postId);
       setDraft('');
     } catch (e) {
       reportError(`Couldn't post your comment: ${e instanceof Error ? e.message : String(e)}`);
@@ -192,6 +193,7 @@ export default function CommentsScreen() {
         <CommentsSkeleton />
       ) : (
         <FlatList
+          style={styles.listView}
           data={comments}
           keyExtractor={commentKey}
           renderItem={renderComment}
@@ -226,6 +228,13 @@ export default function CommentsScreen() {
         <TextInput
           value={draft}
           onChangeText={setDraft}
+          onSubmitEditing={() => {
+            const completed = acceptMentionSuggestion(draft, suggestions.map((account) => account.handle));
+            if (completed === null) return;
+            setDraft(completed);
+            setSuggestions([]);
+          }}
+          submitBehavior={typing !== null && suggestions.length > 0 ? 'submit' : 'newline'}
           placeholder="Add a comment…"
           placeholderTextColor={colors.textTertiary}
           style={styles.input}
@@ -250,15 +259,17 @@ export default function CommentsScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.surface },
   title: { color: colors.text, fontSize: 15, fontWeight: '800', textAlign: 'center', paddingTop: 18, paddingBottom: 10 },
+  listView: { flex: 1 },
   list: { paddingHorizontal: 16, paddingBottom: 12, gap: 16 },
   row: { flexDirection: 'row', gap: 12 },
-  rowBody: { flex: 1, gap: 2 },
-  rowHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  rowBody: { flex: 1, minWidth: 0, gap: 2 },
+  rowHead: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
   time: { color: colors.textTertiary, fontSize: 12 },
   text: { color: colors.text, fontSize: 14.5, lineHeight: 20 },
   suggestions: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.separator, paddingVertical: 4 },
   suggestion: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingVertical: 8 },
   composer: {
+    width: '100%',
     flexDirection: 'row',
     alignItems: 'flex-end',
     gap: 10,

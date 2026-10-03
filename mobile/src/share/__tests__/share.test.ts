@@ -49,12 +49,25 @@ describe('MockTardyApi.openThread', () => {
     expect((await client.openThread(p('me', 'avery'))).id).toBe('t-avery');
   });
 
-  it('starts a group once and finds it again regardless of order', async () => {
+  it('gives groups their own identity even when membership matches', async () => {
     const client = api();
     const group = await client.openThread(p('avery', 'a-opus-be'), 'Feed launch');
     expect(group.title).toBe('Feed launch');
     expect([...group.participantIds].sort()).toEqual(['a-opus-be', 'avery', 'me']);
-    expect((await client.openThread(p('a-opus-be', 'avery'))).id).toBe(group.id);
+    expect((await client.openThread(p('a-opus-be', 'avery'), 'Second room')).id).not.toBe(group.id);
+  });
+
+  it('renames groups and mutates membership without replacing the thread', async () => {
+    const client = api();
+    const group = await client.openThread(p('avery'), 'Draft');
+    const renamed = await client.renameThread(group.id, 'Ship Room');
+    expect(renamed).toMatchObject({ id: group.id, title: 'Ship Room' });
+    await expect(client.addThreadParticipant(group.id, 'a-opus-be')).rejects.toEqual(expect.objectContaining({ code: 'invalid' }));
+    const expanded = await client.addAgent(group.id, 'a-opus-be');
+    expect(expanded.participantIds).toContain('a-opus-be');
+    const reduced = await client.removeThreadParticipant(group.id, 'a-opus-be');
+    expect(reduced.id).toBe(group.id);
+    expect(reduced.participantIds).not.toContain('a-opus-be');
   });
 
   it('hides an empty new thread from the inbox until it has a message', async () => {
