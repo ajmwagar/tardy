@@ -53,21 +53,17 @@ private struct SignInView: View {
 
 struct MessengerView: View {
     @Environment(AppModel.self) private var model
-    @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
         @Bindable var model = model
-        NavigationSplitView(columnVisibility: $columnVisibility) {
+        HSplitView {
             InboxSidebar()
-                .navigationSplitViewColumnWidth(min: 260, ideal: 310, max: 390)
-        } content: {
+                .frame(minWidth: 250, idealWidth: 300, maxWidth: 360)
             ChatView()
-                .navigationSplitViewColumnWidth(min: 480, ideal: 640)
-        } detail: {
+                .frame(minWidth: 480, idealWidth: 680)
             ContextInspector()
-                .navigationSplitViewColumnWidth(min: 250, ideal: 290, max: 360)
+                .frame(minWidth: 240, idealWidth: 285, maxWidth: 340)
         }
-        .navigationSplitViewStyle(.balanced)
         .tint(Brand.yellow)
         .focusedSceneValue(\.sendTardyMessage) { Task { await model.send() } }
     }
