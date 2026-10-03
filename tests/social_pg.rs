@@ -490,6 +490,14 @@ async fn social_actions_create_deduplicated_durable_notifications() {
     let author = Uuid::new_v4();
     let actor = Uuid::new_v4();
     let mentioned = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO durable_accounts (id,email,kind,temporary) VALUES ($1,$2,'human',false)",
+    )
+    .bind(actor_account)
+    .bind(format!("actor-{actor_account}@example.test"))
+    .execute(&pool)
+    .await
+    .unwrap();
     for (account, profile, handle) in [
         (author_account, author, "author-notify"),
         (actor_account, actor, "actor-notify"),
@@ -500,6 +508,12 @@ async fn social_actions_create_deduplicated_durable_notifications() {
             .await
             .unwrap();
     }
+    sqlx::query("INSERT INTO profile_ownership (owner_account_id,profile_id) VALUES ($1,$2)")
+        .bind(actor_account)
+        .bind(actor)
+        .execute(&pool)
+        .await
+        .unwrap();
     let post = store
         .publish_post(
             author,
