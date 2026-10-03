@@ -18,6 +18,14 @@ final class AppModel {
     var search = ""
     var errorMessage: String?
     var isSending = false
+    var destination: AppDestination = .reels
+    var reels: [TardyPost] = []
+    var selectedPostId: UUID?
+    var comments: [PostComment] = []
+    var commentDraft = ""
+    var selectedProfile: Account?
+    var profilePosts: [TardyPost] = []
+    var isLoadingContent = false
 
     let api: TardyAPI
     private var messageTask: Task<Void, Never>?
@@ -31,6 +39,11 @@ final class AppModel {
         conversations.first { $0.id == selectedConversationId }
     }
 
+    var selectedPost: TardyPost? {
+        reels.first { $0.id == selectedPostId }
+            ?? profilePosts.first { $0.id == selectedPostId }
+    }
+
     var filteredConversations: [Conversation] {
         guard !search.isEmpty else { return conversations }
         return conversations.filter {
@@ -40,7 +53,7 @@ final class AppModel {
 
     func start() async {
         if ProcessInfo.processInfo.environment["TARDY_DEV_AUTO_SIGN_IN"] == "1" {
-            await developmentSignIn(email: nil)
+            await developmentSignIn(email: ProcessInfo.processInfo.environment["TARDY_DEV_EMAIL"])
             return
         }
         if let token = KeychainStore.loadToken() {
@@ -94,6 +107,108 @@ final class AppModel {
             }
             if selectedConversationId == nil { select(conversations.first?.id) }
         } catch { show(error) }
+    }
+
+    func refreshReels() async {
+        isLoadingContent = true
+        defer { isLoadingContent = false }
+        do {
+            reels = try await api.reels().items
+            if selectedPostId == nil { await selectPost(reels.first?.id) }
+            let ids = Set(reels.map(\.authorId)).subtracting(accounts.keys)
+            if !ids.isEmpty {
+                let profiles = try await api.profiles(ids: Array(ids))
+                profiles.forEach { accounts[$0.id] = $0 }
+            }
+        } catch { show(error) }
+    }
+
+    func selectPost(_ id: UUID?) async {
+        selectedPostId = id
+        comments = []
+        guard let post = selectedPost else { return }
+        do {
+            async let loadedComments = api.comments(post: post.id)
+            async let author = api.profile(id: post.authorId)
+            let (newComments, profile) = try await (loadedComments, author)
+            comments = newComments
+            accounts[profile.id] = profile
+            let missing = Set(newComments.map(\.authorProfileId)).subtracting(accounts.keys)
+            if !missing.isEmpty {
+                let profiles = try await api.profiles(ids: Array(missing))
+                profiles.forEach { accounts[$0.id] = $0 }
+            }
+        } catch { show(error) }
+    }
+
+    func advancePost(by delta: Int) async {
+        guard !reels.isEmpty else { return }
+        let current = reels.firstIndex { $0.id == selectedPostId } ?? 0
+        let next = min(max(current + delta, 0), reels.count - 1)
+        guard next != current else { return }
+        await selectPost(reels[next].id)
+    }
+
+    func openProfile(_ id: UUID) async {
+        destination = .profile
+        isLoadingContent = true
+        defer { isLoadingContent = false }
+        do {
+            async let profile = api.profile(id: id)
+            async let posts = api.posts(profile: id)
+            selectedProfile = try await profile
+            profilePosts = try await posts.items
+            if let selectedProfile { accounts[selectedProfile.id] = selectedProfile }
+        } catch { show(error) }
+    }
+
+    func openPost(_ post: TardyPost) async {
+        if !reels.contains(where: { $0.id == post.id }) { reels.insert(post, at: 0) }
+        destination = .reels
+        await selectPost(post.id)
+    }
+
+    func addComment() async {
+        guard let post = selectedPost else { return }
+        let text = commentDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        commentDraft = ""
+        do {
+            let comment = try await api.addComment(post: post.id, body: text)
+            comments.append(comment)
+            updatePost(post.id) { $0.commentCount += 1 }
+        } catch {
+            commentDraft = text
+            show(error)
+        }
+    }
+
+    func toggleLike() async {
+        guard let post = selectedPost else { return }
+        let next = !post.viewerHasLiked
+        updatePost(post.id) {
+            $0.viewerHasLiked = next
+            $0.likeCount += next ? 1 : -1
+        }
+        do { try await api.setLiked(post: post.id, liked: next) }
+        catch {
+            updatePost(post.id) {
+                $0.viewerHasLiked = !next
+                $0.likeCount += next ? -1 : 1
+            }
+            show(error)
+        }
+    }
+
+    func toggleSaved() async {
+        guard let post = selectedPost else { return }
+        let next = !post.viewerHasSaved
+        updatePost(post.id) { $0.viewerHasSaved = next }
+        do { try await api.setSaved(post: post.id, saved: next) }
+        catch {
+            updatePost(post.id) { $0.viewerHasSaved = !next }
+            show(error)
+        }
     }
 
     func select(_ id: UUID?) {
@@ -180,11 +295,20 @@ final class AppModel {
         account = envelope.account
         accounts[envelope.account.id] = envelope.account
         await api.authenticate(token: envelope.session.token, profileId: envelope.account.id)
+        // Authentication is enough to render the shell. Each surface owns its loading state,
+        // so a slow feed, inbox, or agent lookup never holds the whole window hostage.
+        phase = .ready
         async let agents = api.ownedAgents(ownerProfileId: envelope.account.id)
         async let inbox: Void = refreshInbox()
+        async let content: Void = refreshReels()
         ownedAgents = try await agents
         _ = await inbox
-        phase = .ready
+        _ = await content
+    }
+
+    private func updatePost(_ id: UUID, _ mutation: (inout TardyPost) -> Void) {
+        if let index = reels.firstIndex(where: { $0.id == id }) { mutation(&reels[index]) }
+        if let index = profilePosts.firstIndex(where: { $0.id == id }) { mutation(&profilePosts[index]) }
     }
 
     private func show(_ error: Error) {

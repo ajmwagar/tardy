@@ -14,6 +14,30 @@ import Testing
     #expect(message.readBy.isEmpty)
 }
 
+@Test func reelPageDecodesFromPostgresWireShape() throws {
+    let json = Data(#"{"items":[{"alarm_count":0,"author_id":"e8b8889f-8c4b-5e48-e614-2f189cbf90a0","caption":"One week of building Tardy.","comment_count":1,"created_at_ms":1790905693799,"format":"reel","id":"10000000-0000-0000-0000-000000000001","like_count":1,"links":[],"media":[{"duration_ms":32000,"height":1920,"poster_url":"https://example.test/poster.jpg","type":"video","url":"https://example.test/reel.mp4","width":1080}],"repost_count":0,"share_count":0,"viewer_has_alarm":false,"viewer_has_liked":false,"viewer_has_reposted":false,"viewer_has_saved":false}],"next_cursor":null}"#.utf8)
+    let decoder = JSONDecoder()
+    decoder.keyDecodingStrategy = .convertFromSnakeCase
+
+    let page = try decoder.decode(PostPage.self, from: json)
+
+    #expect(page.items.count == 1)
+    #expect(page.items[0].primaryMedia?.durationMs == 32_000)
+    #expect(page.items[0].commentCount == 1)
+}
+
+@Test func commentDecodesWithoutOptionalEngagementFields() throws {
+    let json = Data(#"{"id":"9c6917c9-7a94-4067-8999-0fbf798fe6c3","post_id":"10000000-0000-0000-0000-000000000001","author_profile_id":"a47035bb-b26d-4f1f-8d71-6f9789927868","body":"Stay tardy","mentioned_profile_ids":[],"created_at":"2026-10-02T02:07:58.514543Z"}"#.utf8)
+    let decoder = JSONDecoder()
+    decoder.keyDecodingStrategy = .convertFromSnakeCase
+
+    let comment = try decoder.decode(PostComment.self, from: json)
+
+    #expect(comment.body == "Stay tardy")
+    #expect(comment.likeCount == nil)
+    #expect(comment.reactions == nil)
+}
+
 @Test func conversationUsesExplicitTitle() {
     let id = UUID()
     let conversation = Conversation(id: id, mode: .work, title: "Ship Room", participants: [], lastMessage: nil, unreadCount: 0)

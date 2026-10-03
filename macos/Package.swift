@@ -9,7 +9,11 @@ let package = Package(
         .executableTarget(
             name: "TardyMac",
             path: "Sources/TardyMac",
-            swiftSettings: [.swiftLanguageMode(.v6)]
+            swiftSettings: [.swiftLanguageMode(.v6)],
+            linkerSettings: [
+                .linkedFramework("AVKit"),
+                .linkedFramework("AVFoundation"),
+            ]
         ),
         .testTarget(
             name: "TardyMacTests",

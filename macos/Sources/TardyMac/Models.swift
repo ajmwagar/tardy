@@ -38,6 +38,64 @@ enum ConversationMode: String, Codable, Sendable {
     case dm, work
 }
 
+enum AppDestination: String, CaseIterable, Identifiable, Sendable {
+    case reels, messages, profile
+    var id: String { rawValue }
+}
+
+struct PostPage: Codable, Sendable {
+    let items: [TardyPost]
+    let nextCursor: String?
+}
+
+struct TardyPost: Codable, Identifiable, Hashable, Sendable {
+    let id: UUID
+    let authorId: UUID
+    let format: String
+    let media: [PostMedia]
+    let caption: String
+    let createdAtMs: UInt64
+    var likeCount: Int
+    var commentCount: Int
+    let shareCount: Int
+    let repostCount: Int
+    let alarmCount: Int
+    var viewerHasLiked: Bool
+    var viewerHasSaved: Bool
+    let viewerHasReposted: Bool
+    let viewerHasAlarm: Bool
+
+    var primaryMedia: PostMedia? { media.first }
+}
+
+struct PostMedia: Codable, Hashable, Sendable {
+    let type: String
+    let url: String
+    let posterUrl: String?
+    let width: Int
+    let height: Int
+    let durationMs: Int?
+
+    var remoteURL: URL? { URL(string: url) }
+    var posterURL: URL? { posterUrl.flatMap(URL.init(string:)) }
+}
+
+struct PostComment: Codable, Identifiable, Hashable, Sendable {
+    let id: UUID
+    let postId: UUID
+    let authorProfileId: UUID
+    let body: String
+    let mentionedProfileIds: [UUID]
+    let createdAt: String
+    let likeCount: Int?
+    let reactions: [ReactionSummary]?
+}
+
+struct AddCommentRequest: Encodable, Sendable {
+    let body: String
+    let mentionedProfileIds: [UUID]
+}
+
 struct Conversation: Codable, Identifiable, Hashable, Sendable {
     let id: UUID
     let mode: ConversationMode

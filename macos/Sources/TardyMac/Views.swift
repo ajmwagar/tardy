@@ -1,6 +1,6 @@
 import SwiftUI
 
-private enum Brand {
+enum Brand {
     static let yellow = Color(red: 1.0, green: 0.79, blue: 0.06)
     static let background = Color(red: 0.035, green: 0.035, blue: 0.045)
     static let panel = Color(red: 0.075, green: 0.075, blue: 0.09)
@@ -16,7 +16,7 @@ struct ContentView: View {
             switch model.phase {
             case .loading: ProgressView("Getting current…").controlSize(.large)
             case .signedOut: SignInView()
-            case .ready: MessengerView()
+            case .ready: AppShellView()
             }
         }
         .frame(minWidth: 980, minHeight: 640)
@@ -26,7 +26,7 @@ struct ContentView: View {
 
 private struct SignInView: View {
     @Environment(AppModel.self) private var model
-    @State private var email = "orangej20@gmail.com"
+    @State private var email = ProcessInfo.processInfo.environment["TARDY_DEV_EMAIL"] ?? ""
 
     var body: some View {
         VStack(spacing: 22) {
@@ -51,7 +51,7 @@ private struct SignInView: View {
     }
 }
 
-private struct MessengerView: View {
+struct MessengerView: View {
     @Environment(AppModel.self) private var model
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
@@ -453,7 +453,7 @@ private struct SectionLabel: View {
     var body: some View { Text(text).font(.caption.bold()).foregroundStyle(Brand.muted) }
 }
 
-private struct Avatar: View {
+struct Avatar: View {
     let account: Account?
     let size: CGFloat
     var body: some View {

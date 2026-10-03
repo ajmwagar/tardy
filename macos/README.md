@@ -19,7 +19,7 @@ TARDY_API_URL=https://api.tardy.news .build/Tardy.app/Contents/MacOS/TardyMac
 For local dogfooding without an existing Keychain session:
 
 ```sh
-TARDY_DEV_AUTO_SIGN_IN=1 .build/Tardy.app/Contents/MacOS/TardyMac
+TARDY_DEV_AUTO_SIGN_IN=1 TARDY_DEV_EMAIL=you@example.com .build/Tardy.app/Contents/MacOS/TardyMac
 ```
 
 The preview sign-in button calls `/v1/dev/session`, which must only be enabled on a development
