@@ -92,9 +92,12 @@ private struct ReelsView: View {
             Divider()
             ScrollView {
                 LazyVStack(spacing: 10) {
+                    if model.isLoadingContent && model.reels.isEmpty {
+                        ForEach(0..<4, id: \.self) { _ in ReelSkeleton() }
+                    }
                     ForEach(model.reels) { post in
                         ReelThumbnail(post: post, selected: post.id == model.selectedPostId)
-                            .onTapGesture { Task { await model.selectPost(post.id) } }
+                            .onTapGesture { model.selectPost(post.id) }
                     }
                 }.padding(10)
             }
@@ -129,12 +132,12 @@ private struct ReelPager: View {
         }
         .onChange(of: position) { _, id in
             guard id != nil, id != model.selectedPostId else { return }
-            Task { await model.selectPost(id) }
+            model.selectPost(id)
         }
         .onMoveCommand { direction in
             switch direction {
-            case .down: Task { await model.advancePost(by: 1) }
-            case .up: Task { await model.advancePost(by: -1) }
+            case .down: model.advancePost(by: 1)
+            case .up: model.advancePost(by: -1)
             default: break
             }
         }
@@ -183,7 +186,7 @@ private struct ReelStage: View {
             VStack {
                 HStack {
                     if let author = model.accounts[post.authorId] {
-                        Button { Task { await model.openProfile(author.id) } } label: {
+                        Button { model.openProfile(author.id) } label: {
                             HStack { Avatar(account: author, size: 30); Text("@\(author.handle)").font(.caption.bold()) }
                         }.buttonStyle(.plain)
                     }
@@ -243,7 +246,7 @@ private struct PostInspector: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     if let author = model.accounts[post.authorId] {
-                        Button { Task { await model.openProfile(author.id) } } label: {
+                        Button { model.openProfile(author.id) } label: {
                             HStack { Avatar(account: author, size: 38); VStack(alignment: .leading) { Text(author.displayName).bold(); Text("@\(author.handle)").font(.caption).foregroundStyle(Brand.muted) }; Spacer(); Image(systemName: "chevron.right") }
                         }.buttonStyle(.plain)
                     }
@@ -251,7 +254,12 @@ private struct PostInspector: View {
                     Text(.init(post.caption)).textSelection(.enabled).font(.body).lineSpacing(3)
                     Divider()
                     HStack { Text("COMMENTS").font(.caption.bold()).foregroundStyle(Brand.yellow); Spacer(); Text("\(model.comments.count)").font(.caption).foregroundStyle(Brand.muted) }
-                    if model.comments.isEmpty { Text("No comments yet.").font(.caption).foregroundStyle(Brand.muted) }
+                    if model.isLoadingComments {
+                        HStack { ProgressView().controlSize(.small); Text("Loading comments…") }
+                            .font(.caption).foregroundStyle(Brand.muted)
+                    } else if model.comments.isEmpty {
+                        Text("No comments yet.").font(.caption).foregroundStyle(Brand.muted)
+                    }
                     ForEach(model.comments) { comment in CommentRow(comment: comment) }
                 }.padding(16)
             }
@@ -306,7 +314,7 @@ private struct ProfileView: View {
                     Text("TARDIES").font(.caption.bold()).foregroundStyle(Brand.yellow)
                     LazyVGrid(columns: columns, spacing: 12) {
                         ForEach(model.profilePosts) { post in
-                            ProfilePostCard(post: post).onTapGesture { Task { await model.openPost(post) } }
+                            ProfilePostCard(post: post).onTapGesture { model.openPost(post) }
                         }
                     }
                 }.padding(26)
@@ -315,12 +323,26 @@ private struct ProfileView: View {
             }
         }.background(Brand.background)
         .task {
-            if model.selectedProfile == nil, let id = model.account?.id { await model.openProfile(id) }
+            if model.selectedProfile == nil, let id = model.account?.id { model.openProfile(id) }
         }
+        .overlay { if model.isLoadingProfile && model.profilePosts.isEmpty { ProgressView("Loading profile…").controlSize(.large) } }
     }
 
     private func stat(_ number: Int, _ label: String) -> some View {
         HStack(spacing: 4) { Text("\(number)").bold(); Text(label).foregroundStyle(Brand.muted) }.font(.caption)
+    }
+}
+
+private struct ReelSkeleton: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            RoundedRectangle(cornerRadius: 8).fill(Brand.raised).frame(width: 62, height: 84)
+            VStack(alignment: .leading, spacing: 8) {
+                Capsule().fill(Brand.raised).frame(width: 90, height: 10)
+                Capsule().fill(Brand.raised).frame(height: 9)
+                Capsule().fill(Brand.raised).frame(width: 120, height: 9)
+            }
+        }.padding(8).redacted(reason: .placeholder)
     }
 }
 
