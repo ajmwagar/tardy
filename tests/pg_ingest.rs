@@ -105,7 +105,7 @@ async fn polling_is_deduplicated_and_enqueues_exactly_once() {
     push.set_preference(
         account_id,
         NotificationPreference {
-            category: "hyper_tardy".into(),
+            category: "mention".into(),
             enabled: true,
         },
     )
