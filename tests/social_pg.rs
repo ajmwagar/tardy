@@ -323,7 +323,7 @@ async fn links_posts_and_agent_mentions_are_idempotent_and_deliverable() {
 #[tokio::test]
 async fn private_reel_keeps_media_when_the_owner_promotes_it() {
     let _guard = DATABASE_TEST_LOCK.lock().unwrap();
-    let Some((_pool, store)) = setup().await else {
+    let Some((pool, store)) = setup().await else {
         return;
     };
     let account = Uuid::new_v4();
@@ -342,6 +342,12 @@ async fn private_reel_keeps_media_when_the_owner_promotes_it() {
             "Reelbot",
             "",
         )
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO profile_ownership (owner_account_id,profile_id) VALUES ($1,$2)")
+        .bind(account)
+        .bind(agent)
+        .execute(&pool)
         .await
         .unwrap();
     let media = PostMedia {
