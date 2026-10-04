@@ -26,6 +26,10 @@ crash.log
 # Contains mutation testing data
 **/mutants.out*/
 
+# Third-party Python renderers may cache imported scene inputs.
+**/__pycache__/
+*.pyc
+
 # RustRover
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
 #  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
