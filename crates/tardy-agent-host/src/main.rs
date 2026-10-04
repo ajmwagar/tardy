@@ -14,7 +14,7 @@ use std::{
 };
 use tardy_agent_host::{
     AgentCommand, AgentCredential, BoxError, CodexRunner, ConversationMessage, HostData,
-    InboxEvent, OpenCodeRunner, PendingMedia, PendingReply, QueuedEvent, RuntimeKind,
+    InboxEvent, OpenCodeRunner, PendingMedia, PendingReply, QueuedEvent, RuntimeEvent, RuntimeKind,
     RuntimeRunner, TapbackDecider, WorkActivation, activation_prompt, dispatchable_deliveries,
     extract_image_directives, extract_manim_directives, extract_mermaid_directives,
     extract_tardy_caption, load_json, obvious_tapback, should_publish_tardy, store_json,
@@ -751,13 +751,31 @@ async fn process_one(app: &App, queued: &QueuedEvent) -> Result<(), BoxError> {
                 .last()
                 .map(|message| message.sequence)
                 .or(activation.sequence);
-            let result = app
+            let (progress, forwarder) = if activation.legacy_dm {
+                (None, None)
+            } else {
+                let (sender, receiver) = tokio::sync::mpsc::channel(64);
+                let draft_app = app.clone();
+                let conversation = activation.conversation_id.clone();
+                (
+                    Some(sender),
+                    Some(tokio::spawn(async move {
+                        forward_runtime_events(&draft_app, &conversation, receiver).await
+                    })),
+                )
+            };
+            let dispatch_result = app
                 .runner
                 .dispatch(
                     thread_id.as_deref(),
                     &activation_prompt(&app.credential.handle, &activation, &context),
+                    progress,
                 )
-                .await?;
+                .await;
+            if let Some(forwarder) = forwarder {
+                forwarder.await??;
+            }
+            let result = dispatch_result?;
             let (body, manim) = extract_manim_directives(&result.reply)?;
             let manim_media = render_manim(&manim).await?;
             let (body, diagrams) = extract_mermaid_directives(&body)?;
@@ -809,6 +827,9 @@ async fn process_one(app: &App, queued: &QueuedEvent) -> Result<(), BoxError> {
     } else {
         set_typing(app, &activation.conversation_id, false).await
     };
+    if result.is_err() && !activation.legacy_dm {
+        let _ = clear_draft(app, &activation.conversation_id).await;
+    }
     result?;
     typing_result?;
     Ok(())
@@ -950,6 +971,79 @@ async fn set_typing(app: &App, conversation: &str, active: bool) -> Result<(), B
                 method,
                 format!("{}/v1/social/conversations/{conversation}/typing", api(app)),
             )
+            .bearer_auth(&app.credential.api_token)
+            .header("x-tardy-profile-id", &app.credential.profile_id),
+    )
+    .await
+}
+
+async fn forward_runtime_events(
+    app: &App,
+    conversation: &str,
+    mut events: tokio::sync::mpsc::Receiver<RuntimeEvent>,
+) -> Result<(), BoxError> {
+    let mut body = String::new();
+    let mut status = "writing";
+    let mut detail = String::new();
+    let mut dirty = false;
+    let mut interval = tokio::time::interval(Duration::from_millis(80));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        tokio::select! {
+            event = events.recv() => match event {
+                Some(RuntimeEvent::TextDelta(delta)) => {
+                    if body.len().saturating_add(delta.len()) <= 20_000 {
+                        body.push_str(&delta);
+                    }
+                    status = "writing";
+                    detail.clear();
+                    dirty = true;
+                }
+                Some(RuntimeEvent::Status(label)) => {
+                    status = "tool";
+                    detail = label.chars().take(500).collect();
+                    dirty = true;
+                }
+                None => {
+                    if dirty { set_draft(app, conversation, &body, "finalizing", "Finishing up").await?; }
+                    return Ok(());
+                }
+            },
+            _ = interval.tick(), if dirty => {
+                set_draft(app, conversation, &body, status, &detail).await?;
+                dirty = false;
+            }
+        }
+    }
+}
+
+async fn set_draft(
+    app: &App,
+    conversation: &str,
+    body: &str,
+    status: &str,
+    detail: &str,
+) -> Result<(), BoxError> {
+    request_ok(
+        app.client
+            .put(format!(
+                "{}/v1/social/conversations/{conversation}/draft",
+                api(app)
+            ))
+            .bearer_auth(&app.credential.api_token)
+            .header("x-tardy-profile-id", &app.credential.profile_id)
+            .json(&json!({"body":body,"status":status,"detail":detail})),
+    )
+    .await
+}
+
+async fn clear_draft(app: &App, conversation: &str) -> Result<(), BoxError> {
+    request_ok(
+        app.client
+            .delete(format!(
+                "{}/v1/social/conversations/{conversation}/draft",
+                api(app)
+            ))
             .bearer_auth(&app.credential.api_token)
             .header("x-tardy-profile-id", &app.credential.profile_id),
     )
