@@ -34,13 +34,16 @@ use crate::web_billing::{BillingError, PgWebBillingStore, WEB_SESSION_COOKIE};
 use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, Path, Query, State};
 use axum::http::{HeaderMap, Method, StatusCode, header};
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post, put};
 use axum::{Json, Router, middleware};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::{convert::Infallible, time::Duration};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
+use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::io::ReaderStream;
 use tower_http::cors::CorsLayer;
 use utoipa::ToSchema;
@@ -319,6 +322,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(
             "/v1/social/conversations/{id}/messages",
             post(send_social_message).get(list_social_messages),
+        )
+        .route(
+            "/v1/social/conversations/{id}/events",
+            get(stream_social_conversation),
         )
         .route(
             "/v1/social/conversations/{id}",
@@ -1980,6 +1987,126 @@ async fn list_social_messages(
         hydrate_message_media(&state, message).await?;
     }
     Ok(Json(messages))
+}
+
+#[derive(Deserialize)]
+struct ConversationStreamQuery {
+    #[serde(default)]
+    after: i64,
+}
+
+async fn stream_social_conversation(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Query(query): Query<ConversationStreamQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor = authenticated_actor(&state, &headers).await?;
+    let header_after = headers
+        .get("last-event-id")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or_default();
+    let mut last_sequence = query.after.max(header_after);
+    if last_sequence < 0 {
+        return Err(ApiError::bad_request("invalid conversation event cursor"));
+    }
+
+    // Check membership before sending SSE headers. This also loads any durable replay.
+    let social = state.social.clone().ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        message: "durable social features are not configured".into(),
+    })?;
+    let mut initial_messages = social.messages(actor, id, last_sequence, 100).await?;
+    for message in &mut initial_messages {
+        hydrate_message_media(&state, message).await?;
+    }
+    let initial_typing = social.typing(actor, id).await?;
+    let (sender, receiver) = tokio::sync::mpsc::channel(16);
+    tokio::spawn(async move {
+        if let Some(message) = initial_messages.last() {
+            last_sequence = message.sequence;
+        }
+        if !initial_messages.is_empty()
+            && send_sse_json(&sender, "messages", Some(last_sequence), &initial_messages)
+                .await
+                .is_err()
+        {
+            return;
+        }
+        if send_sse_json(&sender, "typing", None, &initial_typing)
+            .await
+            .is_err()
+        {
+            return;
+        }
+        let mut last_typing = initial_typing;
+        let mut interval = tokio::time::interval(Duration::from_millis(200));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            let result = async {
+                let mut fresh = social.messages(actor, id, last_sequence, 100).await?;
+                for message in &mut fresh {
+                    hydrate_message_media(&state, message).await?;
+                }
+                let typing = social.typing(actor, id).await?;
+                Ok::<_, ApiError>((fresh, typing))
+            }
+            .await;
+            let (fresh, typing) = match result {
+                Ok(value) => value,
+                Err(error) => {
+                    tracing::warn!(conversation_id = %id, %error, "conversation SSE stream failed");
+                    let _ = sender
+                        .send(Ok(Event::default()
+                            .event("error")
+                            .data("{\"error\":\"conversation stream interrupted\"}")))
+                        .await;
+                    return;
+                }
+            };
+            if let Some(message) = fresh.last() {
+                last_sequence = message.sequence;
+            }
+            if !fresh.is_empty()
+                && send_sse_json(&sender, "messages", Some(last_sequence), &fresh)
+                    .await
+                    .is_err()
+            {
+                return;
+            }
+            if typing != last_typing {
+                last_typing = typing;
+                if send_sse_json(&sender, "typing", None, &last_typing)
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+            }
+        }
+    });
+    Ok(Sse::new(ReceiverStream::new(receiver)).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("keep-alive"),
+    ))
+}
+
+async fn send_sse_json<T: Serialize>(
+    sender: &tokio::sync::mpsc::Sender<Result<Event, Infallible>>,
+    event: &'static str,
+    id: Option<i64>,
+    value: &T,
+) -> Result<(), ()> {
+    let data = serde_json::to_string(value).map_err(|_| ())?;
+    let mut frame = Event::default().event(event).data(data);
+    if let Some(id) = id {
+        frame = frame.id(id.to_string());
+    }
+    sender.send(Ok(frame)).await.map_err(|_| ())
 }
 
 #[derive(Deserialize, ToSchema)]
