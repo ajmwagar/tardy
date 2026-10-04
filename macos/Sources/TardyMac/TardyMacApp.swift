@@ -10,17 +10,10 @@ struct TardyMacApp: App {
                 .environment(model)
                 .preferredColorScheme(.dark)
                 .task { await model.start() }
-                .alert("Tardy hit a snag", isPresented: Binding(
-                    get: { model.errorMessage != nil },
-                    set: { if !$0 { model.errorMessage = nil } }
-                )) {
-                    Button("OK", role: .cancel) { model.errorMessage = nil }
-                } message: {
-                    Text(model.errorMessage ?? "Unknown error")
-                }
         }
         .defaultSize(width: 1260, height: 820)
         .windowStyle(.titleBar)
+        .windowToolbarStyle(.unifiedCompact(showsTitle: false))
         .commands { TardyCommands() }
     }
 }
