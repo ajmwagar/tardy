@@ -6,8 +6,9 @@ use serde_json::Value;
 use sha2::Sha256;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
+#[cfg(test)]
 use uuid::Uuid;
 
 pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
@@ -462,6 +463,7 @@ pub async fn store_json<T: Serialize>(path: &Path, value: &T) -> Result<(), BoxE
 }
 
 pub struct CodexRunner {
+    binary: PathBuf,
     workspace: PathBuf,
     sandbox: String,
     network_access: bool,
@@ -502,6 +504,12 @@ pub struct RuntimeResult {
     pub reply: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RuntimeEvent {
+    TextDelta(String),
+    Status(String),
+}
+
 pub enum RuntimeRunner {
     Codex(CodexRunner),
     OpenCode(OpenCodeRunner),
@@ -519,12 +527,21 @@ impl RuntimeRunner {
         &self,
         stored_session: Option<&str>,
         prompt: &str,
+        progress: Option<tokio::sync::mpsc::Sender<RuntimeEvent>>,
     ) -> Result<RuntimeResult, BoxError> {
         let kind = self.kind();
         let session = runtime_session(stored_session, kind);
         let result = match self {
-            Self::Codex(runner) => runner.dispatch(session, prompt).await?,
-            Self::OpenCode(runner) => runner.dispatch(session, prompt).await?,
+            Self::Codex(runner) => runner.dispatch(session, prompt, progress).await?,
+            Self::OpenCode(runner) => {
+                let result = runner.dispatch(session, prompt).await?;
+                if let Some(progress) = progress {
+                    let _ = progress
+                        .send(RuntimeEvent::TextDelta(result.reply.clone()))
+                        .await;
+                }
+                result
+            }
         };
         Ok(RuntimeResult {
             session: format!("{}:{}", kind.as_str(), result.thread_id),
@@ -833,6 +850,7 @@ impl CodexRunner {
         run_dir: PathBuf,
     ) -> Self {
         Self {
+            binary: PathBuf::from("codex"),
             workspace,
             sandbox,
             network_access,
@@ -840,16 +858,22 @@ impl CodexRunner {
         }
     }
 
+    #[cfg(test)]
+    fn with_binary(mut self, binary: PathBuf) -> Self {
+        self.binary = binary;
+        self
+    }
+
     pub async fn dispatch(
         &self,
         thread_id: Option<&str>,
         prompt: &str,
+        progress: Option<tokio::sync::mpsc::Sender<RuntimeEvent>>,
     ) -> Result<CodexResult, BoxError> {
         tokio::fs::create_dir_all(&self.run_dir).await?;
-        let output_path = self.run_dir.join(format!("{}.reply", Uuid::new_v4()));
-        let mut command = Command::new("codex");
+        let mut command = Command::new(&self.binary);
         command.current_dir(&self.workspace);
-        command.arg("exec");
+        command.arg("app-server");
         if self.sandbox == "workspace-write" {
             command.args([
                 "--config",
@@ -860,54 +884,165 @@ impl CodexRunner {
                 },
             ]);
         }
-        if let Some(thread_id) = thread_id {
-            command.args(["resume", "--json", "-o"]);
-            command.arg(&output_path);
-            command.args([thread_id, "-"]);
-        } else {
-            command.args(["--json", "--sandbox", &self.sandbox, "-o"]);
-            command.arg(&output_path);
-            command.args(["-C"]);
-            command.arg(&self.workspace);
-            command.arg("-");
-        }
         command.stdin(std::process::Stdio::piped());
         command.stdout(std::process::Stdio::piped());
         command.stderr(std::process::Stdio::piped());
         command.kill_on_drop(true);
         let mut child = command.spawn()?;
-        child
-            .stdin
-            .take()
-            .ok_or("Codex stdin unavailable")?
-            .write_all(prompt.as_bytes())
-            .await?;
-        let output = child.wait_with_output().await?;
-        if !output.status.success() {
-            return Err(format!(
-                "Codex exited {}: {}",
-                output.status,
-                String::from_utf8_lossy(&output.stderr)
-                    .chars()
-                    .take(1000)
-                    .collect::<String>()
-            )
-            .into());
+        let mut stdin = child.stdin.take().ok_or("Codex stdin unavailable")?;
+        let stdout = child.stdout.take().ok_or("Codex stdout unavailable")?;
+        let mut stderr = child.stderr.take().ok_or("Codex stderr unavailable")?;
+        let stderr_task = tokio::spawn(async move {
+            let mut bytes = Vec::new();
+            let _ = stderr.read_to_end(&mut bytes).await;
+            String::from_utf8_lossy(&bytes)
+                .chars()
+                .take(1000)
+                .collect::<String>()
+        });
+        write_app_server(
+            &mut stdin,
+            serde_json::json!({
+                "method":"initialize","id":0,
+                "params":{"clientInfo":{"name":"tardy_agent_host","title":"Tardy Agent Host","version":env!("CARGO_PKG_VERSION")}}
+            }),
+        )
+        .await?;
+        write_app_server(
+            &mut stdin,
+            serde_json::json!({"method":"initialized","params":{}}),
+        )
+        .await?;
+        let thread_method = if thread_id.is_some() {
+            "thread/resume"
+        } else {
+            "thread/start"
+        };
+        let thread_params = if let Some(thread_id) = thread_id {
+            serde_json::json!({
+                "threadId":thread_id,"cwd":self.workspace,"approvalPolicy":"never","sandbox":self.sandbox
+            })
+        } else {
+            serde_json::json!({
+                "cwd":self.workspace,"approvalPolicy":"never","sandbox":self.sandbox,"serviceName":"tardy-agent-host"
+            })
+        };
+        write_app_server(
+            &mut stdin,
+            serde_json::json!({"method":thread_method,"id":1,"params":thread_params}),
+        )
+        .await?;
+
+        let mut lines = BufReader::new(stdout).lines();
+        let mut active_thread = None;
+        let mut streamed_reply = String::new();
+        let mut authoritative_reply = None;
+        let mut completed = false;
+        while let Some(line) = lines.next_line().await? {
+            let message: Value = serde_json::from_str(&line)
+                .map_err(|error| format!("Codex app-server emitted invalid JSON: {error}"))?;
+            if message.get("id").and_then(Value::as_i64) == Some(1) {
+                if let Some(error) = message.get("error") {
+                    return Err(format!("Codex thread setup failed: {error}").into());
+                }
+                let id = message
+                    .pointer("/result/thread/id")
+                    .and_then(Value::as_str)
+                    .ok_or("Codex thread response omitted id")?
+                    .to_owned();
+                active_thread = Some(id.clone());
+                write_app_server(
+                    &mut stdin,
+                    serde_json::json!({
+                        "method":"turn/start","id":2,
+                        "params":{"threadId":id,"input":[{"type":"text","text":prompt}]}
+                    }),
+                )
+                .await?;
+                continue;
+            }
+            match message.get("method").and_then(Value::as_str) {
+                Some("item/agentMessage/delta") => {
+                    if let Some(delta) = message.pointer("/params/delta").and_then(Value::as_str) {
+                        streamed_reply.push_str(delta);
+                        if let Some(progress) = &progress {
+                            let _ = progress.send(RuntimeEvent::TextDelta(delta.into())).await;
+                        }
+                    }
+                }
+                Some("item/started") => {
+                    let kind = message.pointer("/params/item/type").and_then(Value::as_str);
+                    let status = match kind {
+                        Some("commandExecution") => Some("Running a command"),
+                        Some("fileChange") => Some("Editing files"),
+                        Some("mcpToolCall" | "dynamicToolCall") => Some("Using a tool"),
+                        Some("collabToolCall") => Some("Coordinating with a subagent"),
+                        Some("webSearch") => Some("Searching the web"),
+                        _ => None,
+                    };
+                    if let (Some(progress), Some(status)) = (&progress, status) {
+                        let _ = progress.send(RuntimeEvent::Status(status.into())).await;
+                    }
+                }
+                Some("item/completed") => {
+                    if message.pointer("/params/item/type").and_then(Value::as_str)
+                        == Some("agentMessage")
+                    {
+                        if let Some(text) =
+                            message.pointer("/params/item/text").and_then(Value::as_str)
+                        {
+                            authoritative_reply = Some(text.to_owned());
+                        }
+                    }
+                }
+                Some("turn/completed") => {
+                    let status = message
+                        .pointer("/params/turn/status")
+                        .and_then(Value::as_str);
+                    if status != Some("completed") {
+                        return Err(format!(
+                            "Codex turn ended with status {}",
+                            status.unwrap_or("unknown")
+                        )
+                        .into());
+                    }
+                    completed = true;
+                    break;
+                }
+                Some("item/reasoning/summaryTextDelta" | "item/reasoning/textDelta") => {
+                    // Never forward private reasoning or summaries into Tardy chat.
+                }
+                _ => {}
+            }
         }
-        let reply = tokio::fs::read_to_string(&output_path)
-            .await?
+        if !completed {
+            let stderr = stderr_task.await.unwrap_or_default();
+            return Err(format!("Codex app-server ended before turn completion: {stderr}").into());
+        }
+        let _ = child.kill().await;
+        let _ = child.wait().await;
+        let _ = stderr_task.await;
+        let reply = authoritative_reply
+            .unwrap_or(streamed_reply)
             .trim()
             .to_owned();
-        let _ = tokio::fs::remove_file(&output_path).await;
         if reply.is_empty() || reply.len() > 20_000 {
             return Err("Codex returned an empty or oversized reply".into());
         }
-        let thread_id = thread_id
-            .map(str::to_owned)
-            .or_else(|| find_thread_id(&output.stdout))
-            .ok_or("Codex did not report a thread id")?;
+        let thread_id = active_thread.ok_or("Codex did not report a thread id")?;
         Ok(CodexResult { thread_id, reply })
     }
+}
+
+async fn write_app_server(
+    stdin: &mut tokio::process::ChildStdin,
+    message: Value,
+) -> Result<(), BoxError> {
+    let mut bytes = serde_json::to_vec(&message)?;
+    bytes.push(b'\n');
+    stdin.write_all(&bytes).await?;
+    stdin.flush().await?;
+    Ok(())
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1060,6 +1195,67 @@ mod tests {
             .unwrap();
         assert_eq!(result.thread_id, "ses_fake");
         assert_eq!(result.reply, "Done.");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn codex_app_server_streams_public_deltas_and_ignores_reasoning() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = std::env::temp_dir().join(format!("tardy-codex-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let binary = root.join("codex-fake");
+        std::fs::write(
+            &binary,
+            r#"#!/bin/sh
+while IFS= read -r line; do
+  case "$line" in
+    *'"id":1'*)
+      printf '%s\n' '{"id":1,"result":{"thread":{"id":"thr_fake"}}}'
+      ;;
+    *'"method":"turn/start"'*)
+      printf '%s\n' '{"method":"item/started","params":{"item":{"type":"commandExecution"},"startedAtMs":1,"threadId":"thr_fake","turnId":"turn_fake"}}'
+      printf '%s\n' '{"method":"item/reasoning/textDelta","params":{"delta":"PRIVATE"}}'
+      printf '%s\n' '{"method":"item/agentMessage/delta","params":{"delta":"Streamed ","itemId":"item","threadId":"thr_fake","turnId":"turn_fake"}}'
+      printf '%s\n' '{"method":"item/agentMessage/delta","params":{"delta":"reply","itemId":"item","threadId":"thr_fake","turnId":"turn_fake"}}'
+      printf '%s\n' '{"method":"item/completed","params":{"item":{"type":"agentMessage","text":"Streamed reply"},"threadId":"thr_fake","turnId":"turn_fake"}}'
+      printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr_fake","turn":{"status":"completed"}}}'
+      ;;
+  esac
+done
+"#,
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&binary).unwrap().permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&binary, permissions).unwrap();
+        let runner = CodexRunner::new(
+            root.clone(),
+            "workspace-write".into(),
+            true,
+            root.join("runs"),
+        )
+        .with_binary(binary);
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(16);
+        let result = runner
+            .dispatch(None, "private granted context", Some(sender))
+            .await
+            .unwrap();
+        assert_eq!(result.thread_id, "thr_fake");
+        assert_eq!(result.reply, "Streamed reply");
+        let mut events = Vec::new();
+        while let Ok(event) = receiver.try_recv() {
+            events.push(event);
+        }
+        assert_eq!(
+            events,
+            vec![
+                RuntimeEvent::Status("Running a command".into()),
+                RuntimeEvent::TextDelta("Streamed ".into()),
+                RuntimeEvent::TextDelta("reply".into()),
+            ]
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 
