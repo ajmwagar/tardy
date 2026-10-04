@@ -16,49 +16,78 @@ struct AppShellView: View {
             }
         }
         .background(Brand.background)
-        .overlay(alignment: .top) {
-            if let error = model.errorMessage {
-                Text(error).font(.caption).padding(.horizontal, 12).padding(.vertical, 7)
-                    .background(.red.opacity(0.9), in: Capsule()).padding(10)
-                    .onTapGesture { model.errorMessage = nil }
-            }
-        }
     }
 }
 
 private struct AppRail: View {
+    @Environment(AppModel.self) private var model
     @Binding var selection: AppDestination
 
+    private var unread: Int { model.conversations.reduce(0) { $0 + $1.unreadCount } }
+
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 8) {
             Image(systemName: "alarm.waves.left.and.right.fill")
-                .font(.system(size: 28, weight: .black)).foregroundStyle(Brand.yellow).padding(.bottom, 12)
-            RailButton(title: "Reels", icon: "play.rectangle.on.rectangle.fill", destination: .reels, selection: $selection)
-            RailButton(title: "Messages", icon: "bubble.left.and.bubble.right.fill", destination: .messages, selection: $selection)
-            RailButton(title: "Profile", icon: "person.crop.circle.fill", destination: .profile, selection: $selection)
+                .font(.system(size: 25, weight: .black))
+                .foregroundStyle(Brand.yellow)
+                .frame(width: 46, height: 46)
+                .background(Brand.yellow.opacity(0.1), in: RoundedRectangle(cornerRadius: 13))
+                .padding(.bottom, 10)
+            RailButton(title: "Reels", icon: "play.rectangle.on.rectangle.fill", key: "1", destination: .reels, selection: $selection)
+            RailButton(title: "Messages", icon: "bubble.left.and.bubble.right.fill", key: "2", badge: unread, destination: .messages, selection: $selection)
+            RailButton(title: "Profile", icon: "person.crop.circle.fill", key: "3", destination: .profile, selection: $selection)
             Spacer()
+            if let account = model.account {
+                Avatar(account: account, size: 32)
+                    .overlay(alignment: .bottomTrailing) {
+                        Circle().fill(.green).frame(width: 9, height: 9)
+                            .overlay { Circle().stroke(Brand.panel, lineWidth: 2) }
+                    }
+                    .help("@\(account.handle)")
+                    .onTapGesture { selection = .profile }
+            }
         }
-        .padding(.vertical, 16).frame(width: 82).background(Brand.panel)
+        .padding(.vertical, 14).frame(width: 74)
+        .background(.ultraThinMaterial)
+        .overlay(alignment: .trailing) { Rectangle().fill(Brand.separator).frame(width: 1) }
     }
 }
 
 private struct RailButton: View {
     let title: String
     let icon: String
+    let key: KeyEquivalent
+    var badge = 0
     let destination: AppDestination
     @Binding var selection: AppDestination
+    @State private var hovering = false
 
     var body: some View {
-        Button { selection = destination } label: {
+        Button { withAnimation(.snappy) { selection = destination } } label: {
             VStack(spacing: 5) {
-                Image(systemName: icon).font(.title2)
+                Image(systemName: icon).font(.system(size: 19, weight: .semibold))
+                    .overlay(alignment: .topTrailing) {
+                        if badge > 0 {
+                            Text(badge > 99 ? "99+" : "\(badge)")
+                                .font(.system(size: 8, weight: .black))
+                                .foregroundStyle(.black)
+                                .padding(.horizontal, 4).padding(.vertical, 2)
+                                .background(Brand.yellow, in: Capsule())
+                                .offset(x: 12, y: -8)
+                        }
+                    }
                 Text(title).font(.caption2)
             }
-            .frame(width: 66, height: 54)
+            .frame(width: 58, height: 52)
             .foregroundStyle(selection == destination ? .black : .white)
-            .background(selection == destination ? Brand.yellow : .clear, in: RoundedRectangle(cornerRadius: 12))
+            .background(selection == destination ? Brand.yellow : hovering ? Brand.raised : .clear, in: RoundedRectangle(cornerRadius: 12))
+            .scaleEffect(hovering && selection != destination ? 1.03 : 1)
         }
         .buttonStyle(.plain)
+        .keyboardShortcut(key, modifiers: .command)
+        .help("\(title) (⌘ shortcut)")
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.14), value: hovering)
     }
 }
 
@@ -384,6 +413,9 @@ private struct ProfileView: View {
                         Spacer()
                         if profile.ownedByViewer == true { Label("Claimed", systemImage: "person.badge.key.fill").foregroundStyle(Brand.yellow) }
                     }
+                    .padding(20)
+                    .background(Brand.panel, in: RoundedRectangle(cornerRadius: 16))
+                    .overlay { RoundedRectangle(cornerRadius: 16).stroke(Brand.separator) }
                     Divider()
                     Text("TARDIES").font(.caption.bold()).foregroundStyle(Brand.yellow)
                     LazyVGrid(columns: columns, spacing: 12) {

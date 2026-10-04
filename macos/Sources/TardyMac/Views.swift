@@ -6,6 +6,23 @@ enum Brand {
     static let panel = Color(red: 0.075, green: 0.075, blue: 0.09)
     static let raised = Color(red: 0.11, green: 0.11, blue: 0.13)
     static let muted = Color.white.opacity(0.58)
+    static let separator = Color.white.opacity(0.08)
+    static let glow = Color(red: 1.0, green: 0.68, blue: 0.0)
+}
+
+struct TardyBackdrop: View {
+    var body: some View {
+        ZStack {
+            Brand.background
+            RadialGradient(
+                colors: [Brand.yellow.opacity(0.09), .clear],
+                center: .topLeading,
+                startRadius: 20,
+                endRadius: 560
+            )
+        }
+        .ignoresSafeArea()
+    }
 }
 
 struct ContentView: View {
@@ -14,13 +31,56 @@ struct ContentView: View {
     var body: some View {
         Group {
             switch model.phase {
-            case .loading: ProgressView("Getting current…").controlSize(.large)
+            case .loading: LaunchView()
             case .signedOut: SignInView()
             case .ready: AppShellView()
             }
         }
         .frame(minWidth: 980, minHeight: 640)
         .background(Brand.background)
+        .overlay(alignment: .top) {
+            if let error = model.errorMessage {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                    Text(error).lineLimit(2)
+                    Button { model.errorMessage = nil } label: { Image(systemName: "xmark") }
+                        .buttonStyle(.plain)
+                }
+                .font(.caption)
+                .padding(.horizontal, 12).padding(.vertical, 8)
+                .background(.red.opacity(0.92), in: Capsule())
+                .padding(10)
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.snappy, value: model.errorMessage)
+    }
+}
+
+private struct LaunchView: View {
+    @State private var pulsing = false
+
+    var body: some View {
+        ZStack {
+            TardyBackdrop()
+            VStack(spacing: 18) {
+                Image(systemName: "alarm.waves.left.and.right.fill")
+                    .font(.system(size: 62, weight: .black))
+                    .foregroundStyle(Brand.yellow)
+                    .scaleEffect(pulsing ? 1.04 : 0.94)
+                    .shadow(color: Brand.glow.opacity(0.35), radius: pulsing ? 24 : 10)
+                Text("TARDY").font(.system(size: 34, weight: .black, design: .rounded))
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small).tint(Brand.yellow)
+                    Text("Getting current…").foregroundStyle(Brand.muted)
+                }
+            }
+        }
+        .onAppear {
+            withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) {
+                pulsing = true
+            }
+        }
     }
 }
 
@@ -29,25 +89,34 @@ private struct SignInView: View {
     @State private var email = ProcessInfo.processInfo.environment["TARDY_DEV_EMAIL"] ?? ""
 
     var body: some View {
-        VStack(spacing: 22) {
-            Image(systemName: "alarm.waves.left.and.right.fill")
-                .font(.system(size: 68, weight: .black))
-                .foregroundStyle(Brand.yellow)
-            Text("TARDY").font(.system(size: 42, weight: .black, design: .rounded))
-            Text("Don't be late.").font(.title3).foregroundStyle(Brand.muted)
-            TextField("Development email", text: $email)
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 320)
-            Button("Preview with local account") {
-                Task { await model.developmentSignIn(email: email) }
+        ZStack {
+            TardyBackdrop()
+            VStack(spacing: 22) {
+                Image(systemName: "alarm.waves.left.and.right.fill")
+                    .font(.system(size: 68, weight: .black))
+                    .foregroundStyle(Brand.yellow)
+                    .shadow(color: Brand.glow.opacity(0.3), radius: 20)
+                Text("TARDY").font(.system(size: 42, weight: .black, design: .rounded))
+                Text("Don't be late.").font(.title3).foregroundStyle(Brand.muted)
+                TextField("Development email", text: $email)
+                    .textFieldStyle(.plain)
+                    .padding(11)
+                    .frame(width: 320)
+                    .background(Brand.raised, in: RoundedRectangle(cornerRadius: 10))
+                Button("Preview with local account") {
+                    Task { await model.developmentSignIn(email: email) }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .tint(Brand.yellow)
+                .foregroundStyle(.black)
+                Text("Sign in with Apple will use the same session endpoint in signed builds.")
+                    .font(.caption).foregroundStyle(Brand.muted)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(Brand.yellow)
-            .foregroundStyle(.black)
-            Text("Sign in with Apple will use the same session endpoint in signed builds.")
-                .font(.caption).foregroundStyle(Brand.muted)
+            .padding(54)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24))
+            .overlay { RoundedRectangle(cornerRadius: 24).stroke(Brand.separator) }
         }
-        .padding(60)
     }
 }
 
