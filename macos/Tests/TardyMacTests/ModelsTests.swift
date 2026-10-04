@@ -91,6 +91,21 @@ import Testing
     #expect(ids == [UUID(uuidString: "8ca1e470-bad0-4fec-a0da-7fc1945fbd5b")!])
 }
 
+@Test func conversationSSEParserDecodesAgentDrafts() throws {
+    var parser = ConversationSSEParser()
+    let json = #"[{"conversation_id":"650ffada-b502-4565-86cb-b3331e25bb4e","sender_profile_id":"8ca1e470-bad0-4fec-a0da-7fc1945fbd5b","body":"Partial **Markdown**","status":"writing","detail":"","updated_at":"2026-10-04T22:15:00Z"}]"#
+    #expect(try parser.consume(line: "event: drafts") == nil)
+    #expect(try parser.consume(line: "data: \(json)") == nil)
+    let event = try parser.consume(line: "")
+    guard case let .drafts(drafts) = event else {
+        Issue.record("expected a drafts event")
+        return
+    }
+    #expect(drafts.count == 1)
+    #expect(drafts[0].body == "Partial **Markdown**")
+    #expect(drafts[0].status == "writing")
+}
+
 @Test func markdownTablesBecomeStructuredBlocks() {
     let blocks = MarkdownBlocks.parse("""
     Here is the comparison:
