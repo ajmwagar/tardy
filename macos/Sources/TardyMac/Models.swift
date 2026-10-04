@@ -204,6 +204,15 @@ enum Tapback: String, CaseIterable, Sendable {
     }
 }
 
+enum ConversationStreamEvent: Sendable {
+    case messages([Message], cursor: Int?)
+    case typing([UUID])
+}
+
+enum ConversationStreamState: Equatable, Sendable {
+    case disconnected, connecting, live, reconnecting
+}
+
 extension ISO8601DateFormatter {
     static var tardy: ISO8601DateFormatter {
         let formatter = ISO8601DateFormatter()

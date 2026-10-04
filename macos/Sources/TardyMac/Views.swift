@@ -126,13 +126,19 @@ struct MessengerView: View {
     var body: some View {
         @Bindable var model = model
         HSplitView {
-            InboxSidebar()
-                .frame(minWidth: 250, idealWidth: 300, maxWidth: 360)
+            if model.showsInboxSidebar {
+                InboxSidebar()
+                    .frame(minWidth: 250, idealWidth: 300, maxWidth: 360)
+            }
             ChatView()
                 .frame(minWidth: 480, idealWidth: 680)
-            ContextInspector()
-                .frame(minWidth: 240, idealWidth: 285, maxWidth: 340)
+            if model.showsContextInspector {
+                ContextInspector()
+                    .frame(minWidth: 240, idealWidth: 285, maxWidth: 340)
+            }
         }
+        .animation(.snappy, value: model.showsInboxSidebar)
+        .animation(.snappy, value: model.showsContextInspector)
         .tint(Brand.yellow)
         .focusedSceneValue(\.sendTardyMessage) { Task { await model.send() } }
     }
@@ -234,6 +240,18 @@ private struct ChatView: View {
                                 MessageRow(message: message)
                                     .id(message.id)
                             }
+                            if model.showsAgentThinking,
+                               let agent = conversation.agentPeer(accounts: model.accounts, viewer: model.account?.id) {
+                                AgentThinkingRow(
+                                    agent: agent,
+                                    working: model.typingProfileIds.contains(agent.id),
+                                    status: model.thinkingStatusText
+                                )
+                            } else if let status = model.thinkingStatusText {
+                                Text(status)
+                                    .font(.caption)
+                                    .foregroundStyle(Brand.muted)
+                            }
                             if !model.typingProfileIds.isEmpty { TypingRow(ids: model.typingProfileIds) }
                         }
                         .padding(20)
@@ -274,6 +292,30 @@ private struct ChatHeader: View {
                     .font(.caption).foregroundStyle(Brand.muted)
             }
             Spacer()
+            Button { withAnimation(.snappy) { model.showsAppRail.toggle() } } label: {
+                Image(systemName: "rectangle.leadingthird.inset.filled")
+            }
+            .buttonStyle(.plain)
+            .help(model.showsAppRail ? "Hide app navigation" : "Show app navigation")
+            Button { withAnimation(.snappy) { model.showsInboxSidebar.toggle() } } label: {
+                Image(systemName: "sidebar.left")
+            }
+            .buttonStyle(.plain)
+            .help(model.showsInboxSidebar ? "Hide conversations" : "Show conversations")
+            Button {
+                model.showsAgentThinking.toggle()
+                model.thinkingStatusText = nil
+            } label: {
+                Image(systemName: model.showsAgentThinking ? "brain.fill" : "brain")
+                    .foregroundStyle(model.showsAgentThinking ? Brand.yellow : Brand.muted)
+            }
+            .buttonStyle(.plain)
+            .help("Toggle agent work view (/thinking)")
+            Button { withAnimation(.snappy) { model.showsContextInspector.toggle() } } label: {
+                Image(systemName: "sidebar.right")
+            }
+            .buttonStyle(.plain)
+            .help(model.showsContextInspector ? "Hide context" : "Show context")
             if agentIsWorking {
                 HStack(spacing: 6) {
                     Circle().fill(.green).frame(width: 7, height: 7)
@@ -281,12 +323,46 @@ private struct ChatHeader: View {
                 }
                 .foregroundStyle(.green)
             } else {
-                Text(agentPeer != nil ? "Private" : "\(conversation.participants.count) members")
-                    .font(.caption).foregroundStyle(Brand.muted)
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(model.conversationStreamState == .live ? .green : Brand.muted)
+                        .frame(width: 6, height: 6)
+                    Text(model.conversationStreamState == .live ? "Live" : agentPeer != nil ? "Private" : "\(conversation.participants.count) members")
+                }
+                .font(.caption).foregroundStyle(Brand.muted)
             }
         }
         .padding(.horizontal, 18).frame(height: 58)
         .background(.ultraThinMaterial)
+    }
+}
+
+private struct AgentThinkingRow: View {
+    let agent: Account
+    let working: Bool
+    let status: String?
+    @State private var phase = 0
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 9) {
+            Image(systemName: "brain.head.profile.fill").foregroundStyle(Brand.yellow)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(working ? "\(agent.displayName) is working\(["", ".", "..", "..."][phase])" : "\(agent.displayName) is ready")
+                    .font(.caption.bold())
+                Text(status ?? "Tool progress, edits, and streamed replies appear here. Private model reasoning stays private.")
+                    .font(.caption2)
+                    .foregroundStyle(Brand.muted)
+            }
+            Spacer()
+        }
+        .padding(10)
+        .background(Brand.yellow.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+        .task(id: working) {
+            while working && !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(350))
+                phase = (phase + 1) % 4
+            }
+        }
     }
 }
 
@@ -306,7 +382,7 @@ private struct MessageRow: View {
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     if !message.body.isEmpty {
-                        Text(.init(message.body)).textSelection(.enabled)
+                        RichMarkdownView(source: message.body)
                     }
                     ForEach(message.media) { media in MessageAttachmentView(media: media) }
                 }

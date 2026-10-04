@@ -60,3 +60,63 @@ import Testing
 
     #expect(conversation.agentPeer(accounts: [agentId: agent], viewer: viewer)?.id == agentId)
 }
+
+@Test func conversationSSEParserDecodesResumableMessageFrame() throws {
+    var parser = ConversationSSEParser()
+    let json = #"[{"id":"41782c9a-19c6-4eab-80fb-ef2cc89e87b9","conversation_id":"650ffada-b502-4565-86cb-b3331e25bb4e","sequence":19,"sender_profile_id":"8ca1e470-bad0-4fec-a0da-7fc1945fbd5b","body":"Streaming now","shared_link_id":null,"created_at":"2026-10-02T12:25:09.744290Z"}]"#
+
+    #expect(try parser.consume(line: "id: 19") == nil)
+    #expect(try parser.consume(line: "event: messages") == nil)
+    #expect(try parser.consume(line: "data: \(json)") == nil)
+    let event = try parser.consume(line: "")
+    guard case let .messages(messages, cursor) = event else {
+        Issue.record("expected a messages event")
+        return
+    }
+    #expect(cursor == 19)
+    #expect(messages.count == 1)
+    #expect(messages[0].body == "Streaming now")
+}
+
+@Test func conversationSSEParserIgnoresKeepAliveAndDecodesTyping() throws {
+    var parser = ConversationSSEParser()
+    #expect(try parser.consume(line: ": keep-alive") == nil)
+    #expect(try parser.consume(line: "event: typing") == nil)
+    #expect(try parser.consume(line: "data: [\"8ca1e470-bad0-4fec-a0da-7fc1945fbd5b\"]") == nil)
+    let event = try parser.consume(line: "")
+    guard case let .typing(ids) = event else {
+        Issue.record("expected a typing event")
+        return
+    }
+    #expect(ids == [UUID(uuidString: "8ca1e470-bad0-4fec-a0da-7fc1945fbd5b")!])
+}
+
+@Test func markdownTablesBecomeStructuredBlocks() {
+    let blocks = MarkdownBlocks.parse("""
+    Here is the comparison:
+
+    | Runtime | State | Latency |
+    | :--- | ---: | --- |
+    | Codex | live | **fast** |
+    | OpenCode | ready | 200 ms |
+
+    More detail follows.
+    """)
+
+    #expect(blocks.count == 3)
+    #expect(blocks[0] == .prose("Here is the comparison:"))
+    #expect(blocks[1] == .table(
+        headers: ["Runtime", "State", "Latency"],
+        rows: [["Codex", "live", "**fast**"], ["OpenCode", "ready", "200 ms"]]
+    ))
+    #expect(blocks[2] == .prose("More detail follows."))
+}
+
+@Test func escapedPipesStayInsideMarkdownTableCells() {
+    let blocks = MarkdownBlocks.parse("""
+    | Expression | Meaning |
+    | --- | --- |
+    | `a \\| b` | union |
+    """)
+    #expect(blocks == [.table(headers: ["Expression", "Meaning"], rows: [["`a | b`", "union"]])])
+}

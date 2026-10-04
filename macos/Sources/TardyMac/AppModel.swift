@@ -30,6 +30,12 @@ final class AppModel {
     var isLoadingContent = false
     var isLoadingComments = false
     var isLoadingProfile = false
+    var showsAppRail = true
+    var showsInboxSidebar = true
+    var showsContextInspector = true
+    var showsAgentThinking = false
+    var conversationStreamState: ConversationStreamState = .disconnected
+    var thinkingStatusText: String?
 
     let api: TardyAPI
     private var messageTask: Task<Void, Never>?
@@ -265,16 +271,61 @@ final class AppModel {
         messageTask?.cancel()
         guard let id else { return }
         guard destination == .messages else { return }
-        startMessagePolling(id)
+        startMessageStream(id)
     }
 
-    private func startMessagePolling(_ id: UUID) {
+    private func startMessageStream(_ id: UUID) {
         messageTask?.cancel()
         messageTask = Task { [weak self] in
-            while !Task.isCancelled {
-                await self?.refreshConversation(id)
-                try? await Task.sleep(for: .milliseconds(700))
+            guard let self else { return }
+            await refreshConversation(id)
+            var reconnects = 0
+            while !Task.isCancelled, destination == .messages, selectedConversationId == id {
+                conversationStreamState = reconnects == 0 ? .connecting : .reconnecting
+                do {
+                    let after = messages.last?.sequence ?? 0
+                    let stream = try await api.conversationEvents(conversation: id, after: after)
+                    conversationStreamState = .live
+                    reconnects = 0
+                    for try await event in stream {
+                        try Task.checkCancellation()
+                        guard destination == .messages, selectedConversationId == id else { return }
+                        await apply(event, conversation: id)
+                    }
+                } catch is CancellationError {
+                    return
+                } catch {
+                    reconnects += 1
+                    conversationStreamState = .reconnecting
+                    await refreshConversation(id)
+                    let delay = min(4_000, 250 * (1 << min(reconnects, 4)))
+                    try? await Task.sleep(for: .milliseconds(delay))
+                }
             }
+            conversationStreamState = .disconnected
+        }
+    }
+
+    private func apply(_ event: ConversationStreamEvent, conversation id: UUID) async {
+        switch event {
+        case let .messages(fresh, _):
+            guard !fresh.isEmpty else { return }
+            for message in fresh {
+                if let index = messages.firstIndex(where: { $0.id == message.id }) {
+                    messages[index] = message
+                } else {
+                    messages.append(message)
+                }
+            }
+            messages.sort { $0.sequence < $1.sequence }
+            let missing = Set(fresh.map(\.senderProfileId)).subtracting(accounts.keys)
+            if !missing.isEmpty, let profiles = try? await api.profiles(ids: Array(missing)) {
+                profiles.forEach { accounts[$0.id] = $0 }
+            }
+            if let last = messages.last { try? await api.markRead(conversation: id, through: last.id) }
+            Task { [weak self] in await self?.refreshInbox() }
+        case let .typing(ids):
+            typingProfileIds = ids
         }
     }
 
@@ -303,6 +354,7 @@ final class AppModel {
         let text = composer.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !isSending else { return }
         composer = ""
+        if handleLocalCommand(text) { return }
         isSending = true
         defer { isSending = false }
         do {
@@ -314,6 +366,20 @@ final class AppModel {
             composer = text
             show(error)
         }
+    }
+
+    private func handleLocalCommand(_ text: String) -> Bool {
+        let words = text.lowercased().split(whereSeparator: \.isWhitespace)
+        guard words.first == "/thinking" else { return false }
+        switch words.dropFirst().first {
+        case "on": showsAgentThinking = true
+        case "off": showsAgentThinking = false
+        default: showsAgentThinking.toggle()
+        }
+        thinkingStatusText = showsAgentThinking
+            ? "Thinking view on — showing agent work status and streamed updates."
+            : "Thinking view off."
+        return true
     }
 
     func composerChanged() {
@@ -376,10 +442,11 @@ final class AppModel {
 
     private func destinationChanged() {
         if destination == .messages, let id = selectedConversationId {
-            startMessagePolling(id)
+            startMessageStream(id)
         } else {
             messageTask?.cancel()
             messageTask = nil
+            conversationStreamState = .disconnected
         }
     }
 
