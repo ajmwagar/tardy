@@ -1885,12 +1885,12 @@ impl PgSocialStore {
             return Err(SocialError::Invalid("too many mentions"));
         }
         let mut tx = self.pool.begin().await?;
-        let post_author: Uuid =
-            sqlx::query_scalar("SELECT author_profile_id FROM tardy_posts WHERE id=$1")
-                .bind(post_id)
-                .fetch_optional(&mut *tx)
-                .await?
-                .ok_or(SocialError::NotFound)?;
+        let post_author: Uuid = sqlx::query_scalar(VISIBLE_POST_AUTHOR_SQL)
+            .bind(post_id)
+            .bind(actor)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(SocialError::NotFound)?;
         let actor_handle = identity_handle(&mut tx, actor).await?;
         let id = Uuid::new_v4();
         let created_at: DateTime<Utc> = sqlx::query_scalar("INSERT INTO post_comments (id,post_id,author_profile_id,body) VALUES ($1,$2,$3,$4) RETURNING created_at")
@@ -1944,25 +1944,12 @@ impl PgSocialStore {
     }
 
     pub async fn comments(&self, actor: Uuid, post_id: Uuid) -> Result<Vec<Comment>, SocialError> {
-        let visible: bool = sqlx::query_scalar(
-            "SELECT EXISTS(
-                SELECT 1 FROM tardy_posts p
-                WHERE p.id=$1 AND (
-                    p.visibility='public'
-                    OR p.author_profile_id=$2
-                    OR (p.visibility='followers' AND EXISTS (
-                        SELECT 1 FROM profile_follows f
-                        WHERE f.follower_profile_id=$2
-                          AND f.followed_profile_id=p.author_profile_id
-                    ))
-                )
-            )",
-        )
-        .bind(post_id)
-        .bind(actor)
-        .fetch_one(&self.pool)
-        .await?;
-        if !visible {
+        let visible = sqlx::query_scalar::<_, Uuid>(VISIBLE_POST_AUTHOR_SQL)
+            .bind(post_id)
+            .bind(actor)
+            .fetch_optional(&self.pool)
+            .await?;
+        if visible.is_none() {
             return Err(SocialError::NotFound);
         }
         let rows = sqlx::query(
@@ -1993,6 +1980,26 @@ impl PgSocialStore {
             .collect()
     }
 }
+
+const VISIBLE_POST_AUTHOR_SQL: &str = "SELECT p.author_profile_id
+     FROM tardy_posts p
+     WHERE p.id=$1 AND (
+         p.visibility='public'
+         OR p.author_profile_id=$2
+         OR EXISTS (
+             SELECT 1
+             FROM social_identities viewer_identity
+             JOIN profile_ownership owned
+               ON owned.owner_account_id=viewer_identity.account_id
+             WHERE viewer_identity.profile_id=$2
+               AND owned.profile_id=p.author_profile_id
+         )
+         OR (p.visibility='followers' AND EXISTS (
+             SELECT 1 FROM profile_follows f
+             WHERE f.follower_profile_id=$2
+               AND f.followed_profile_id=p.author_profile_id
+         ))
+     )";
 
 async fn require_identity(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
