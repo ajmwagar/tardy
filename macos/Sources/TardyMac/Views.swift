@@ -226,6 +226,8 @@ private struct ConversationRow: View {
 
 private struct ChatView: View {
     @Environment(AppModel.self) private var model
+    @State private var isAtBottom = true
+    private let bottomID = "chat-latest"
 
     var body: some View {
         @Bindable var model = model
@@ -234,33 +236,62 @@ private struct ChatView: View {
                 ChatHeader(conversation: conversation)
                 Divider()
                 ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(spacing: 12) {
-                            ForEach(model.messages) { message in
-                                MessageRow(message: message)
-                                    .id(message.id)
+                    ZStack(alignment: .bottomTrailing) {
+                        ScrollView {
+                            LazyVStack(spacing: 12) {
+                                ForEach(model.messages) { message in
+                                    MessageRow(message: message)
+                                        .id(message.id)
+                                }
+                                ForEach(model.conversationDrafts) { draft in
+                                    DraftMessageRow(draft: draft)
+                                }
+                                if model.showsAgentThinking,
+                                   let agent = conversation.agentPeer(accounts: model.accounts, viewer: model.account?.id) {
+                                    AgentThinkingRow(
+                                        agent: agent,
+                                        working: model.typingProfileIds.contains(agent.id),
+                                        status: model.thinkingStatusText
+                                    )
+                                } else if let status = model.thinkingStatusText {
+                                    Text(status)
+                                        .font(.caption)
+                                        .foregroundStyle(Brand.muted)
+                                }
+                                if !model.typingProfileIds.isEmpty { TypingRow(ids: model.typingProfileIds) }
+                                Color.clear
+                                    .frame(height: 1)
+                                    .id(bottomID)
+                                    .onAppear { isAtBottom = true }
+                                    .onDisappear { isAtBottom = false }
                             }
-                            ForEach(model.conversationDrafts) { draft in
-                                DraftMessageRow(draft: draft)
-                            }
-                            if model.showsAgentThinking,
-                               let agent = conversation.agentPeer(accounts: model.accounts, viewer: model.account?.id) {
-                                AgentThinkingRow(
-                                    agent: agent,
-                                    working: model.typingProfileIds.contains(agent.id),
-                                    status: model.thinkingStatusText
-                                )
-                            } else if let status = model.thinkingStatusText {
-                                Text(status)
-                                    .font(.caption)
-                                    .foregroundStyle(Brand.muted)
-                            }
-                            if !model.typingProfileIds.isEmpty { TypingRow(ids: model.typingProfileIds) }
+                            .padding(20)
                         }
-                        .padding(20)
+                        if !isAtBottom {
+                            Button {
+                                proxy.scrollTo(bottomID, anchor: .bottom)
+                                isAtBottom = true
+                            } label: {
+                                Image(systemName: "arrow.down")
+                                    .font(.system(size: 14, weight: .bold))
+                                    .frame(width: 34, height: 34)
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.black)
+                            .background(Brand.yellow, in: Circle())
+                            .shadow(color: .black.opacity(0.3), radius: 8, y: 3)
+                            .padding(18)
+                            .help("Jump to latest")
+                        }
                     }
-                    .onChange(of: model.messages.count) { _, _ in
-                        if let last = model.messages.last { withAnimation { proxy.scrollTo(last.id, anchor: .bottom) } }
+                    .onChange(of: model.messages.count) { oldCount, _ in
+                        if oldCount == 0 || isAtBottom {
+                            proxy.scrollTo(bottomID, anchor: .bottom)
+                        }
+                    }
+                    .onChange(of: model.selectedConversationId) { _, _ in
+                        isAtBottom = true
+                        Task { @MainActor in proxy.scrollTo(bottomID, anchor: .bottom) }
                     }
                 }
                 Divider()
