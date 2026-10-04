@@ -250,6 +250,8 @@ struct ConversationSSEParser {
                 return .messages(try decoder.decode([Message].self, from: data), cursor: eventId)
             case "typing":
                 return .typing(try decoder.decode([UUID].self, from: data))
+            case "drafts":
+                return .drafts(try decoder.decode([ConversationDraft].self, from: data))
             case "error":
                 throw APIError.http(503, "Conversation stream interrupted")
             default:

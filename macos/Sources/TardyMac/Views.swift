@@ -240,6 +240,9 @@ private struct ChatView: View {
                                 MessageRow(message: message)
                                     .id(message.id)
                             }
+                            ForEach(model.conversationDrafts) { draft in
+                                DraftMessageRow(draft: draft)
+                            }
                             if model.showsAgentThinking,
                                let agent = conversation.agentPeer(accounts: model.accounts, viewer: model.account?.id) {
                                 AgentThinkingRow(
@@ -362,6 +365,35 @@ private struct AgentThinkingRow: View {
                 try? await Task.sleep(for: .milliseconds(350))
                 phase = (phase + 1) % 4
             }
+        }
+    }
+}
+
+private struct DraftMessageRow: View {
+    @Environment(AppModel.self) private var model
+    let draft: ConversationDraft
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 9) {
+            Avatar(account: model.accounts[draft.senderProfileId], size: 28)
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 6) {
+                    Text(model.accounts[draft.senderProfileId]?.displayName ?? "Tardy")
+                        .font(.caption.bold())
+                    Text(draft.detail.isEmpty ? (draft.status == "tool" ? "working" : "streaming") : draft.detail)
+                        .font(.caption2.bold())
+                        .foregroundStyle(Brand.yellow)
+                }
+                if draft.body.isEmpty {
+                    ProgressView().controlSize(.small)
+                } else {
+                    RichMarkdownView(source: draft.body)
+                }
+            }
+            .padding(.horizontal, 12).padding(.vertical, 9)
+            .background(Brand.raised, in: RoundedRectangle(cornerRadius: 14))
+            .overlay { RoundedRectangle(cornerRadius: 14).stroke(Brand.yellow.opacity(0.3)) }
+            Spacer(minLength: 90)
         }
     }
 }

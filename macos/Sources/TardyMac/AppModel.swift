@@ -14,6 +14,7 @@ final class AppModel {
     var selectedConversationId: UUID?
     var messages: [Message] = []
     var typingProfileIds: [UUID] = []
+    var conversationDrafts: [ConversationDraft] = []
     var composer = ""
     var search = ""
     var errorMessage: String?
@@ -268,6 +269,7 @@ final class AppModel {
         selectedConversationId = id
         messages = []
         typingProfileIds = []
+        conversationDrafts = []
         messageTask?.cancel()
         guard let id else { return }
         guard destination == .messages else { return }
@@ -326,6 +328,8 @@ final class AppModel {
             Task { [weak self] in await self?.refreshInbox() }
         case let .typing(ids):
             typingProfileIds = ids
+        case let .drafts(drafts):
+            conversationDrafts = drafts
         }
     }
 

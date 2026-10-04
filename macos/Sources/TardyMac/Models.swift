@@ -207,6 +207,18 @@ enum Tapback: String, CaseIterable, Sendable {
 enum ConversationStreamEvent: Sendable {
     case messages([Message], cursor: Int?)
     case typing([UUID])
+    case drafts([ConversationDraft])
+}
+
+struct ConversationDraft: Codable, Identifiable, Equatable, Sendable {
+    let conversationId: UUID
+    let senderProfileId: UUID
+    let body: String
+    let status: String
+    let detail: String
+    let updatedAt: String
+
+    var id: UUID { senderProfileId }
 }
 
 enum ConversationStreamState: Equatable, Sendable {
