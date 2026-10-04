@@ -23,8 +23,8 @@ use crate::ranking::FeedRanker;
 use crate::search::{SearchDocument, SearchError, SearchService};
 use crate::social::{
     AppAccount, AppEngagementAction, AppFeedPost, AppSearchResult, Comment, Conversation,
-    ConversationMessage, ConversationSummary, IdentityKind, PgSocialStore, PostMedia,
-    PostVisibility, SetBrandAffiliate, SharedLink, SocialError, TardyPost,
+    ConversationDraft, ConversationMessage, ConversationSummary, IdentityKind, PgSocialStore,
+    PostMedia, PostVisibility, SetBrandAffiliate, SharedLink, SocialError, TardyPost,
 };
 use crate::store::{MemoryStore, NewLive, NewProfile, NewReel, Store, StoreError};
 use crate::subscriptions::{
@@ -326,6 +326,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(
             "/v1/social/conversations/{id}/events",
             get(stream_social_conversation),
+        )
+        .route(
+            "/v1/social/conversations/{id}/draft",
+            put(set_social_conversation_draft).delete(clear_social_conversation_draft),
         )
         .route(
             "/v1/social/conversations/{id}",
@@ -1989,6 +1993,44 @@ async fn list_social_messages(
     Ok(Json(messages))
 }
 
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct SetConversationDraft {
+    body: String,
+    status: String,
+    #[serde(default)]
+    detail: String,
+}
+
+async fn set_social_conversation_draft(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(body): Json<SetConversationDraft>,
+) -> Result<Json<ConversationDraft>, ApiError> {
+    Ok(Json(
+        social_store(&state)?
+            .set_draft(
+                authenticated_actor(&state, &headers).await?,
+                id,
+                &body.body,
+                &body.status,
+                &body.detail,
+            )
+            .await?,
+    ))
+}
+
+async fn clear_social_conversation_draft(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    social_store(&state)?
+        .clear_draft(authenticated_actor(&state, &headers).await?, id)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 #[derive(Deserialize)]
 struct ConversationStreamQuery {
     #[serde(default)]
@@ -2022,6 +2064,7 @@ async fn stream_social_conversation(
         hydrate_message_media(&state, message).await?;
     }
     let initial_typing = social.typing(actor, id).await?;
+    let initial_drafts = social.drafts(actor, id).await?;
     let (sender, receiver) = tokio::sync::mpsc::channel(16);
     tokio::spawn(async move {
         if let Some(message) = initial_messages.last() {
@@ -2040,7 +2083,14 @@ async fn stream_social_conversation(
         {
             return;
         }
+        if send_sse_json(&sender, "drafts", None, &initial_drafts)
+            .await
+            .is_err()
+        {
+            return;
+        }
         let mut last_typing = initial_typing;
+        let mut last_drafts = initial_drafts;
         let mut interval = tokio::time::interval(Duration::from_millis(200));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         interval.tick().await;
@@ -2052,10 +2102,11 @@ async fn stream_social_conversation(
                     hydrate_message_media(&state, message).await?;
                 }
                 let typing = social.typing(actor, id).await?;
-                Ok::<_, ApiError>((fresh, typing))
+                let drafts = social.drafts(actor, id).await?;
+                Ok::<_, ApiError>((fresh, typing, drafts))
             }
             .await;
-            let (fresh, typing) = match result {
+            let (fresh, typing, drafts) = match result {
                 Ok(value) => value,
                 Err(error) => {
                     tracing::warn!(conversation_id = %id, %error, "conversation SSE stream failed");
@@ -2080,6 +2131,15 @@ async fn stream_social_conversation(
             if typing != last_typing {
                 last_typing = typing;
                 if send_sse_json(&sender, "typing", None, &last_typing)
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            if drafts != last_drafts {
+                last_drafts = drafts;
+                if send_sse_json(&sender, "drafts", None, &last_drafts)
                     .await
                     .is_err()
                 {

@@ -8,9 +8,9 @@ use crate::api::{
     CreateSharedLink, CreateSocialConversation, CreateThread, CreateWebHandoff, ErrorBody,
     ExchangeWebHandoff, HandoffRequest, MarkConversationRead, MarkNotificationsRead, PublishReel,
     PublishSocialPost, RecordEngagement, RenameSocialConversation, SearchRequest, SendMessage,
-    SendMessageMedia, SendSocialMessage, SessionCredential, SessionView, SetHandle,
-    SetPostVisibility, SignedInView, StartLive, SummonAgent, UpdateAgentProfile, UpdateProfile,
-    VerificationCheckout,
+    SendMessageMedia, SendSocialMessage, SessionCredential, SessionView, SetConversationDraft,
+    SetHandle, SetPostVisibility, SignedInView, StartLive, SummonAgent, UpdateAgentProfile,
+    UpdateProfile, VerificationCheckout,
 };
 use crate::audio::{
     AttachPostAudio, AudioRelease, AudioTrack, AudioUsage, AudioUsageKind, NewAudioRelease,
@@ -27,9 +27,9 @@ use crate::onboarding::{Account, AiConsent, ClaimCode, ClaimedAccount, Temporary
 use crate::push::AppNotification;
 use crate::push::{ApnsEnvironment, NotificationPreference, PushDevice, RegisterPushDevice};
 use crate::social::{
-    AppAccount, AppFeedPost, AppSearchResult, Comment, Conversation, ConversationMessage,
-    ConversationMode, ConversationSummary, IdentityKind, MessageMedia, PostMedia, PostVisibility,
-    SetBrandAffiliate, SharedLink, SocialIdentity, TardyPost,
+    AppAccount, AppFeedPost, AppSearchResult, Comment, Conversation, ConversationDraft,
+    ConversationMessage, ConversationMode, ConversationSummary, IdentityKind, MessageMedia,
+    PostMedia, PostVisibility, SetBrandAffiliate, SharedLink, SocialIdentity, TardyPost,
 };
 use crate::subscriptions::{
     DeliveryMode, FeedEvent, NewSubscription, Subscription, SubscriptionKind,
@@ -55,9 +55,9 @@ use utoipa::OpenApi;
         DeliveryMode, FeedEvent, NewSubscription, Subscription, SubscriptionKind,
         AttachPostAudio, AudioRelease, AudioTrack, AudioUsage, AudioUsageKind, NewAudioRelease,
         NewOriginalTrack, ReleaseType, TrendingAudio, VerificationEntitlement, VerificationProduct, VerificationTier, BillingStatus, WebHandoff,
-        AppAccount, AppFeedPost, AppSearchResult, AppNotification, Comment, Conversation, ConversationMessage, ConversationMode, ConversationSummary, IdentityKind, MessageMedia,
+        AppAccount, AppFeedPost, AppSearchResult, AppNotification, Comment, Conversation, ConversationDraft, ConversationMessage, ConversationMode, ConversationSummary, IdentityKind, MessageMedia,
         PostMedia, PostVisibility, SetBrandAffiliate, SharedLink, SocialIdentity, TardyPost, CreatePostComment, SessionCredential, SessionView, SetHandle, SetPostVisibility, SignedInView, UpdateAgentProfile, UpdateProfile,
-        AddConversationParticipant, CreateSharedLink, CreateSocialConversation, MarkConversationRead, MarkNotificationsRead, PublishSocialPost, RenameSocialConversation, SendMessageMedia, SendSocialMessage, SummonAgent, CreateWebHandoff, ExchangeWebHandoff, VerificationCheckout
+        AddConversationParticipant, CreateSharedLink, CreateSocialConversation, MarkConversationRead, MarkNotificationsRead, PublishSocialPost, RenameSocialConversation, SendMessageMedia, SendSocialMessage, SetConversationDraft, SummonAgent, CreateWebHandoff, ExchangeWebHandoff, VerificationCheckout
     )),
     tags(
         (name = "onboarding"), (name = "profiles"), (name = "messaging"),
@@ -487,6 +487,28 @@ pub fn document() -> Value {
             None,
             None,
             200,
+            true,
+            true,
+        ),
+        op(
+            "put",
+            "/v1/social/conversations/{id}/draft",
+            "setSocialConversationDraft",
+            "social",
+            Some("SetConversationDraft"),
+            Some("ConversationDraft"),
+            200,
+            true,
+            true,
+        ),
+        op(
+            "delete",
+            "/v1/social/conversations/{id}/draft",
+            "clearSocialConversationDraft",
+            "social",
+            None,
+            None,
+            204,
             true,
             true,
         ),

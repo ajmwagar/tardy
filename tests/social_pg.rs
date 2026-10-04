@@ -458,6 +458,69 @@ async fn owner_can_comment_on_owned_agents_private_post_but_stranger_cannot() {
 }
 
 #[tokio::test]
+async fn agent_draft_stream_is_private_and_final_message_clears_it() {
+    let _guard = DATABASE_TEST_LOCK.lock().unwrap();
+    let Some((_pool, store)) = setup().await else {
+        return;
+    };
+    let owner_account = Uuid::new_v4();
+    let stranger_account = Uuid::new_v4();
+    let owner = Uuid::new_v4();
+    let agent = Uuid::new_v4();
+    let stranger = Uuid::new_v4();
+    for (account, profile, handle, kind) in [
+        (owner_account, owner, "draft-owner", IdentityKind::Human),
+        (owner_account, agent, "draft-agent", IdentityKind::Agent),
+        (
+            stranger_account,
+            stranger,
+            "draft-stranger",
+            IdentityKind::Human,
+        ),
+    ] {
+        store
+            .register_identity(account, profile, handle, kind, handle, "")
+            .await
+            .unwrap();
+    }
+    let conversation = store.create_conversation(owner, agent).await.unwrap();
+    let draft = store
+        .set_draft(agent, conversation.id, "Streaming **now**", "writing", "")
+        .await
+        .unwrap();
+    assert_eq!(draft.sender_profile_id, agent);
+    assert_eq!(
+        store.drafts(owner, conversation.id).await.unwrap(),
+        vec![draft]
+    );
+    assert!(store.drafts(stranger, conversation.id).await.is_err());
+    assert!(
+        store
+            .set_draft(
+                owner,
+                conversation.id,
+                "humans cannot impersonate streams",
+                "writing",
+                ""
+            )
+            .await
+            .is_err()
+    );
+
+    store
+        .send_message(agent, conversation.id, "Streaming **now**", None, &[])
+        .await
+        .unwrap();
+    assert!(
+        store
+            .drafts(owner, conversation.id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
 async fn human_group_notifies_members_then_becomes_work_when_an_agent_is_summoned() {
     let _guard = DATABASE_TEST_LOCK.lock().unwrap();
     let Some((pool, store)) = setup().await else {
