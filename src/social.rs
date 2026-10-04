@@ -166,6 +166,17 @@ pub struct ConversationMessage {
     pub read_by: Vec<Uuid>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct ConversationDraft {
+    pub conversation_id: Uuid,
+    pub sender_profile_id: Uuid,
+    pub body: String,
+    pub status: String,
+    pub detail: String,
+    #[schema(value_type = String, format = DateTime)]
+    pub updated_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct MessageMedia {
     pub asset_id: Uuid,
@@ -1365,6 +1376,104 @@ impl PgSocialStore {
         rows.into_iter().map(|row| message_from_row(&row)).collect()
     }
 
+    pub async fn drafts(
+        &self,
+        actor: Uuid,
+        conversation_id: Uuid,
+    ) -> Result<Vec<ConversationDraft>, SocialError> {
+        let mut tx = self.pool.begin().await?;
+        require_participant(&mut tx, conversation_id, actor).await?;
+        sqlx::query("DELETE FROM conversation_drafts WHERE expires_at<=now()")
+            .execute(&mut *tx)
+            .await?;
+        let rows = sqlx::query(
+            "SELECT conversation_id,sender_profile_id,body,status,detail,updated_at
+             FROM conversation_drafts WHERE conversation_id=$1
+             ORDER BY updated_at,sender_profile_id",
+        )
+        .bind(conversation_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(ConversationDraft {
+                    conversation_id: row.try_get("conversation_id")?,
+                    sender_profile_id: row.try_get("sender_profile_id")?,
+                    body: row.try_get("body")?,
+                    status: row.try_get("status")?,
+                    detail: row.try_get("detail")?,
+                    updated_at: row.try_get("updated_at")?,
+                })
+            })
+            .collect()
+    }
+
+    pub async fn set_draft(
+        &self,
+        actor: Uuid,
+        conversation_id: Uuid,
+        body: &str,
+        status: &str,
+        detail: &str,
+    ) -> Result<ConversationDraft, SocialError> {
+        if body.len() > 20_000
+            || detail.len() > 500
+            || !matches!(status, "writing" | "tool" | "finalizing")
+        {
+            return Err(SocialError::Invalid("invalid conversation draft"));
+        }
+        let mut tx = self.pool.begin().await?;
+        require_participant(&mut tx, conversation_id, actor).await?;
+        let is_agent: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM social_identities WHERE profile_id=$1 AND kind='agent')",
+        )
+        .bind(actor)
+        .fetch_one(&mut *tx)
+        .await?;
+        if !is_agent {
+            return Err(SocialError::Forbidden);
+        }
+        let row = sqlx::query(
+            "INSERT INTO conversation_drafts
+                (conversation_id,sender_profile_id,body,status,detail,expires_at)
+             VALUES ($1,$2,$3,$4,$5,now()+interval '5 minutes')
+             ON CONFLICT (conversation_id,sender_profile_id) DO UPDATE SET
+                body=excluded.body,status=excluded.status,detail=excluded.detail,updated_at=now(),expires_at=excluded.expires_at
+             RETURNING conversation_id,sender_profile_id,body,status,detail,updated_at",
+        )
+        .bind(conversation_id)
+        .bind(actor)
+        .bind(body)
+        .bind(status)
+        .bind(detail)
+        .fetch_one(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(ConversationDraft {
+            conversation_id: row.try_get("conversation_id")?,
+            sender_profile_id: row.try_get("sender_profile_id")?,
+            body: row.try_get("body")?,
+            status: row.try_get("status")?,
+            detail: row.try_get("detail")?,
+            updated_at: row.try_get("updated_at")?,
+        })
+    }
+
+    pub async fn clear_draft(&self, actor: Uuid, conversation_id: Uuid) -> Result<(), SocialError> {
+        let mut tx = self.pool.begin().await?;
+        require_participant(&mut tx, conversation_id, actor).await?;
+        sqlx::query(
+            "DELETE FROM conversation_drafts WHERE conversation_id=$1 AND sender_profile_id=$2",
+        )
+        .bind(conversation_id)
+        .bind(actor)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
     pub async fn summon_agent(
         &self,
         actor_account: Uuid,
@@ -1705,6 +1814,13 @@ impl PgSocialStore {
             reactions: Vec::new(),
             read_by: Vec::new(),
         };
+        sqlx::query(
+            "DELETE FROM conversation_drafts WHERE conversation_id=$1 AND sender_profile_id=$2",
+        )
+        .bind(conversation_id)
+        .bind(actor)
+        .execute(&mut *tx)
+        .await?;
         tx.commit().await?;
         Ok(message)
     }
