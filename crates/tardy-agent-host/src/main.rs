@@ -16,8 +16,9 @@ use tardy_agent_host::{
     AgentCommand, AgentCredential, BoxError, CodexRunner, ConversationMessage, HostData,
     InboxEvent, OpenCodeRunner, PendingMedia, PendingReply, QueuedEvent, RuntimeKind,
     RuntimeRunner, TapbackDecider, WorkActivation, activation_prompt, dispatchable_deliveries,
-    extract_image_directives, extract_mermaid_directives, extract_tardy_caption, load_json,
-    obvious_tapback, should_publish_tardy, store_json, verify_signature,
+    extract_image_directives, extract_manim_directives, extract_mermaid_directives,
+    extract_tardy_caption, load_json, obvious_tapback, should_publish_tardy, store_json,
+    verify_signature,
 };
 use tokio::sync::{Mutex, Notify};
 
@@ -65,8 +66,25 @@ async fn main() -> Result<(), BoxError> {
     if command == "doctor" {
         return doctor().await;
     }
+    if command == "render-manim" {
+        let path = std::env::args()
+            .nth(2)
+            .ok_or("render-manim requires a workspace-relative request.json path")?;
+        let rendered = render_manim(&[tardy_agent_host::ManimDirective {
+            path: PathBuf::from(path),
+            alt_text: None,
+        }])
+        .await?;
+        for artifact in rendered {
+            println!("{}", artifact.path.display());
+        }
+        return Ok(());
+    }
     if command != "run" {
-        return Err(format!("unknown command {command}; expected run, doctor, or help").into());
+        return Err(format!(
+            "unknown command {command}; expected run, doctor, render-manim, or help"
+        )
+        .into());
     }
     let credential_path = expand_path(&env_or("TARDY_STATE_PATH", "~/.config/tardy/agent.json"));
     let data_path = expand_path(&env_or(
@@ -740,10 +758,13 @@ async fn process_one(app: &App, queued: &QueuedEvent) -> Result<(), BoxError> {
                     &activation_prompt(&app.credential.handle, &activation, &context),
                 )
                 .await?;
-            let (body, diagrams) = extract_mermaid_directives(&result.reply)?;
+            let (body, manim) = extract_manim_directives(&result.reply)?;
+            let manim_media = render_manim(&manim).await?;
+            let (body, diagrams) = extract_mermaid_directives(&body)?;
             let rendered = render_mermaid(&app.data_path, &diagrams).await?;
             let (body, mut directives) = extract_image_directives(&body)?;
             directives.extend(rendered);
+            directives.extend(manim_media);
             let (body, tardy_caption) = extract_tardy_caption(&body);
             let media = upload_images(app, &directives).await?;
             let publish_tardy = should_publish_tardy(tardy_caption.as_deref(), &media);
@@ -993,6 +1014,7 @@ async fn upload_images(
             "m4a" => ("audio/mp4", None),
             "ogg" => ("audio/ogg", None),
             "flac" => ("audio/flac", None),
+            "json" => ("application/json", None),
             "pdf" => ("application/pdf", None),
             "md" | "markdown" => ("text/markdown", None),
             "txt" => ("text/plain", None),
@@ -1160,6 +1182,119 @@ async fn render_mermaid(
     Ok(rendered)
 }
 
+const MANIM_VERSION: &str = "0.19.0";
+const MAX_MANIM_REQUEST_BYTES: u64 = 64 * 1024;
+const MAX_MANIM_SOURCE_BYTES: u64 = 512 * 1024;
+
+async fn render_manim(
+    directives: &[tardy_agent_host::ManimDirective],
+) -> Result<Vec<tardy_agent_host::ImageDirective>, BoxError> {
+    let workspace = std::fs::canonicalize(env_or("TARDY_AGENT_WORKSPACE", "."))?;
+    let cache = workspace.join(".tardy/artifacts/manim");
+    tokio::fs::create_dir_all(&cache).await?;
+    let mut rendered = Vec::with_capacity(directives.len());
+    for directive in directives {
+        let manifest_path = workspace.join(&directive.path).canonicalize()?;
+        if !manifest_path.starts_with(&workspace) {
+            return Err("TARDY_MANIM request must stay inside the configured workspace".into());
+        }
+        let manifest = tokio::fs::read(&manifest_path).await?;
+        if manifest.is_empty() || manifest.len() as u64 > MAX_MANIM_REQUEST_BYTES {
+            return Err("TARDY_MANIM request must be between 1 byte and 64 KiB".into());
+        }
+        let request = tardy_agent_host::ManimRenderRequest::parse(&manifest)?;
+        let manifest_dir = manifest_path
+            .parent()
+            .ok_or("Manim request has no parent")?;
+        let source_path = manifest_dir.join(&request.source).canonicalize()?;
+        if !source_path.starts_with(&workspace) {
+            return Err("Manim source must stay inside the configured workspace".into());
+        }
+        let source = tokio::fs::read(&source_path).await?;
+        if source.is_empty() || source.len() as u64 > MAX_MANIM_SOURCE_BYTES {
+            return Err("Manim source must be between 1 byte and 512 KiB".into());
+        }
+        std::str::from_utf8(&source).map_err(|_| "Manim source must be UTF-8")?;
+        let digest = hex::encode(Sha256::digest(
+            [manifest.as_slice(), b"\0", source.as_slice()].concat(),
+        ));
+        let output = cache.join(format!("{digest}.mp4"));
+        if !tokio::fs::try_exists(&output).await? {
+            let media_dir = cache.join(format!("work-{digest}"));
+            tokio::fs::create_dir_all(&media_dir).await?;
+            let mut command = tokio::process::Command::new(env_or("TARDY_UVX_COMMAND", "uvx"));
+            command
+                .args([
+                    "--from",
+                    &format!("manim=={MANIM_VERSION}"),
+                    "manim",
+                    "render",
+                ])
+                .arg("--disable_caching")
+                .arg("--format=mp4")
+                .arg(format!("--resolution={},{}", request.width, request.height))
+                .arg(format!("--fps={}", request.fps))
+                .arg("--media_dir")
+                .arg(&media_dir)
+                .arg("--output_file")
+                .arg(&output)
+                .arg(&source_path)
+                .arg(&request.scene)
+                .env("PYTHONHASHSEED", "0")
+                .current_dir(manifest_dir)
+                .kill_on_drop(true);
+            if request.transparent {
+                command.arg("--transparent");
+            }
+            let result = tokio::time::timeout(Duration::from_secs(300), command.output())
+                .await
+                .map_err(|_| "Manim render timed out after 300 seconds")??;
+            if !result.status.success() {
+                return Err(format!(
+                    "Manim render failed: {}",
+                    String::from_utf8_lossy(&result.stderr)
+                        .chars()
+                        .take(2000)
+                        .collect::<String>()
+                )
+                .into());
+            }
+            if !tokio::fs::try_exists(&output).await? {
+                return Err("Manim completed without producing its declared output".into());
+            }
+            tokio::fs::remove_dir_all(&media_dir).await?;
+        }
+        let metadata = tokio::fs::metadata(&output).await?;
+        if metadata.len() == 0 || metadata.len() > 250 * 1024 * 1024 {
+            return Err("Manim output violates attachment size bounds".into());
+        }
+        let (width, height, duration_ms) = probe_media(&output)
+            .await
+            .ok_or("Manim output could not be probed")?;
+        if width != Some(request.width) || height != Some(request.height) {
+            return Err("Manim output dimensions do not match the request".into());
+        }
+        if duration_ms.is_none()
+            || duration_ms
+                .is_some_and(|duration| duration > u64::from(request.max_duration_seconds) * 1000)
+        {
+            return Err("Manim output exceeds max_duration_seconds".into());
+        }
+        rendered.push(tardy_agent_host::ImageDirective {
+            path: manifest_path,
+            alt_text: Some("Manim render request and citations".into()),
+        });
+        rendered.push(tardy_agent_host::ImageDirective {
+            path: output,
+            alt_text: directive
+                .alt_text
+                .clone()
+                .or_else(|| Some("Manim lesson".into())),
+        });
+    }
+    Ok(rendered)
+}
+
 async fn probe_media(path: &Path) -> Option<(Option<u32>, Option<u32>, Option<u64>)> {
     let output = tokio::process::Command::new("ffprobe")
         .args([
@@ -1255,7 +1390,7 @@ fn internal(error: BoxError) -> (StatusCode, String) {
 
 fn print_help() {
     println!(
-        "Tardy agent host\n\nUsage:\n  tardy-agent-host doctor\n  tardy-agent-host tapback <message>\n  tardy-agent-host run\n\nEnvironment:\n  TARDY_STATE_PATH         Agent credential from `tardy onboard`\n  TARDY_AGENT_WORKSPACE    Workspace this agent may access\n  TARDY_AGENT_HOST_STATE   Durable session and outbox state\n  TARDY_AGENT_DELIVERY     poll (default) or webhook\n  TARDY_AGENT_RUNTIME      codex (default) or opencode\n  TARDY_CODEX_SANDBOX      read-only or workspace-write (default)\n  TARDY_CODEX_NETWORK      enabled (default) or disabled\n  TARDY_OPENCODE_BIN       OpenCode executable (default: opencode)\n  TARDY_OPENCODE_MODEL     Optional provider/model routed by OpenCode\n  TARDY_OPENCODE_AGENT     Optional OpenCode agent name\n  TARDY_OPENCODE_PURE      yes disables external OpenCode plugins\n  TARDY_AGENT_BIND         Webhook bind address"
+        "Tardy agent host\n\nUsage:\n  tardy-agent-host doctor\n  tardy-agent-host tapback <message>\n  tardy-agent-host render-manim <request.json>\n  tardy-agent-host run\n\nEnvironment:\n  TARDY_STATE_PATH         Agent credential from `tardy onboard`\n  TARDY_AGENT_WORKSPACE    Workspace this agent may access\n  TARDY_AGENT_HOST_STATE   Durable session and outbox state\n  TARDY_AGENT_DELIVERY     poll (default) or webhook\n  TARDY_AGENT_RUNTIME      codex (default) or opencode\n  TARDY_CODEX_SANDBOX      read-only or workspace-write (default)\n  TARDY_CODEX_NETWORK      enabled (default) or disabled\n  TARDY_OPENCODE_BIN       OpenCode executable (default: opencode)\n  TARDY_OPENCODE_MODEL     Optional provider/model routed by OpenCode\n  TARDY_OPENCODE_AGENT     Optional OpenCode agent name\n  TARDY_OPENCODE_PURE      yes disables external OpenCode plugins\n  TARDY_UVX_COMMAND        uvx-compatible Manim launcher\n  TARDY_AGENT_BIND         Webhook bind address"
     );
 }
 

@@ -57,7 +57,10 @@ impl MediaKind {
                 "audio/mp4" | "audio/mpeg" | "audio/ogg" | "audio/wav" | "audio/flac"
             ),
             Self::VideoOriginal => matches!(mime, "video/mp4" | "video/quicktime" | "video/webm"),
-            Self::Document => matches!(mime, "application/pdf" | "text/markdown" | "text/plain"),
+            Self::Document => matches!(
+                mime,
+                "application/json" | "application/pdf" | "text/markdown" | "text/plain"
+            ),
             Self::MessageAttachment => matches!(
                 mime,
                 "image/jpeg"
@@ -71,6 +74,7 @@ impl MediaKind {
                     | "audio/ogg"
                     | "audio/wav"
                     | "audio/flac"
+                    | "application/json"
                     | "application/pdf"
                     | "text/markdown"
                     | "text/plain"
@@ -779,6 +783,7 @@ mod tests {
 
     #[tokio::test]
     async fn private_message_files_are_ready_but_executables_are_rejected() {
+        assert!(MediaKind::MessageAttachment.allows("application/json"));
         let service = MediaService::new(Some(Arc::new(Fake {
             metadata: Mutex::new(None),
         })));
