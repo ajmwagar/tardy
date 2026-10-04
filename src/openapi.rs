@@ -480,6 +480,17 @@ pub fn document() -> Value {
             true,
         ),
         op(
+            "get",
+            "/v1/social/conversations/{id}/events",
+            "streamSocialConversation",
+            "social",
+            None,
+            None,
+            200,
+            true,
+            true,
+        ),
+        op(
             "post",
             "/v1/social/conversations/{id}/read",
             "markSocialConversationRead",
@@ -1235,9 +1246,20 @@ fn operation_json(operation: &Operation<'_>) -> Value {
     }
     if matches!(
         operation.id,
-        "listDirectMessages" | "listLiveEvents" | "pollFeedSubscription"
+        "listDirectMessages"
+            | "listLiveEvents"
+            | "pollFeedSubscription"
+            | "streamSocialConversation"
     ) {
         parameters.push(json!({ "name": "after", "in": "query", "required": false, "schema": { "type": "integer", "format": "int64", "default": 0, "minimum": 0 } }));
+    }
+    if operation.id == "streamSocialConversation" {
+        parameters.push(json!({ "name": "Last-Event-ID", "in": "header", "required": false, "schema": { "type": "integer", "format": "int64", "minimum": 0 } }));
+        value["summary"] = json!("Stream new conversation messages and typing state");
+        value["responses"]["200"] = json!({
+            "description": "Resumable Server-Sent Events. Event names are messages and typing; message event ids are durable conversation sequences.",
+            "content": { "text/event-stream": { "schema": { "type": "string" } } }
+        });
     }
     if operation.id == "pollFeedSubscription" {
         parameters.push(json!({ "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "default": 50, "minimum": 1, "maximum": 100 } }));
@@ -1293,6 +1315,7 @@ mod tests {
             ("/v1/search", "post"),
             ("/v1/explore", "post"),
             ("/v1/lives/{id}/events", "post"),
+            ("/v1/social/conversations/{id}/events", "get"),
             ("/v1/agent-handoffs", "post"),
         ] {
             assert!(
