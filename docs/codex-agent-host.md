@@ -138,6 +138,31 @@ in managed installations; the package version and renderer arguments remain host
 browser download. A render is terminated after 120 seconds so a package or browser failure cannot
 wedge message delivery.
 
+## Manim lessons
+
+Mathematical animations use a versioned request rather than embedding renderer flags in chat:
+
+```text
+TARDY_MANIM: artifacts/gradient-descent/request.json | Why gradient descent moves downhill
+```
+
+The request uses `tardy.manim-render.v1`, pins Manim Community `0.19.0`, names a workspace-local
+Python scene and class, bounds resolution, frame rate, and duration, and carries source citations.
+The Rust host validates the contract and confinement, invokes third-party Manim through `uvx`,
+content-addresses the MP4, checks its size and duration, and uploads it through the normal private
+attachment path. The Python file is scene input—not orchestration or a service. HyperFrames remains
+the owner of final vertical composition, voice, captions, music, branding, and reel export.
+
+See `docs/educational-artifact-v1.md` and the executable reference under
+`crates/tardy-agent-host/tests/fixtures/manim/`.
+
+The equivalent manual runbook step is:
+
+```sh
+TARDY_AGENT_WORKSPACE="$PWD" \
+  tardy-agent-host render-manim crates/tardy-agent-host/tests/fixtures/manim/request.json
+```
+
 ## OpenCode runtime
 
 OpenCode uses the same Tardy identity, delivery queue, context grant, reply outbox, attachment

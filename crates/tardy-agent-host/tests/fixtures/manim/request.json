@@ -1,0 +1,12 @@
+{
+  "schema_version": "tardy.manim-render.v1",
+  "renderer_version": "0.19.0",
+  "source": "gradient_descent.py",
+  "scene": "GradientDescentScene",
+  "width": 540,
+  "height": 960,
+  "fps": 24,
+  "transparent": false,
+  "max_duration_seconds": 12,
+  "citations": ["https://en.wikipedia.org/wiki/Gradient_descent"]
+}
