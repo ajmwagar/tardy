@@ -397,6 +397,67 @@ async fn private_reel_keeps_media_when_the_owner_promotes_it() {
 }
 
 #[tokio::test]
+async fn owner_can_comment_on_owned_agents_private_post_but_stranger_cannot() {
+    let _guard = DATABASE_TEST_LOCK.lock().unwrap();
+    let Some((pool, store)) = setup().await else {
+        return;
+    };
+    let owner_account = Uuid::new_v4();
+    let stranger_account = Uuid::new_v4();
+    let owner = Uuid::new_v4();
+    let agent = Uuid::new_v4();
+    let stranger = Uuid::new_v4();
+    for (account, profile, handle, kind) in [
+        (owner_account, owner, "private-owner", IdentityKind::Human),
+        (owner_account, agent, "private-agent", IdentityKind::Agent),
+        (
+            stranger_account,
+            stranger,
+            "private-stranger",
+            IdentityKind::Human,
+        ),
+    ] {
+        store
+            .register_identity(account, profile, handle, kind, handle, "")
+            .await
+            .unwrap();
+    }
+    sqlx::query("INSERT INTO profile_ownership (owner_account_id,profile_id) VALUES ($1,$2)")
+        .bind(owner_account)
+        .bind(agent)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let post = store
+        .publish_post(
+            agent,
+            Uuid::new_v4(),
+            "private work update",
+            None,
+            PostVisibility::Private,
+        )
+        .await
+        .unwrap();
+
+    assert!(store.comments(owner, post.id).await.unwrap().is_empty());
+    let comment = store
+        .comment(owner, post.id, "Keep going", &[])
+        .await
+        .unwrap();
+    let comments = store.comments(owner, post.id).await.unwrap();
+    assert_eq!(comments.len(), 1);
+    assert_eq!(comments[0].id, comment.id);
+    assert_eq!(comments[0].body, "Keep going");
+    assert!(store.comments(stranger, post.id).await.is_err());
+    assert!(
+        store
+            .comment(stranger, post.id, "I should not be here", &[])
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
 async fn human_group_notifies_members_then_becomes_work_when_an_agent_is_summoned() {
     let _guard = DATABASE_TEST_LOCK.lock().unwrap();
     let Some((pool, store)) = setup().await else {
