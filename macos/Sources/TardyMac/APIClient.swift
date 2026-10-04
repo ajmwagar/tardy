@@ -76,6 +76,50 @@ actor TardyAPI {
         try await request("/v1/social/conversations/\(conversation.uuidString)/messages?after=\(after)&limit=100")
     }
 
+    func conversationEvents(
+        conversation: UUID,
+        after: Int
+    ) throws -> AsyncThrowingStream<ConversationStreamEvent, Error> {
+        guard let url = URL(
+            string: "/v1/social/conversations/\(conversation.uuidString)/events?after=\(after)",
+            relativeTo: baseURL
+        ) else { throw APIError.invalidResponse }
+        guard let token else { throw APIError.http(401, "No saved session") }
+        var request = URLRequest(url: url)
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        if let profileId {
+            request.setValue(profileId.uuidString, forHTTPHeaderField: "X-Tardy-Profile-Id")
+        }
+        if after > 0 { request.setValue(String(after), forHTTPHeaderField: "Last-Event-ID") }
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    let (bytes, response) = try await session.bytes(for: request)
+                    guard let response = response as? HTTPURLResponse else {
+                        throw APIError.invalidResponse
+                    }
+                    guard (200..<300).contains(response.statusCode) else {
+                        throw APIError.http(response.statusCode, "Conversation stream rejected")
+                    }
+                    var parser = ConversationSSEParser()
+                    for try await line in bytes.lines {
+                        try Task.checkCancellation()
+                        if let event = try parser.consume(line: line) {
+                            continuation.yield(event)
+                        }
+                    }
+                    continuation.finish()
+                } catch is CancellationError {
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
     func send(conversation: UUID, body: String, sharedLinkId: UUID? = nil) async throws -> Message {
         try await request(
             "/v1/social/conversations/\(conversation.uuidString)/messages",
@@ -183,6 +227,47 @@ actor TardyAPI {
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         return decoder
     }()
+}
+
+struct ConversationSSEParser {
+    private var eventName = "message"
+    private var eventId: Int?
+    private var dataLines: [String] = []
+
+    mutating func consume(line: String) throws -> ConversationStreamEvent? {
+        if line.isEmpty {
+            defer {
+                eventName = "message"
+                eventId = nil
+                dataLines.removeAll(keepingCapacity: true)
+            }
+            guard !dataLines.isEmpty else { return nil }
+            let data = Data(dataLines.joined(separator: "\n").utf8)
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            switch eventName {
+            case "messages":
+                return .messages(try decoder.decode([Message].self, from: data), cursor: eventId)
+            case "typing":
+                return .typing(try decoder.decode([UUID].self, from: data))
+            case "error":
+                throw APIError.http(503, "Conversation stream interrupted")
+            default:
+                return nil
+            }
+        }
+        if line.hasPrefix(":") { return nil }
+        let parts = line.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
+        let field = String(parts[0])
+        let value = parts.count > 1 ? String(parts[1]).drop(while: { $0 == " " }) : ""
+        switch field {
+        case "event": eventName = String(value)
+        case "id": eventId = Int(value)
+        case "data": dataLines.append(String(value))
+        default: break
+        }
+        return nil
+    }
 }
 
 private struct ErrorBody: Decodable { let error: String }

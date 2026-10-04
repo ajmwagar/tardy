@@ -7,8 +7,22 @@ struct AppShellView: View {
     var body: some View {
         @Bindable var model = model
         HStack(spacing: 0) {
-            AppRail(selection: $model.destination)
-            Divider()
+            if model.showsAppRail {
+                AppRail(selection: $model.destination)
+                Divider()
+            } else {
+                VStack {
+                    Button { withAnimation(.snappy) { model.showsAppRail = true } } label: {
+                        Image(systemName: "sidebar.left")
+                    }
+                    .buttonStyle(.plain)
+                    .help("Show navigation")
+                    .padding(.top, 18)
+                    Spacer()
+                }
+                .frame(width: 34)
+                .background(.ultraThinMaterial)
+            }
             switch model.destination {
             case .reels: ReelsView()
             case .messages: MessengerView()
