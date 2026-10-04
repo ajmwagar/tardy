@@ -15,10 +15,10 @@ use std::{
 use tardy_agent_host::{
     AgentCommand, AgentCredential, BoxError, CodexRunner, ConversationMessage, HostData,
     InboxEvent, OpenCodeRunner, PendingMedia, PendingReply, QueuedEvent, RuntimeEvent, RuntimeKind,
-    RuntimeRunner, TapbackDecider, WorkActivation, activation_prompt, dispatchable_deliveries,
-    extract_image_directives, extract_manim_directives, extract_mermaid_directives,
-    extract_tardy_caption, load_json, obvious_tapback, should_publish_tardy, store_json,
-    verify_signature,
+    RuntimeRunner, Tapback, TapbackDecider, WorkActivation, activation_prompt,
+    dispatchable_deliveries, extract_image_directives, extract_manim_directives,
+    extract_mermaid_directives, extract_tardy_caption, load_json, obvious_presence_reply,
+    obvious_tapback, should_publish_tardy, store_json, verify_signature,
 };
 use tokio::sync::{Mutex, Notify};
 
@@ -693,6 +693,20 @@ async fn process_one(app: &App, queued: &QueuedEvent) -> Result<(), BoxError> {
     if !activation.legacy_dm && !activation.message_id.is_empty() {
         acknowledge(app, &activation).await?;
     }
+    if let Some(body) = obvious_presence_reply(&activation.body) {
+        return send_reply(
+            app,
+            &PendingReply {
+                conversation_id: activation.conversation_id,
+                body: body.to_owned(),
+                media: Vec::new(),
+                legacy_dm: activation.legacy_dm,
+                context_cursor: activation.sequence,
+                publish_tardy: false,
+            },
+        )
+        .await;
+    }
     let typing_renewal = if activation.legacy_dm {
         None
     } else {
@@ -898,29 +912,34 @@ async fn acknowledge(app: &App, activation: &WorkActivation) -> Result<(), BoxEr
     {
         return Ok(());
     }
-    let obvious = obvious_tapback(&activation.body);
-    let acknowledgement = if obvious.is_some() {
+    let acknowledgement = if let Some(obvious) = obvious_tapback(&activation.body) {
         obvious
     } else if let Some(decider) = app.tapbacks.as_ref() {
         let decider = Arc::clone(decider);
         let handle = app.credential.handle.clone();
         let body = activation.body.clone();
-        match tokio::task::spawn_blocking(move || decider.decide(&handle, &body)).await {
-            Ok(Ok(tapback)) => Some(tapback),
-            Ok(Err(error)) => {
+        match tokio::time::timeout(
+            Duration::from_millis(1_200),
+            tokio::task::spawn_blocking(move || decider.decide(&handle, &body)),
+        )
+        .await
+        {
+            Ok(Ok(Ok(tapback))) => tapback,
+            Ok(Ok(Err(error))) => {
                 tracing::warn!(%error, "RLCD tapback failed; adding no reaction");
-                None
+                Tapback::None
             }
-            Err(error) => {
+            Ok(Err(error)) => {
                 tracing::warn!(%error, "RLCD tapback task failed; adding no reaction");
-                None
+                Tapback::None
+            }
+            Err(_) => {
+                tracing::warn!("RLCD tapback exceeded 1200 ms; dispatching without a reaction");
+                Tapback::None
             }
         }
     } else {
-        obvious_tapback(&activation.body)
-    };
-    let Some(acknowledgement) = acknowledgement else {
-        return Ok(());
+        Tapback::None
     };
     if let Some(body) = acknowledgement.as_message() {
         request_ok(

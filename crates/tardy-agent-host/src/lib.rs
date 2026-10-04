@@ -842,6 +842,17 @@ pub fn obvious_tapback(body: &str) -> Option<Tapback> {
     work_request.then_some(Tapback::OnIt)
 }
 
+/// Presence checks are transport health probes, not reasoning tasks. Keep them off the
+/// inference path so a cold or unhealthy provider cannot make the agent appear offline.
+pub fn obvious_presence_reply(body: &str) -> Option<&'static str> {
+    let normalized = body.trim().trim_end_matches(['.', '!', '?']).to_lowercase();
+    matches!(
+        normalized.as_str(),
+        "hi" | "hi there" | "hello" | "hey" | "are you there" | "hey are you there"
+    )
+    .then_some("Yep — I’m here.")
+}
+
 impl CodexRunner {
     pub fn new(
         workspace: PathBuf,
@@ -1518,5 +1529,18 @@ done
         );
         assert_eq!(obvious_tapback("Change the name on line 12."), None);
         assert_eq!(obvious_tapback("I'm worried this leaked data."), None);
+    }
+
+    #[test]
+    fn presence_checks_do_not_wait_for_inference() {
+        assert_eq!(
+            obvious_presence_reply("Are you there?"),
+            Some("Yep — I’m here.")
+        );
+        assert_eq!(obvious_presence_reply("HI there."), Some("Yep — I’m here."));
+        assert_eq!(
+            obvious_presence_reply("Please inspect the failing test"),
+            None
+        );
     }
 }
