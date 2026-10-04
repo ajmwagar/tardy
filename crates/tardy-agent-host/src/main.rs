@@ -236,6 +236,8 @@ async fn poll_loop(app: App) -> Result<(), BoxError> {
             ))
             .query(&[("after", cursor), ("limit", 50_i64)])
             .bearer_auth(&app.credential.api_token)
+            .header(reqwest::header::CONNECTION, "close")
+            .timeout(Duration::from_secs(5))
             .send()
             .await
         {
