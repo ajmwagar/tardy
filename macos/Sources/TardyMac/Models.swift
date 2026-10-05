@@ -237,9 +237,18 @@ struct ConversationDraft: Codable, Identifiable, Equatable, Sendable {
     let body: String
     let status: String
     let detail: String
+    let activities: [ConversationActivity]?
     let updatedAt: String
 
     var id: UUID { senderProfileId }
+    var activityItems: [ConversationActivity] { activities ?? [] }
+}
+
+struct ConversationActivity: Codable, Identifiable, Equatable, Sendable {
+    let id: String
+    let kind: String
+    let title: String
+    let phase: String
 }
 
 enum ConversationStreamState: Equatable, Sendable {

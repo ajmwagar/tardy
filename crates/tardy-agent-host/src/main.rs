@@ -14,9 +14,9 @@ use std::{
 };
 use tardy_agent_host::{
     AgentCommand, AgentCredential, BoxError, CodexRunner, ConversationMessage, HostData,
-    InboxEvent, OpenCodeRunner, PendingMedia, PendingReply, QueuedEvent, RuntimeEvent, RuntimeKind,
-    RuntimeRunner, Tapback, TapbackDecider, WorkActivation, activation_prompt,
-    dispatchable_deliveries, extract_image_directives, extract_manim_directives,
+    InboxEvent, OpenCodeRunner, PendingMedia, PendingReply, QueuedEvent, RuntimeActivity,
+    RuntimeEvent, RuntimeKind, RuntimeRunner, Tapback, TapbackDecider, WorkActivation,
+    activation_prompt, dispatchable_deliveries, extract_image_directives, extract_manim_directives,
     extract_mermaid_directives, extract_tardy_caption, load_json, obvious_presence_reply,
     obvious_tapback, should_publish_tardy, store_json, verify_signature,
 };
@@ -1006,6 +1006,7 @@ async fn forward_runtime_events(
     let mut body = String::new();
     let mut status = "writing";
     let mut detail = String::new();
+    let mut activities: Vec<RuntimeActivity> = Vec::new();
     let mut dirty = false;
     let mut interval = tokio::time::interval(Duration::from_millis(80));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -1020,18 +1021,24 @@ async fn forward_runtime_events(
                     detail.clear();
                     dirty = true;
                 }
-                Some(RuntimeEvent::Status(label)) => {
+                Some(RuntimeEvent::Activity(activity)) => {
                     status = "tool";
-                    detail = label.chars().take(500).collect();
+                    detail = activity.title.chars().take(500).collect();
+                    if let Some(existing) = activities.iter_mut().find(|item| item.id == activity.id) {
+                        *existing = activity;
+                    } else {
+                        activities.push(activity);
+                        if activities.len() > 20 { activities.remove(0); }
+                    }
                     dirty = true;
                 }
                 None => {
-                    if dirty { set_draft(app, conversation, &body, "finalizing", "Finishing up").await?; }
+                    if dirty { set_draft(app, conversation, &body, "finalizing", "Finishing up", &activities).await?; }
                     return Ok(());
                 }
             },
             _ = interval.tick(), if dirty => {
-                set_draft(app, conversation, &body, status, &detail).await?;
+                set_draft(app, conversation, &body, status, &detail, &activities).await?;
                 dirty = false;
             }
         }
@@ -1044,6 +1051,7 @@ async fn set_draft(
     body: &str,
     status: &str,
     detail: &str,
+    activities: &[RuntimeActivity],
 ) -> Result<(), BoxError> {
     request_ok(
         app.client
@@ -1053,7 +1061,7 @@ async fn set_draft(
             ))
             .bearer_auth(&app.credential.api_token)
             .header("x-tardy-profile-id", &app.credential.profile_id)
-            .json(&json!({"body":body,"status":status,"detail":detail})),
+            .json(&json!({"body":body,"status":status,"detail":detail,"activities":activities})),
     )
     .await
 }

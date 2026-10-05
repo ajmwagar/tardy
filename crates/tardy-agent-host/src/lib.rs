@@ -505,10 +505,18 @@ pub struct RuntimeResult {
     pub reply: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct RuntimeActivity {
+    pub id: String,
+    pub kind: String,
+    pub title: String,
+    pub phase: String,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RuntimeEvent {
     TextDelta(String),
-    Status(String),
+    Activity(RuntimeActivity),
 }
 
 pub enum RuntimeRunner {
@@ -923,7 +931,12 @@ impl CodexRunner {
         .await?;
         if let Some(progress) = &progress {
             let _ = progress
-                .send(RuntimeEvent::Status("Connecting to Codex".into()))
+                .send(RuntimeEvent::Activity(RuntimeActivity {
+                    id: "runtime-connect".into(),
+                    kind: "connection".into(),
+                    title: "Connecting to Codex".into(),
+                    phase: "running".into(),
+                }))
                 .await;
         }
         tokio::time::timeout(Duration::from_secs(10), async {
@@ -986,6 +999,16 @@ impl CodexRunner {
                     .ok_or("Codex thread response omitted id")?
                     .to_owned();
                 active_thread = Some(id.clone());
+                if let Some(progress) = &progress {
+                    let _ = progress
+                        .send(RuntimeEvent::Activity(RuntimeActivity {
+                            id: "runtime-connect".into(),
+                            kind: "connection".into(),
+                            title: "Connected to Codex".into(),
+                            phase: "completed".into(),
+                        }))
+                        .await;
+                }
                 write_app_server(
                     &mut stdin,
                     serde_json::json!({
@@ -1007,19 +1030,61 @@ impl CodexRunner {
                 }
                 Some("item/started") => {
                     let kind = message.pointer("/params/item/type").and_then(Value::as_str);
-                    let status = match kind {
-                        Some("commandExecution") => Some("Running a command"),
-                        Some("fileChange") => Some("Editing files"),
-                        Some("mcpToolCall" | "dynamicToolCall") => Some("Using a tool"),
-                        Some("collabToolCall") => Some("Coordinating with a subagent"),
-                        Some("webSearch") => Some("Searching the web"),
+                    let activity = match kind {
+                        Some("commandExecution") => Some(("command", "Running a command")),
+                        Some("fileChange") => Some(("file_change", "Editing files")),
+                        Some("mcpToolCall" | "dynamicToolCall") => Some(("tool", "Using a tool")),
+                        Some("collabToolCall") => {
+                            Some(("subagent", "Coordinating with a subagent"))
+                        }
+                        Some("webSearch") => Some(("web_search", "Searching the web")),
                         _ => None,
                     };
-                    if let (Some(progress), Some(status)) = (&progress, status) {
-                        let _ = progress.send(RuntimeEvent::Status(status.into())).await;
+                    if let (Some(progress), Some((activity_kind, title))) = (&progress, activity) {
+                        let id = message
+                            .pointer("/params/item/id")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned)
+                            .unwrap_or_else(|| format!("activity:{activity_kind}"));
+                        let _ = progress
+                            .send(RuntimeEvent::Activity(RuntimeActivity {
+                                id,
+                                kind: activity_kind.into(),
+                                title: title.into(),
+                                phase: "running".into(),
+                            }))
+                            .await;
                     }
                 }
                 Some("item/completed") => {
+                    if let (Some(progress), Some(kind)) = (
+                        &progress,
+                        message.pointer("/params/item/type").and_then(Value::as_str),
+                    ) {
+                        let activity = match kind {
+                            "commandExecution" => Some(("command", "Ran a command")),
+                            "fileChange" => Some(("file_change", "Edited files")),
+                            "mcpToolCall" | "dynamicToolCall" => Some(("tool", "Used a tool")),
+                            "collabToolCall" => Some(("subagent", "Coordinated with a subagent")),
+                            "webSearch" => Some(("web_search", "Searched the web")),
+                            _ => None,
+                        };
+                        if let Some((activity_kind, title)) = activity {
+                            let id = message
+                                .pointer("/params/item/id")
+                                .and_then(Value::as_str)
+                                .map(str::to_owned)
+                                .unwrap_or_else(|| format!("activity:{activity_kind}"));
+                            let _ = progress
+                                .send(RuntimeEvent::Activity(RuntimeActivity {
+                                    id,
+                                    kind: activity_kind.into(),
+                                    title: title.into(),
+                                    phase: "completed".into(),
+                                }))
+                                .await;
+                        }
+                    }
                     if message.pointer("/params/item/type").and_then(Value::as_str)
                         == Some("agentMessage")
                     {
@@ -1289,8 +1354,24 @@ done
         assert_eq!(
             events,
             vec![
-                RuntimeEvent::Status("Connecting to Codex".into()),
-                RuntimeEvent::Status("Running a command".into()),
+                RuntimeEvent::Activity(RuntimeActivity {
+                    id: "runtime-connect".into(),
+                    kind: "connection".into(),
+                    title: "Connecting to Codex".into(),
+                    phase: "running".into()
+                }),
+                RuntimeEvent::Activity(RuntimeActivity {
+                    id: "runtime-connect".into(),
+                    kind: "connection".into(),
+                    title: "Connected to Codex".into(),
+                    phase: "completed".into()
+                }),
+                RuntimeEvent::Activity(RuntimeActivity {
+                    id: "activity:command".into(),
+                    kind: "command".into(),
+                    title: "Running a command".into(),
+                    phase: "running".into()
+                }),
                 RuntimeEvent::TextDelta("Streamed ".into()),
                 RuntimeEvent::TextDelta("reply".into()),
             ]

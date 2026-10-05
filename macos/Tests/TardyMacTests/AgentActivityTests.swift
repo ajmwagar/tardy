@@ -8,6 +8,18 @@ import Testing
     #expect(activity.showsProgress)
 }
 
+@Test func structuredActivityUsesStableKindInsteadOfParsingItsTitle() {
+    let activity = ConversationActivity(
+        id: "change-1",
+        kind: "file_change",
+        title: "Updating the macOS message renderer",
+        phase: "completed"
+    )
+    let presentation = AgentActivityPresentation.make(activity: activity)
+    #expect(presentation.symbol == "doc.badge.gearshape.fill")
+    #expect(!presentation.showsProgress)
+}
+
 @Test func agentActivityPresentsWritingAndFinalizingWithoutTransportTerms() {
     let writing = AgentActivityPresentation.make(status: "writing", detail: "")
     #expect(writing.title == "Writing a response")

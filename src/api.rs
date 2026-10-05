@@ -1999,6 +1999,8 @@ pub(crate) struct SetConversationDraft {
     status: String,
     #[serde(default)]
     detail: String,
+    #[serde(default)]
+    activities: Vec<crate::social::ConversationDraftActivity>,
 }
 
 async fn set_social_conversation_draft(
@@ -2015,6 +2017,7 @@ async fn set_social_conversation_draft(
                 &body.body,
                 &body.status,
                 &body.detail,
+                &body.activities,
             )
             .await?,
     ))

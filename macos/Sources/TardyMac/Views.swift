@@ -446,6 +446,9 @@ private struct DraftMessageRow: View {
                     RichMarkdownView(source: draft.body)
                         .textSelection(.enabled)
                 }
+                if model.showsAgentThinking, !draft.activityItems.isEmpty {
+                    AgentActivityTimeline(activities: draft.activityItems)
+                }
             }
             .padding(.horizontal, 12).padding(.vertical, 9)
             .background(Brand.raised, in: RoundedRectangle(cornerRadius: 14))
@@ -457,6 +460,47 @@ private struct DraftMessageRow: View {
             }
             Spacer(minLength: 90)
         }
+    }
+}
+
+private struct AgentActivityTimeline: View {
+    let activities: [ConversationActivity]
+    @State private var expanded = true
+
+    private var completedCount: Int {
+        activities.count(where: { $0.phase == "completed" })
+    }
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $expanded) {
+            VStack(alignment: .leading, spacing: 7) {
+                ForEach(activities) { activity in
+                    let presentation = AgentActivityPresentation.make(activity: activity)
+                    HStack(spacing: 8) {
+                        Image(systemName: presentation.symbol)
+                            .frame(width: 14)
+                            .foregroundStyle(activity.phase == "failed" ? .red : Brand.yellow)
+                        Text(presentation.title)
+                            .lineLimit(2)
+                            .textSelection(.enabled)
+                        Spacer(minLength: 8)
+                        if presentation.showsProgress {
+                            ProgressView().controlSize(.mini)
+                        } else {
+                            Image(systemName: activity.phase == "failed" ? "xmark.circle.fill" : "checkmark.circle.fill")
+                                .foregroundStyle(activity.phase == "failed" ? .red : .green)
+                        }
+                    }
+                    .font(.caption)
+                }
+            }
+            .padding(.top, 7)
+        } label: {
+            Text("Activity · \(completedCount)/\(activities.count)")
+                .font(.caption2.bold())
+                .foregroundStyle(Brand.muted)
+        }
+        .disclosureGroupStyle(.automatic)
     }
 }
 

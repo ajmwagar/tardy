@@ -27,6 +27,26 @@ struct AgentActivityPresentation: Equatable, Sendable {
         }
     }
 
+    static func make(activity: ConversationActivity) -> Self {
+        .init(
+            title: activity.title,
+            symbol: symbol(forKind: activity.kind),
+            showsProgress: activity.phase == "running"
+        )
+    }
+
+    private static func symbol(forKind kind: String) -> String {
+        switch kind {
+        case "connection": "bolt.horizontal.fill"
+        case "command": "terminal.fill"
+        case "file_change": "doc.badge.gearshape.fill"
+        case "subagent": "person.2.fill"
+        case "web_search": "magnifyingglass"
+        case "tool": "hammer.fill"
+        default: "sparkles"
+        }
+    }
+
     private static func symbol(for label: String) -> String {
         let label = label.lowercased()
         if label.contains("connect") { return "bolt.horizontal.fill" }

@@ -105,7 +105,7 @@ import Testing
 
 @Test func conversationSSEParserDecodesAgentDrafts() throws {
     var parser = ConversationSSEParser()
-    let json = #"[{"conversation_id":"650ffada-b502-4565-86cb-b3331e25bb4e","sender_profile_id":"8ca1e470-bad0-4fec-a0da-7fc1945fbd5b","body":"Partial **Markdown**","status":"writing","detail":"","updated_at":"2026-10-04T22:15:00Z"}]"#
+    let json = #"[{"conversation_id":"650ffada-b502-4565-86cb-b3331e25bb4e","sender_profile_id":"8ca1e470-bad0-4fec-a0da-7fc1945fbd5b","body":"Partial **Markdown**","status":"writing","detail":"","activities":[{"id":"cmd-1","kind":"command","title":"Running tests","phase":"running"}],"updated_at":"2026-10-04T22:15:00Z"}]"#
     #expect(try parser.consume(line: "event: drafts") == nil)
     #expect(try parser.consume(line: "data: \(json)") == nil)
     let event = try parser.consume(line: "")
@@ -116,6 +116,19 @@ import Testing
     #expect(drafts.count == 1)
     #expect(drafts[0].body == "Partial **Markdown**")
     #expect(drafts[0].status == "writing")
+    #expect(drafts[0].activityItems == [ConversationActivity(id: "cmd-1", kind: "command", title: "Running tests", phase: "running")])
+}
+
+@Test func conversationSSEParserAcceptsDraftWithoutStructuredActivities() throws {
+    var parser = ConversationSSEParser()
+    let json = #"[{"conversation_id":"650ffada-b502-4565-86cb-b3331e25bb4e","sender_profile_id":"8ca1e470-bad0-4fec-a0da-7fc1945fbd5b","body":"Older server","status":"writing","detail":"","updated_at":"2026-10-04T22:15:00Z"}]"#
+    _ = try parser.consume(line: "event: drafts")
+    _ = try parser.consume(line: "data: \(json)")
+    guard case let .drafts(drafts) = try parser.consume(line: "") else {
+        Issue.record("expected a drafts event")
+        return
+    }
+    #expect(drafts[0].activityItems.isEmpty)
 }
 
 @Test func markdownTablesBecomeStructuredBlocks() {
