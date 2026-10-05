@@ -227,6 +227,9 @@ private struct ConversationRow: View {
 private struct ChatView: View {
     @Environment(AppModel.self) private var model
     @State private var isAtBottom = true
+    @AppStorage("chatExpanded") private var expanded = false
+    @State private var showsAttachments = false
+    @State private var jumpTarget: UUID?
     private let bottomID = "chat-latest"
 
     var body: some View {
@@ -234,17 +237,27 @@ private struct ChatView: View {
         if let conversation = model.selectedConversation {
             VStack(spacing: 0) {
                 ChatHeader(conversation: conversation)
+                HStack {
+                    Picker("Reply presentation", selection: $expanded) {
+                        Text("Chat").tag(false)
+                        Text("Expanded").tag(true)
+                    }.pickerStyle(.segmented).frame(width: 180)
+                    Spacer()
+                    Button { showsAttachments = true } label: {
+                        Label("Media & files", systemImage: "photo.on.rectangle")
+                    }
+                }.padding(.horizontal, 20).padding(.vertical, 8)
                 Divider()
                 ScrollViewReader { proxy in
                     ZStack(alignment: .bottomTrailing) {
                         ScrollView {
                             LazyVStack(spacing: 12) {
                                 ForEach(model.messages) { message in
-                                    MessageRow(message: message)
+                                    MessageRow(message: message, expanded: expanded)
                                         .id(message.id)
                                 }
                                 ForEach(model.conversationDrafts) { draft in
-                                    DraftMessageRow(draft: draft)
+                                    DraftMessageRow(draft: draft, expanded: expanded)
                                 }
                                 if model.conversationDrafts.isEmpty,
                                    model.showsAgentThinking,
@@ -300,11 +313,21 @@ private struct ChatView: View {
                         isAtBottom = true
                         Task { @MainActor in proxy.scrollTo(bottomID, anchor: .bottom) }
                     }
+                    .onChange(of: jumpTarget) { _, target in
+                        if let target { proxy.scrollTo(target, anchor: .center) }
+                    }
                 }
                 Divider()
                 ComposerView()
             }
             .background(Brand.background)
+            .sheet(isPresented: $showsAttachments) {
+                ConversationAttachmentsView(messages: model.messages) { id in
+                    showsAttachments = false
+                    jumpTarget = nil
+                    Task { @MainActor in jumpTarget = id }
+                }
+            }
         } else {
             ContentUnavailableView("Choose a conversation", systemImage: "bubble.left.and.bubble.right", description: Text("DMs, groups, and agent work threads stay together."))
         }
@@ -410,6 +433,7 @@ private struct AgentThinkingRow: View {
 private struct DraftMessageRow: View {
     @Environment(AppModel.self) private var model
     let draft: ConversationDraft
+    var expanded = true
 
     private var activity: AgentActivityPresentation {
         .make(status: draft.status, detail: draft.detail)
@@ -443,7 +467,7 @@ private struct DraftMessageRow: View {
                         .font(.caption)
                         .foregroundStyle(Brand.muted)
                 } else {
-                    RichMarkdownView(source: draft.body)
+                    ChatReplyView(source: draft.body, expanded: expanded)
                         .textSelection(.enabled)
                 }
                 if model.showsAgentThinking, !draft.activityItems.isEmpty {
@@ -507,6 +531,7 @@ private struct AgentActivityTimeline: View {
 private struct MessageRow: View {
     @Environment(AppModel.self) private var model
     let message: Message
+    var expanded = true
     private var mine: Bool { message.senderProfileId == model.account?.id }
 
     var body: some View {
@@ -529,7 +554,7 @@ private struct MessageRow: View {
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     if !message.body.isEmpty {
-                        RichMarkdownView(source: message.body)
+                        ChatReplyView(source: message.body, expanded: expanded)
                     }
                     ForEach(message.media) { media in MessageAttachmentView(media: media) }
                 }

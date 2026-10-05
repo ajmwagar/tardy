@@ -12,6 +12,8 @@ import { LinkPreview } from '@/components/link-preview';
 import { ReactionChips, ReactionPicker, type ReactionAnchor } from '@/components/reactions';
 import { ThreadAvatar } from '@/components/thread-avatar';
 import { MessageAttachment } from '@/components/message-attachment';
+import { ConversationAttachments } from '@/components/conversation-attachments';
+import { conversationAttachments } from '@/messages/attachment-index';
 import { applyReaction, nextReaction, reactionOf, type ReactionKind } from '@/reactions/reactions';
 import { lastSequence, LIVE_FULL_EVERY, mergeMessages, nextCheckMs, quickCheckCursor } from '@/messages/live';
 import { acceptCommand, commandSuggestions } from '@/messages/commands';
@@ -91,14 +93,20 @@ function SharedPostCard({ message }: { message: Message }) {
 const isUrl = (text: string) => /^https?:\/\/\S+$/.test(text.trim());
 
 function MessageText({ text, mine }: { text: string; mine: boolean }) {
+  const [expanded, setExpanded] = useState(false);
   return (
-    <Text style={mine ? styles.textMine : styles.textTheirs}>
+    <View>
+    <Text style={mine ? styles.textMine : styles.textTheirs} numberOfLines={expanded || text.length <= 480 ? undefined : 10}>
       {messageSpans(text).map((span, index) => (
         <Text key={index} style={span.kind === 'code' ? (mine ? styles.codeMine : styles.codeTheirs) : undefined}>
           {span.text}
         </Text>
       ))}
     </Text>
+    {text.length > 480 ? <Pressable onPress={() => setExpanded(!expanded)} accessibilityRole="button" accessibilityLabel={expanded ? 'Show less' : 'Read full reply'}>
+      <Text style={[mine ? styles.textMine : styles.textTheirs, { fontWeight: '700', marginTop: 8 }]}>{expanded ? 'Show less' : 'Read full reply'}</Text>
+    </Pressable> : null}
+    </View>
   );
 }
 
@@ -258,6 +266,16 @@ export default function ThreadScreen() {
   const meId = useStore((s) => s.accounts.get('me')?.id);
   const [thread, setThread] = useState<ThreadRef | null>(null);
   const [rows, setRows] = useState<Row[] | null>(null);
+  const [showsAttachments, setShowsAttachments] = useState(false);
+  const listRef = useRef<FlatList<Row>>(null);
+  const jumpIndex = useRef<number | null>(null);
+  const jumpTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const jumpAttempts = useRef(0);
+  useEffect(() => () => {
+    if (jumpTimer.current) clearTimeout(jumpTimer.current);
+    jumpIndex.current = null;
+  }, [threadId]);
+  const attachments = useMemo(() => conversationAttachments(rows ?? []), [rows]);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [typingIds, setTypingIds] = useState<string[]>([]);
@@ -504,7 +522,10 @@ export default function ThreadScreen() {
     <View style={styles.screen}>
       <Stack.Screen
         options={{
-          headerRight: () => <IconButton icon="person.crop.circle.badge.plus" size={22} label="Add an agent" onPress={addAgent} />,
+          headerRight: () => <View style={{ flexDirection: 'row', gap: 12 }}>
+            <IconButton icon="photo" size={22} label="Media and files" onPress={() => setShowsAttachments(true)} />
+            <IconButton icon="person.crop.circle.badge.plus" size={22} label="Add an agent" onPress={addAgent} />
+          </View>,
           headerTitle: () =>
             thread && groupLabel !== null ? (
               <View style={styles.titleRow} accessibilityRole="header" accessibilityLabel={`Group: ${groupLabel}`}>
@@ -534,6 +555,15 @@ export default function ThreadScreen() {
             ),
         }}
       />
+      {showsAttachments ? <ConversationAttachments items={attachments} onClose={() => setShowsAttachments(false)} onShowMessage={(id) => {
+        setShowsAttachments(false);
+        const index = data.findIndex((row) => row.id === id);
+        if (index >= 0) {
+          jumpIndex.current = index;
+          jumpAttempts.current = 0;
+          listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.5 });
+        }
+      }} /> : null}
       {error && !rows ? (
         <ErrorState message="This conversation wandered off." detail={error} onRetry={sync} />
       ) : !rows ? (
@@ -550,7 +580,26 @@ export default function ThreadScreen() {
             }}
           />
           <FlatList
+            ref={listRef}
             data={data}
+            onScrollToIndexFailed={({ index, averageItemLength }) => {
+              listRef.current?.scrollToOffset({ offset: averageItemLength * index, animated: false });
+              if (jumpTimer.current) clearTimeout(jumpTimer.current);
+              if (jumpAttempts.current++ < 3) {
+                jumpTimer.current = setTimeout(() => {
+                  listRef.current?.scrollToIndex({ index, animated: false, viewPosition: 0.5 });
+                }, 250);
+              } else {
+                Alert.alert('Message nearby', 'Scroll a little to find the original attachment.');
+              }
+            }}
+            onContentSizeChange={() => {
+              const index = jumpIndex.current;
+              if (index !== null) {
+                jumpIndex.current = null;
+                listRef.current?.scrollToIndex({ index, animated: false, viewPosition: 0.5 });
+              }
+            }}
             inverted
             keyExtractor={rowKey}
             renderItem={renderItem}
