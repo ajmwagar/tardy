@@ -535,7 +535,35 @@ private struct TypingRow: View {
 
 private struct ComposerView: View {
     @Environment(AppModel.self) private var model
-    @State private var selectedMention = 0
+    @State private var selectedSuggestion = 0
+
+    private struct SlashCommand: Identifiable {
+        let name: String
+        let summary: String
+        var id: String { name }
+    }
+
+    private enum Suggestion: Identifiable {
+        case mention(Account)
+        case command(SlashCommand)
+
+        var id: String {
+            switch self {
+            case let .mention(account): "mention:\(account.id)"
+            case let .command(command): "command:\(command.name)"
+            }
+        }
+    }
+
+    private static let commands = [
+        SlashCommand(name: "/thinking", summary: "Toggle live agent work status"),
+        SlashCommand(name: "/status", summary: "Show this agent session’s state"),
+        SlashCommand(name: "/stop", summary: "Stop and pause current agent work"),
+        SlashCommand(name: "/resume", summary: "Resume queued work in this chat"),
+        SlashCommand(name: "/reset-session", summary: "Start a fresh agent session"),
+        SlashCommand(name: "/new-worktree", summary: "Create isolated project work"),
+        SlashCommand(name: "/tardy", summary: "Publish the last result as a Tardy"),
+    ]
 
     private var mentionToken: (range: Range<String.Index>, query: String)? {
         guard let at = model.composer.lastIndex(of: "@") else { return nil }
@@ -562,23 +590,51 @@ private struct ComposerView: View {
         }.prefix(6).map { $0 }
     }
 
-    private func acceptMention(_ account: Account? = nil) {
+    private var commandCandidates: [SlashCommand] {
+        let text = model.composer.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard text.hasPrefix("/"), !text.dropFirst().contains(where: \Character.isWhitespace) else { return [] }
+        return Self.commands.filter { text == "/" || $0.name.hasPrefix(text.lowercased()) }
+    }
+
+    private var suggestions: [Suggestion] {
+        if !mentionCandidates.isEmpty { return mentionCandidates.map(Suggestion.mention) }
+        return commandCandidates.map(Suggestion.command)
+    }
+
+    private func acceptMention(_ account: Account) {
         guard let token = mentionToken else { return }
-        let candidates = mentionCandidates
-        guard let account = account ?? candidates[safe: min(selectedMention, candidates.count - 1)] else { return }
         model.composer.replaceSubrange(token.range, with: "@\(account.handle) ")
-        selectedMention = 0
+        selectedSuggestion = 0
         model.composerChanged()
+    }
+
+    private func acceptCommand(_ command: SlashCommand) {
+        model.composer = "\(command.name) "
+        selectedSuggestion = 0
+        model.composerChanged()
+    }
+
+    private func acceptSuggestion(_ suggestion: Suggestion? = nil) {
+        guard let suggestion = suggestion ?? suggestions[safe: min(selectedSuggestion, suggestions.count - 1)] else { return }
+        switch suggestion {
+        case let .mention(account): acceptMention(account)
+        case let .command(command): acceptCommand(command)
+        }
     }
 
     var body: some View {
         @Bindable var model = model
         VStack(alignment: .leading, spacing: 6) {
-            if !mentionCandidates.isEmpty {
-                VStack(spacing: 0) {
-                    ForEach(Array(mentionCandidates.enumerated()), id: \.element.id) { index, account in
-                        Button { acceptMention(account) } label: {
-                            HStack(spacing: 9) {
+            if !suggestions.isEmpty {
+                AutocompletePalette(
+                    items: suggestions,
+                    selection: $selectedSuggestion,
+                    onSelect: acceptSuggestion
+                ) { suggestion in
+                    HStack(spacing: 9) {
+                        switch suggestion {
+                        case let .mention(account):
+                            Group {
                                 Avatar(account: account, size: 28)
                                 VStack(alignment: .leading, spacing: 1) {
                                     Text(account.displayName).font(.subheadline.weight(.semibold))
@@ -590,17 +646,19 @@ private struct ComposerView: View {
                                         .font(.caption2.bold()).foregroundStyle(Brand.yellow)
                                 }
                             }
-                            .padding(.horizontal, 10).padding(.vertical, 7)
-                            .background(index == selectedMention ? Brand.raised : Color.clear)
-                            .contentShape(Rectangle())
+                        case let .command(command):
+                            Group {
+                                Image(systemName: "terminal.fill")
+                                    .frame(width: 24).foregroundStyle(Brand.yellow)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(command.name).font(.system(.subheadline, design: .monospaced).bold())
+                                    Text(command.summary).font(.caption).foregroundStyle(Brand.muted)
+                                }
+                                Spacer()
+                            }
                         }
-                        .buttonStyle(.plain)
                     }
                 }
-                .padding(5)
-                .background(Brand.panel, in: RoundedRectangle(cornerRadius: 12))
-                .overlay { RoundedRectangle(cornerRadius: 12).stroke(Brand.yellow.opacity(0.25)) }
-                .frame(maxWidth: 420)
             }
             HStack(alignment: .bottom, spacing: 10) {
                 Button { } label: { Image(systemName: "plus.circle.fill").font(.title2) }
@@ -609,26 +667,26 @@ private struct ComposerView: View {
                     .textFieldStyle(.plain).lineLimit(1...6).padding(10)
                     .background(Brand.raised, in: RoundedRectangle(cornerRadius: 12))
                     .onChange(of: model.composer) { _, _ in
-                        selectedMention = 0
+                        selectedSuggestion = 0
                         model.composerChanged()
                     }
                     .onSubmit {
-                        if mentionCandidates.isEmpty { Task { await model.send() } }
-                        else { acceptMention() }
+                        if suggestions.isEmpty { Task { await model.send() } }
+                        else { acceptSuggestion() }
                     }
                     .onKeyPress(.tab) {
-                        guard !mentionCandidates.isEmpty else { return .ignored }
-                        acceptMention()
+                        guard !suggestions.isEmpty else { return .ignored }
+                        acceptSuggestion()
                         return .handled
                     }
                     .onKeyPress(.upArrow) {
-                        guard !mentionCandidates.isEmpty else { return .ignored }
-                        selectedMention = max(0, selectedMention - 1)
+                        guard !suggestions.isEmpty else { return .ignored }
+                        selectedSuggestion = max(0, selectedSuggestion - 1)
                         return .handled
                     }
                     .onKeyPress(.downArrow) {
-                        guard !mentionCandidates.isEmpty else { return .ignored }
-                        selectedMention = min(mentionCandidates.count - 1, selectedMention + 1)
+                        guard !suggestions.isEmpty else { return .ignored }
+                        selectedSuggestion = min(suggestions.count - 1, selectedSuggestion + 1)
                         return .handled
                     }
                 Button { Task { await model.send() } } label: {
@@ -639,6 +697,43 @@ private struct ComposerView: View {
             }
         }
         .padding(14).background(Brand.panel)
+    }
+}
+
+private struct AutocompletePalette<Item: Identifiable, Row: View>: View {
+    let items: [Item]
+    @Binding var selection: Int
+    let onSelect: (Item) -> Void
+    let row: (Item) -> Row
+
+    init(
+        items: [Item],
+        selection: Binding<Int>,
+        onSelect: @escaping (Item) -> Void,
+        @ViewBuilder row: @escaping (Item) -> Row
+    ) {
+        self.items = items
+        _selection = selection
+        self.onSelect = onSelect
+        self.row = row
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                Button { onSelect(item) } label: {
+                    row(item)
+                        .padding(.horizontal, 10).padding(.vertical, 7)
+                        .background(index == selection ? Brand.raised : Color.clear)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(5)
+        .background(Brand.panel, in: RoundedRectangle(cornerRadius: 12))
+        .overlay { RoundedRectangle(cornerRadius: 12).stroke(Brand.yellow.opacity(0.25)) }
+        .frame(maxWidth: 460)
     }
 }
 
