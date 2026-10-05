@@ -26,7 +26,17 @@ iconutil -c icns "$iconset" -o "$contents/Resources/Tardy.icns"
 rm -rf "$iconset"
 
 chmod 755 "$contents/MacOS/TardyMac"
-codesign --force --sign - --timestamp=none "$app_dir"
+signing_identity="${TARDY_CODESIGN_IDENTITY:-}"
+if [ -z "$signing_identity" ]; then
+    signing_identity="$(security find-identity -v -p codesigning 2>/dev/null | awk '/\"Developer ID Application:|\"Apple Development:/ { print $2; exit }')"
+fi
+if [ -n "$signing_identity" ]; then
+    codesign --force --sign "$signing_identity" --identifier dev.fpl.tardy.macos --timestamp=none "$app_dir"
+else
+    echo "warning: no stable code-signing identity found; Keychain may prompt after rebuilds" >&2
+    codesign --force --sign - --identifier dev.fpl.tardy.macos --timestamp=none "$app_dir"
+fi
+codesign --verify --strict "$app_dir"
 lsregister="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 if [ -x "$lsregister" ]; then
     "$lsregister" -f "$app_dir"
