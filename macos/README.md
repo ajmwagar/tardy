@@ -28,3 +28,17 @@ same `/v1/sessions` contract through native Sign in with Apple.
 
 The app icon is generated during bundling from `mobile/assets/images/icon.png`, keeping the iOS and
 macOS identity on the same source artwork.
+# Local and production accounts
+
+Use the toolbar's **Local / Production** menu to switch servers. Sessions are
+stored in separate Keychain entries scoped to the API URL. Switching clears the
+visible feed and chat state, but preserves each environment's saved login.
+Production never uses the development session endpoint.
+
+Production displays native Sign in with Apple and exchanges the credential through
+`POST /v1/session`. It requires an Apple-provisioned Mac build with Sign in with
+Apple enabled for `dev.fpl.tardy.macos`. The current API accepts the iOS audience
+`dev.fpl.tardy`; before Mac sign-in can succeed, provision/group the Mac App ID and
+configure the server to validate its audience while retaining the existing iOS
+audience. Group the Mac App ID with the existing Tardy primary App ID to preserve
+Apple identity continuity. Ad-hoc signing alone does not enable Apple sign-in.

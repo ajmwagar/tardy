@@ -3,13 +3,12 @@ import Security
 
 enum KeychainStore {
     private static let service = "dev.fpl.tardy.macos"
-    private static let account = "session-token"
 
-    static func loadToken() -> String? {
+    static func loadToken(environment: ServerEnvironment) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
+            kSecAttrAccount as String: environment.keychainAccount,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]
@@ -20,11 +19,11 @@ enum KeychainStore {
         return String(data: data, encoding: .utf8)
     }
 
-    static func saveToken(_ token: String) throws {
+    static func saveToken(_ token: String, environment: ServerEnvironment) throws {
         let selector: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
+            kSecAttrAccount as String: environment.keychainAccount,
         ]
         SecItemDelete(selector as CFDictionary)
         var item = selector
@@ -34,10 +33,10 @@ enum KeychainStore {
         guard status == errSecSuccess else { throw KeychainError.status(status) }
     }
 
-    static func clear() { SecItemDelete([
+    static func clear(environment: ServerEnvironment) { SecItemDelete([
         kSecClass as String: kSecClassGenericPassword,
         kSecAttrService as String: service,
-        kSecAttrAccount as String: account,
+        kSecAttrAccount as String: environment.keychainAccount,
     ] as CFDictionary) }
 }
 

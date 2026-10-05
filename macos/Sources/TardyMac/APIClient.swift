@@ -36,6 +36,10 @@ actor TardyAPI {
         try await request("/v1/session")
     }
 
+    func appleSession(_ credential: AppleSessionRequest) async throws -> SessionEnvelope {
+        try await request("/v1/session", method: "POST", body: credential, authenticated: false)
+    }
+
     func conversations() async throws -> [Conversation] {
         try await request("/v1/social/conversations")
     }

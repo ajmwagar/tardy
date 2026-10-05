@@ -43,15 +43,17 @@ final class AppModel {
     var conversationStreamState: ConversationStreamState = .disconnected
     var thinkingStatusText: String?
 
-    let api: TardyAPI
+    var api: TardyAPI
+    var serverEnvironment: ServerEnvironment
     private var messageTask: Task<Void, Never>?
     private var postDetailsTask: Task<Void, Never>?
     private var profileTask: Task<Void, Never>?
     private var typingTask: Task<Void, Never>?
 
     init() {
-        let configured = ProcessInfo.processInfo.environment["TARDY_API_URL"] ?? "http://127.0.0.1:3300"
-        api = TardyAPI(baseURL: URL(string: configured)!)
+        let selected = ServerEnvironment(rawValue: UserDefaults.standard.string(forKey: "serverEnvironment") ?? "local") ?? .local
+        serverEnvironment = selected
+        api = TardyAPI(baseURL: selected.baseURL)
     }
 
     var selectedConversation: Conversation? {
@@ -71,28 +73,30 @@ final class AppModel {
     }
 
     func start() async {
-        if ProcessInfo.processInfo.environment["TARDY_DEV_AUTO_SIGN_IN"] == "1" {
+        if serverEnvironment == .local && ProcessInfo.processInfo.environment["TARDY_DEV_AUTO_SIGN_IN"] == "1" {
             await developmentSignIn(email: ProcessInfo.processInfo.environment["TARDY_DEV_EMAIL"])
             return
         }
-        if let token = KeychainStore.loadToken() {
+        if let token = KeychainStore.loadToken(environment: serverEnvironment) {
             await api.authenticate(token: token, profileId: nil)
             do {
                 let session = try await api.resumeSession()
                 try await adopt(session)
                 return
             } catch {
-                KeychainStore.clear()
+                if case APIError.http(401, _) = error { KeychainStore.clear(environment: serverEnvironment) }
+                show(error)
             }
         }
         phase = .signedOut
     }
 
     func developmentSignIn(email: String?) async {
+        guard serverEnvironment == .local else { return }
         phase = .loading
         do {
             let session = try await api.developmentSession(email: email)
-            try KeychainStore.saveToken(session.session.token)
+            try KeychainStore.saveToken(session.session.token, environment: serverEnvironment)
             try await adopt(session)
         } catch {
             show(error)
@@ -105,7 +109,7 @@ final class AppModel {
         postDetailsTask?.cancel()
         profileTask?.cancel()
         typingTask?.cancel()
-        KeychainStore.clear()
+        KeychainStore.clear(environment: serverEnvironment)
         Task { await api.authenticate(token: nil, profileId: nil) }
         account = nil
         conversations = []
@@ -114,6 +118,52 @@ final class AppModel {
         editingAgentInstallations = []
         messages = []
         phase = .signedOut
+    }
+
+    func switchServer(to selected: ServerEnvironment) async {
+        guard selected != serverEnvironment else { return }
+        messageTask?.cancel()
+        postDetailsTask?.cancel()
+        profileTask?.cancel()
+        typingTask?.cancel()
+        account = nil
+        accounts = [:]
+        conversations = []
+        ownedAgents = []
+        messages = []
+        reels = []
+        profilePosts = []
+        comments = []
+        selectedPostId = nil
+        selectedProfile = nil
+        selectedConversationId = nil
+        editingAgentSoul = nil
+        editingAgentInstallations = []
+        conversationDrafts = []
+        typingProfileIds = []
+        composer = ""
+        errorMessage = nil
+        serverEnvironment = selected
+        UserDefaults.standard.set(selected.rawValue, forKey: "serverEnvironment")
+        api = TardyAPI(baseURL: selected.baseURL)
+        phase = .loading
+        await start()
+    }
+
+    func appleSignIn(credential: AppleSessionRequest) async {
+        let environment = serverEnvironment
+        let client = api
+        phase = .loading
+        do {
+            let session = try await client.appleSession(credential)
+            guard environment == serverEnvironment else { return }
+            try KeychainStore.saveToken(session.session.token, environment: environment)
+            try await adopt(session)
+        } catch {
+            guard environment == serverEnvironment else { return }
+            show(error)
+            phase = .signedOut
+        }
     }
 
     func loadAgentSettings(_ agent: Account) async {

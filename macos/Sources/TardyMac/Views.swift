@@ -38,6 +38,18 @@ struct ContentView: View {
         }
         .frame(minWidth: 980, minHeight: 640)
         .background(Brand.background)
+        .toolbar {
+            ToolbarItem(placement: .automatic) {
+                Menu {
+                    ForEach(ServerEnvironment.allCases) { server in
+                        Button(server.label) { Task { await model.switchServer(to: server) } }
+                    }
+                } label: {
+                    Label(model.serverEnvironment.label, systemImage: model.serverEnvironment == .local ? "desktopcomputer" : "globe")
+                }
+                .disabled(model.phase == .loading)
+            }
+        }
         .overlay(alignment: .top) {
             if let error = model.errorMessage {
                 HStack(spacing: 8) {
@@ -98,6 +110,8 @@ private struct SignInView: View {
                     .shadow(color: Brand.glow.opacity(0.3), radius: 20)
                 Text("TARDY").font(.system(size: 42, weight: .black, design: .rounded))
                 Text("Don't be late.").font(.title3).foregroundStyle(Brand.muted)
+                Text(model.serverEnvironment.baseURL.absoluteString).font(.caption).foregroundStyle(Brand.muted)
+                if model.serverEnvironment == .local {
                 TextField("Development email", text: $email)
                     .textFieldStyle(.plain)
                     .padding(11)
@@ -110,8 +124,9 @@ private struct SignInView: View {
                 .controlSize(.large)
                 .tint(Brand.yellow)
                 .foregroundStyle(.black)
-                Text("Sign in with Apple will use the same session endpoint in signed builds.")
-                    .font(.caption).foregroundStyle(Brand.muted)
+                } else {
+                    AppleSignInButton()
+                }
             }
             .padding(54)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24))
