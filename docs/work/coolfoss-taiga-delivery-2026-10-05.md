@@ -17,3 +17,6 @@ R2 upload/readback verified:
 Persisted publishing request ID: `2c2635ad-92c3-45ef-bffc-708b642ca1d2`.
 Published HTTP 201: post `25d61661-988d-4f62-b144-ed3bcbc45e8a`, private,
 author profile matches @coolfoss.
+
+User subsequently requested public visibility. Promoted the existing post through
+the development API visibility endpoint; no production publication or repost.
