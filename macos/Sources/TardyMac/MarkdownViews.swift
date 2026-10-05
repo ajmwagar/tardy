@@ -3,6 +3,7 @@ import SwiftUI
 enum MarkdownBlock: Equatable {
     case prose(String)
     case table(headers: [String], rows: [[String]])
+    case code(language: String, source: String)
 }
 
 enum MarkdownBlocks {
@@ -19,6 +20,19 @@ enum MarkdownBlocks {
         }
 
         while index < lines.count {
+            let line = lines[index].trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("```") {
+                flushProse()
+                let language = String(line.dropFirst(3))
+                index += 1
+                var code: [String] = []
+                while index < lines.count && !lines[index].trimmingCharacters(in: .whitespaces).hasPrefix("```") {
+                    code.append(lines[index]); index += 1
+                }
+                if index < lines.count { index += 1 }
+                blocks.append(.code(language: language, source: code.joined(separator: "\n")))
+                continue
+            }
             if index + 1 < lines.count {
                 let headers = cells(in: lines[index])
                 let divider = cells(in: lines[index + 1])
@@ -88,6 +102,21 @@ struct RichMarkdownView: View {
                     Text(.init(text)).textSelection(.enabled)
                 case let .table(headers, rows):
                     MarkdownTable(headers: headers, rows: rows)
+                case let .code(language, source):
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text(language.isEmpty ? "Code" : language).font(.caption).foregroundStyle(Brand.muted)
+                            Spacer()
+                            Button {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(source, forType: .string)
+                            } label: { Label("Copy", systemImage: "doc.on.doc") }.buttonStyle(.plain).font(.caption)
+                        }
+                        ScrollView(.horizontal) {
+                            Text(source).font(.system(.body, design: .monospaced)).textSelection(.enabled)
+                                .fixedSize(horizontal: true, vertical: false)
+                        }
+                    }.padding(12).background(Brand.background, in: RoundedRectangle(cornerRadius: 8))
                 }
             }
         }

@@ -236,18 +236,10 @@ private struct ChatView: View {
         @Bindable var model = model
         if let conversation = model.selectedConversation {
             VStack(spacing: 0) {
-                ChatHeader(conversation: conversation)
-                HStack {
-                    Picker("Reply presentation", selection: $expanded) {
-                        Text("Chat").tag(false)
-                        Text("Expanded").tag(true)
-                    }.pickerStyle(.segmented).frame(width: 180)
-                    Spacer()
-                    Button { showsAttachments = true } label: {
-                        Label("Media & files", systemImage: "photo.on.rectangle")
-                    }
-                }.padding(.horizontal, 20).padding(.vertical, 8)
+                ChatHeader(conversation: conversation, expanded: $expanded, showsAttachments: $showsAttachments)
                 Divider()
+                HStack(spacing: 0) {
+                VStack(spacing: 0) {
                 ScrollViewReader { proxy in
                     ZStack(alignment: .bottomTrailing) {
                         ScrollView {
@@ -255,6 +247,10 @@ private struct ChatView: View {
                                 ForEach(model.messages) { message in
                                     MessageRow(message: message, expanded: expanded)
                                         .id(message.id)
+                                        .overlay {
+                                            RoundedRectangle(cornerRadius: 14)
+                                                .stroke(jumpTarget == message.id ? Brand.yellow.opacity(0.8) : .clear, lineWidth: 2)
+                                        }
                                 }
                                 ForEach(model.conversationDrafts) { draft in
                                     DraftMessageRow(draft: draft, expanded: expanded)
@@ -310,6 +306,7 @@ private struct ChatView: View {
                         proxy.scrollTo(bottomID, anchor: .bottom)
                     }
                     .onChange(of: model.selectedConversationId) { _, _ in
+                        jumpTarget = nil
                         isAtBottom = true
                         Task { @MainActor in proxy.scrollTo(bottomID, anchor: .bottom) }
                     }
@@ -319,15 +316,19 @@ private struct ChatView: View {
                 }
                 Divider()
                 ComposerView()
-            }
-            .background(Brand.background)
-            .sheet(isPresented: $showsAttachments) {
-                ConversationAttachmentsView(messages: model.messages) { id in
-                    showsAttachments = false
-                    jumpTarget = nil
-                    Task { @MainActor in jumpTarget = id }
+                }
+                if showsAttachments {
+                    Divider()
+                    ConversationAttachmentsView(messages: model.messages, close: { showsAttachments = false }) { id in
+                        jumpTarget = nil
+                        Task { @MainActor in jumpTarget = id }
+                    }
+                    .frame(width: 300)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                }
                 }
             }
+            .background(Brand.background)
         } else {
             ContentUnavailableView("Choose a conversation", systemImage: "bubble.left.and.bubble.right", description: Text("DMs, groups, and agent work threads stay together."))
         }
@@ -337,6 +338,8 @@ private struct ChatView: View {
 private struct ChatHeader: View {
     @Environment(AppModel.self) private var model
     let conversation: Conversation
+    @Binding var expanded: Bool
+    @Binding var showsAttachments: Bool
 
     private var agentPeer: Account? {
         conversation.agentPeer(accounts: model.accounts, viewer: model.account?.id)
@@ -356,16 +359,19 @@ private struct ChatHeader: View {
                     .font(.caption).foregroundStyle(Brand.muted)
             }
             Spacer()
-            Button { withAnimation(.snappy) { model.showsAppRail.toggle() } } label: {
-                Image(systemName: "rectangle.leadingthird.inset.filled")
-            }
-            .buttonStyle(.plain)
-            .help(model.showsAppRail ? "Hide app navigation" : "Show app navigation")
-            Button { withAnimation(.snappy) { model.showsInboxSidebar.toggle() } } label: {
-                Image(systemName: "sidebar.left")
-            }
-            .buttonStyle(.plain)
-            .help(model.showsInboxSidebar ? "Hide conversations" : "Show conversations")
+            Picker("Reply presentation", selection: $expanded) {
+                Text("Chat").tag(false)
+                Text("Expanded").tag(true)
+            }.pickerStyle(.segmented).labelsHidden().frame(width: 150)
+            Button {
+                withAnimation(.snappy) {
+                    showsAttachments.toggle()
+                    if showsAttachments { model.showsContextInspector = false }
+                }
+            } label: { Image(systemName: "photo.on.rectangle") }
+                .buttonStyle(.plain)
+                .foregroundStyle(showsAttachments ? Brand.yellow : Brand.muted)
+                .help("Browse media and files")
             Button {
                 model.showsAgentThinking.toggle()
                 model.thinkingStatusText = nil
@@ -375,11 +381,15 @@ private struct ChatHeader: View {
             }
             .buttonStyle(.plain)
             .help("Toggle agent work view (/thinking)")
-            Button { withAnimation(.snappy) { model.showsContextInspector.toggle() } } label: {
-                Image(systemName: "sidebar.right")
-            }
-            .buttonStyle(.plain)
-            .help(model.showsContextInspector ? "Hide context" : "Show context")
+            Menu {
+                Button(model.showsAppRail ? "Hide app navigation" : "Show app navigation") { model.showsAppRail.toggle() }
+                Button(model.showsInboxSidebar ? "Hide conversations" : "Show conversations") { model.showsInboxSidebar.toggle() }
+                Button(model.showsContextInspector ? "Hide context" : "Show context") {
+                    model.showsContextInspector.toggle()
+                    if model.showsContextInspector { showsAttachments = false }
+                }
+            } label: { Image(systemName: "ellipsis") }
+            .menuStyle(.borderlessButton).fixedSize().help("Conversation layout")
             if agentIsWorking {
                 HStack(spacing: 6) {
                     Circle().fill(.green).frame(width: 7, height: 7)
@@ -558,6 +568,7 @@ private struct MessageRow: View {
                     }
                     ForEach(message.media) { media in MessageAttachmentView(media: media) }
                 }
+                .frame(maxWidth: expanded ? 760 : 560, alignment: .leading)
                 .padding(.horizontal, 12).padding(.vertical, 9)
                 .background(mine ? Brand.yellow : Brand.raised, in: RoundedRectangle(cornerRadius: 14))
                 .foregroundStyle(mine ? .black : .white)
@@ -595,14 +606,25 @@ private struct MessageRow: View {
 
 private struct MessageAttachmentView: View {
     let media: MessageMedia
+    @State private var showsPreview = false
     var body: some View {
-        if media.type == "image", let url = media.remoteURL {
-            AsyncImage(url: url) { image in image.resizable().scaledToFit() } placeholder: { ProgressView() }
-                .frame(maxWidth: 360, maxHeight: 280).clipShape(RoundedRectangle(cornerRadius: 9))
-        } else if let url = media.remoteURL {
-            Link(destination: url) {
+        Button { showsPreview = true } label: {
+            if media.type == "image", let url = media.remoteURL {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image): image.resizable().scaledToFit()
+                    case .failure: Label("Photo unavailable", systemImage: "photo")
+                    default: ProgressView()
+                    }
+                }.frame(maxWidth: 360, maxHeight: 280).clipShape(RoundedRectangle(cornerRadius: 9))
+            } else {
                 Label(media.fileName ?? media.type.capitalized, systemImage: media.type == "video" ? "play.rectangle.fill" : media.type == "audio" ? "waveform" : "doc.fill")
             }
+        }
+        .buttonStyle(.plain)
+        .help("Preview attachment")
+        .popover(isPresented: $showsPreview) {
+            AttachmentPreview(media: media).padding(16).frame(width: 480)
         }
     }
 }
