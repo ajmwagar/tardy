@@ -4,6 +4,7 @@ pub mod apple_auth;
 pub mod audio;
 pub mod audio_policy;
 pub mod domain;
+pub mod fpl_bridge;
 pub mod ingest;
 pub mod mcp;
 pub mod mcp_bridges;

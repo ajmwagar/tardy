@@ -67,6 +67,7 @@ pub struct AppState {
     pub apple_auth: Option<Arc<AppleAuthenticator>>,
     pub web_billing: Option<Arc<PgWebBillingStore>>,
     pub mcp_bridges: Option<Arc<PgMcpBridgeStore>>,
+    pub fpl_bridge: Option<Arc<crate::fpl_bridge::FplBridgeRuntime>>,
 }
 
 pub struct AdsRuntime {
@@ -97,6 +98,7 @@ impl AppState {
             apple_auth: None,
             web_billing: None,
             mcp_bridges: None,
+            fpl_bridge: None,
         })
     }
 
@@ -121,6 +123,7 @@ impl AppState {
             apple_auth: None,
             web_billing: None,
             mcp_bridges: None,
+            fpl_bridge: None,
         })
     }
 
@@ -145,6 +148,7 @@ impl AppState {
             apple_auth: None,
             web_billing: None,
             mcp_bridges: None,
+            fpl_bridge: None,
         })
     }
 
@@ -195,6 +199,11 @@ impl AppState {
 
     pub fn with_mcp_bridges(mut self, value: PgMcpBridgeStore) -> Self {
         self.mcp_bridges = Some(Arc::new(value));
+        self
+    }
+
+    pub fn with_fpl_bridge(mut self, value: crate::fpl_bridge::FplBridgeRuntime) -> Self {
+        self.fpl_bridge = Some(Arc::new(value));
         self
     }
 
@@ -269,6 +278,20 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(
             "/v1/mcp-bridges",
             get(list_mcp_bridges).post(register_mcp_bridge),
+        )
+        .route(
+            "/v1/mcp-bridges/fpl/link",
+            get(fpl_link_status).post(start_fpl_link).delete(unlink_fpl),
+        )
+        .route("/v1/mcp-bridges/fpl/callback", get(complete_fpl_link))
+        .route("/v1/mcp-bridges/fpl/sync", post(sync_fpl_bridges))
+        .route(
+            "/v1/agents/{id}/mcp-bridges/{connection_id}/activation",
+            post(create_fpl_activation),
+        )
+        .route(
+            "/v1/internal/mcp-bridges/authorize",
+            post(authorize_fpl_activation),
         )
         .route(
             "/v1/mcp-bridges/{id}",
@@ -1016,6 +1039,133 @@ async fn list_mcp_bridges(
     Ok(Json(
         mcp_bridge_store(&state)?.list_connections(owner).await?,
     ))
+}
+
+fn fpl_bridge_runtime(state: &AppState) -> Result<&crate::fpl_bridge::FplBridgeRuntime, ApiError> {
+    state.fpl_bridge.as_deref().ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        message: "FPL connection is not configured".into(),
+    })
+}
+
+fn fpl_bridge_error(error: crate::fpl_bridge::FplBridgeError) -> ApiError {
+    use crate::fpl_bridge::FplBridgeError;
+    let status = match error {
+        FplBridgeError::Invalid => StatusCode::BAD_REQUEST,
+        FplBridgeError::Forbidden => StatusCode::FORBIDDEN,
+        _ => StatusCode::BAD_GATEWAY,
+    };
+    tracing::warn!(%error, "FPL bridge operation failed");
+    ApiError {
+        status,
+        message: error.to_string(),
+    }
+}
+
+async fn start_fpl_link(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<crate::fpl_bridge::FplLinkStart>, ApiError> {
+    let owner = authenticated_account(&state, &headers).await?;
+    Ok(Json(
+        fpl_bridge_runtime(&state)?
+            .start(owner)
+            .await
+            .map_err(fpl_bridge_error)?,
+    ))
+}
+
+async fn fpl_link_status(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<crate::fpl_bridge::FplLinkStatus>, ApiError> {
+    let owner = authenticated_account(&state, &headers).await?;
+    Ok(Json(
+        fpl_bridge_runtime(&state)?
+            .status(owner)
+            .await
+            .map_err(fpl_bridge_error)?,
+    ))
+}
+
+#[derive(Deserialize)]
+struct FplCallback {
+    state: String,
+    code: String,
+}
+async fn complete_fpl_link(
+    State(state): State<Arc<AppState>>,
+    Query(callback): Query<FplCallback>,
+) -> Result<impl IntoResponse, ApiError> {
+    fpl_bridge_runtime(&state)?
+        .complete(&callback.state, &callback.code)
+        .await
+        .map_err(fpl_bridge_error)?;
+    Ok((
+        [
+            (header::CACHE_CONTROL, "no-store"),
+            (header::REFERRER_POLICY, "no-referrer"),
+        ],
+        "FPL connected. You can return to Tardy.",
+    ))
+}
+
+async fn unlink_fpl(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    let owner = authenticated_account(&state, &headers).await?;
+    fpl_bridge_runtime(&state)?
+        .unlink(owner)
+        .await
+        .map_err(fpl_bridge_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn sync_fpl_bridges(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<McpBridgeConnection>>, ApiError> {
+    let owner = authenticated_account(&state, &headers).await?;
+    Ok(Json(
+        fpl_bridge_runtime(&state)?
+            .sync(owner)
+            .await
+            .map_err(fpl_bridge_error)?,
+    ))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct CreateFplActivation {
+    conversation_id: Uuid,
+}
+async fn create_fpl_activation(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((id, connection_id)): Path<(Uuid, Uuid)>,
+    Json(body): Json<CreateFplActivation>,
+) -> Result<impl IntoResponse, ApiError> {
+    if authenticated_actor(&state, &headers).await? != id {
+        return Err(ApiError::forbidden("activation belongs to another agent"));
+    }
+    let value = fpl_bridge_runtime(&state)?
+        .activation(id, connection_id, body.conversation_id)
+        .await
+        .map_err(fpl_bridge_error)?;
+    Ok(([(header::CACHE_CONTROL, "no-store")], Json(value)))
+}
+
+async fn authorize_fpl_activation(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    let token = bearer_token(&headers)?
+        .ok_or_else(|| ApiError::unauthorized("activation token required"))?;
+    fpl_bridge_runtime(&state)?
+        .authorize_token(token)
+        .await
+        .map_err(fpl_bridge_error)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn register_mcp_bridge(

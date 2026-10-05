@@ -32,7 +32,7 @@ Tardy persists only an opaque reference such as `binding://mcp/tardy/<subject>/<
 
 The current Tardy API stores bridge registrations and agent grants in `mcp_bridge_connections` and `mcp_bridge_agent_grants`. Registration is the callback/provisioner boundary after the bridge service has completed authentication; it is not a replacement OAuth implementation.
 
-This slice implements the registry only. References and capability names are owner-supplied metadata, not verified credentials or executable authorization. OAuth linking, broker verification, token exchange, tool discovery, and agent-host invocation are pending the FPL capability below. No registered reference may grant runtime access until the broker independently verifies its owner and scopes.
+Tardy now supports FPL OIDC linking, private-installation catalog import, and conversation-scoped activation exchange. Raw registrations remain metadata; runtime access additionally requires a verified FPL link, current ownership, a current agent grant, conversation membership, and independent installation authorization in FPL MCP.
 
 ## FPL capability to add
 
@@ -106,6 +106,26 @@ The bridge must independently classify tools and may require a stricter approval
 Only the owning human can manage a bridge or grant it to an agent they own. A connection must be healthy before a grant can be created. Database constraints reject raw HTTP endpoints in place of opaque bridge references.
 
 ## Manual runbook
+
+### Configure linking and activation
+
+Register an FPL Auth OIDC client with the exact redirect URI `https://api.tardy.news/v1/mcp-bridges/fpl/callback`. Configure these server-only runtime bindings:
+
+```text
+TARDY_FPL_OIDC_CLIENT_ID=<registered client ID>
+TARDY_FPL_OIDC_CLIENT_SECRET=<client secret>
+TARDY_FPL_OIDC_CALLBACK_URL=https://api.tardy.news/v1/mcp-bridges/fpl/callback
+TARDY_FPL_BRIDGE_SIGNING_SECRET=<at least 32 bytes of random secret>
+TARDY_FPL_BRIDGE_URL=https://mcp.fpl.dev
+```
+
+Configure the same signing secret as FPL MCP's `FPL_MCP_TARDY_TOKEN_SIGNING_SECRET`, with `FPL_MCP_TARDY_AUTHORIZE_URL=https://api.tardy.news/v1/internal/mcp-bridges/authorize`. The bridge checks that endpoint on every Tardy request. It denies access when the current link, ownership, conversation membership, grant, or permission policy no longer matches. Tokens expire after 60 seconds and contain no approval grants.
+
+Clients call `POST /v1/mcp-bridges/fpl/link` while signed into Tardy and open its authorization URL. The callback verifies single-use state, PKCE S256, JWT signature/issuer/audience/nonce, verified email, and matching userinfo subject. OAuth tokens are discarded after verification. The callback imports the managed bridge's private-installation catalog; `POST /v1/mcp-bridges/fpl/sync` refreshes it and revokes registrations missing from the authoritative result.
+
+An agent with an owner-granted installation calls `POST /v1/agents/{id}/mcp-bridges/{connection_id}/activation` using its Tardy credential and a `conversation_id`. The response contains an MCP URL and short-lived bearer token. Keep this response out of chat, logs, and persisted MCP configuration. `DELETE /v1/mcp-bridges/fpl/link` removes the link, pending authorization attempts, and FPL grants.
+
+This imports private MCP installations, including Composio. Native provider-catalog import, non-FPL user provisioning, human approval issuance, durable receipts, automatic agent-host MCP setup, and app connection UI remain outside this backend slice. Deployment still requires the registered OIDC client and managed secret bindings.
 
 Until the management plane is automated:
 
