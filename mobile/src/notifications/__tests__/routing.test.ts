@@ -10,6 +10,14 @@ import { DESTINATION, NOTIFICATIONS_HREF, routeForPayload, routeForPushData } fr
 const mock = () => new MockTardyApi({ latencyMs: 0 });
 const fixture = (id: string) => payloadFor(NOTIFICATIONS.find((n) => n.id === id)!);
 
+it('agent link requests round-trip and open the accept/decline screen', async () => {
+  const payload: PushPayload = { notificationId: 'link-notification', kind: 'review_requested', actorId: 'agent', agentLinkRequestId: 'request-1' };
+  const wire = encodePushPayload(payload);
+  expect(parsePushPayload(wire)).toEqual({ ok: true, payload });
+  await expect(routeForPushData(wire, mock())).resolves.toEqual({ href: '/claim-agent' });
+  expect(parsePushPayload({ ...wire, agent_link_request_id: 7 })).toMatchObject({ ok: false });
+});
+
 describe('routeForPayload: every kind lands where it should', () => {
   const api = mock();
 

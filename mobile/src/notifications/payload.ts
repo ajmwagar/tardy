@@ -19,6 +19,7 @@ export type PushPayload = {
   actorId: string;
   postId?: string;
   conversationId?: string;
+  agentLinkRequestId?: string;
 };
 
 export const PUSH_PAYLOAD_VERSION = 1;
@@ -30,6 +31,7 @@ export function payloadFor(n: Notification): PushPayload {
     actorId: n.actorId,
     ...(n.postId !== undefined && { postId: n.postId }),
     ...(n.conversationId !== undefined && { conversationId: n.conversationId }),
+    ...(n.agentLinkRequestId !== undefined && { agentLinkRequestId: n.agentLinkRequestId }),
   };
 }
 
@@ -41,6 +43,7 @@ export function encodePushPayload(p: PushPayload): Record<string, string | numbe
     actor_id: p.actorId,
     ...(p.postId !== undefined && { post_id: p.postId }),
     ...(p.conversationId !== undefined && { conversation_id: p.conversationId }),
+    ...(p.agentLinkRequestId !== undefined && { agent_link_request_id: p.agentLinkRequestId }),
   };
 }
 
@@ -59,6 +62,7 @@ export function parsePushPayload(data: unknown): ParsedPayload {
   if (!nonEmpty(d.actor_id)) return { ok: false, reason: 'push payload has no actor_id' };
   if (d.post_id !== undefined && !nonEmpty(d.post_id)) return { ok: false, reason: 'push payload has a malformed post_id' };
   if (d.conversation_id !== undefined && !nonEmpty(d.conversation_id)) return { ok: false, reason: 'push payload has a malformed conversation_id' };
+  if (d.agent_link_request_id !== undefined && (!nonEmpty(d.agent_link_request_id) || d.kind !== 'review_requested')) return { ok: false, reason: 'push payload has a malformed agent_link_request_id' };
   return {
     ok: true,
     payload: {
@@ -67,6 +71,7 @@ export function parsePushPayload(data: unknown): ParsedPayload {
       actorId: d.actor_id,
       ...(d.post_id !== undefined && { postId: d.post_id as string }),
       ...(d.conversation_id !== undefined && { conversationId: d.conversation_id as string }),
+      ...(d.agent_link_request_id !== undefined && { agentLinkRequestId: d.agent_link_request_id as string }),
     },
   };
 }

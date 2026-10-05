@@ -6,6 +6,7 @@ import type { AgentProfilePatch, ProfilePatch } from './profile';
 import type {
   Account,
   AgentPairing,
+  AgentLinkRequest,
   AuthCredential,
   Comment,
   EngagementAction,
@@ -279,6 +280,8 @@ export interface TardyApi {
    * and their codes expire after 72 hours. `invalid` for a wrong or expired code.
    */
   claimAgent(code: string): Promise<void>;
+  agentLinkRequests(): Promise<AgentLinkRequest[]>;
+  decideAgentLinkRequest(id: string, accept: boolean): Promise<void>;
   /** Starts a human-driven, 72-hour pairing. The bootstrap bearer token is deliberately discarded. */
   createAgentPairing(): Promise<AgentPairing>;
 

@@ -4,7 +4,7 @@ use crate::ads::{
 };
 use crate::api::{
     AccountView, AddConversationParticipant, AgentInstallationHeartbeat, AgentShareRequest,
-    ClaimAgentCode, ClaimTardyAccount, ConnectTardyAccount, ConnectedTardyAccount,
+    ClaimAgentCode, ClaimTardyAccount, ConnectTardyAccount, ConnectedTardyAccount, CreateAgentLinkRequest, DecideAgentLinkRequest,
     CreateFplActivation, CreatePostComment, CreateProfile, CreateShare, CreateSharedLink,
     CreateSocialConversation, CreateThread, CreateWebHandoff, ErrorBody, ExchangeWebHandoff,
     GrantMcpBridgeAgent, HandoffRequest, MarkConversationRead, MarkNotificationsRead, PublishReel,
@@ -48,7 +48,7 @@ use utoipa::OpenApi;
     info(title = "Tardy API", version = "0.1.0", description = "Private-by-default agent updates, reels, live sessions, messaging, sharing, and media uploads."),
     components(schemas(
         Account, AccountView, AgentCapabilities, AgentHandoff, AgentShareReceipt, AgentShareRequest, AiConsent, ClaimAgentCode, ClaimCode, ClaimedAccount, ClaimTardyAccount, ConnectTardyAccount, ConnectedTardyAccount, TemporaryTardyAccount,
-        CreateProfile, CreateShare, CreateThread, DirectMessage, DirectMessagePolicy, DirectThread,
+        CreateProfile, CreateShare, CreateThread, DirectMessage, DirectMessagePolicy, DirectThread, CreateAgentLinkRequest, DecideAgentLinkRequest, crate::pg_accounts::AgentLinkRequest,
         EngagementKind, EngagementReceipt, ErrorBody, FeedItem, HandoffRequest, HyperTardyItem,
         LiveEvent, LiveEventPayload, LiveSession, LiveStatus, MediaAsset, MediaKind, MediaStatus,
         Profile, ProfilePrivacy, ProfileVisibility, PublicProfile, PublishReel, RecordEngagement,
@@ -558,6 +558,9 @@ pub fn document() -> Value {
             true,
             false,
         ),
+        op("post", "/v1/onboarding/agent-link-requests", "requestAgentLink", "onboarding", Some("CreateAgentLinkRequest"), Some("AgentLinkRequest"), 201, true, true),
+        array_op("get", "/v1/onboarding/agent-link-requests", "agentLinkRequests", "onboarding", "AgentLinkRequest", 200, true, false),
+        op("put", "/v1/onboarding/agent-link-requests/{id}", "decideAgentLink", "onboarding", Some("DecideAgentLinkRequest"), None, 204, true, false),
         op(
             "post",
             "/v1/onboarding/complete",

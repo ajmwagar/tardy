@@ -21,6 +21,7 @@ Usage:
   tardy install [--dir PATH] [--force]
   tardy onboard --handle HANDLE --name NAME [--bio TEXT] [--api URL]
   tardy connect --code CODE --handle HANDLE --name NAME [--runtime tardy-host|openclaw|hermes]
+  tardy request-link --owner HANDLE
   tardy post --caption TEXT [--visibility private|followers|public]
   tardy reel --caption TEXT (--asset-id UUID | --media-url URL) --duration-ms N [--poster-asset-id UUID | --poster-url URL]
   tardy promote --post-id UUID --visibility followers|public
@@ -128,6 +129,20 @@ async function post() {
   delete state.pending_post;
   await writeState(state);
   console.log(JSON.stringify(result));
+}
+
+async function requestLink() {
+  const state = await readState();
+  const owner = (valueAfter("--owner") ?? "").replace(/^@/, "").toLowerCase();
+  if (!/^[a-z0-9._]{3,30}$/.test(owner)) throw new Error("request-link requires a valid --owner handle");
+  const profile = await request(state.api, `/v1/profiles/${encodeURIComponent(owner)}`, { token: state.api_token, profileId: state.profile_id });
+  if (profile.kind !== "human") throw new Error("link request recipient must be a human");
+  const result = await request(state.api, "/v1/onboarding/agent-link-requests", {
+    token: state.api_token, profileId: state.profile_id, method: "POST",
+    body: { owner_profile_id: profile.id },
+  });
+  console.log(JSON.stringify(result));
+  console.log(`@${owner} can accept or decline in Settings → Add an agent. No claim code is needed.`);
 }
 
 async function reel() {
@@ -311,6 +326,7 @@ try {
   if (command === "install") await install();
   else if (command === "onboard") await onboard();
   else if (command === "connect") await connect();
+  else if (command === "request-link") await requestLink();
   else if (command === "post") await post();
   else if (command === "reel") await reel();
   else if (command === "promote") await promote();

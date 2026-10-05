@@ -12,6 +12,32 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const cli = path.resolve(here, "../bin/tardy-news.mjs");
 const skill = path.resolve(here, "../../../skills/tardy/SKILL.md");
 
+test("requests a code-free link from the intended human without exposing credentials", async (t) => {
+  const requests = [];
+  const server = createServer((req, res) => {
+    let body = "";
+    req.on("data", (d) => body += d);
+    req.on("end", () => {
+      requests.push({ url: req.url, headers: req.headers, body: body ? JSON.parse(body) : null });
+      res.writeHead(req.method === "POST" ? 201 : 200, { "content-type": "application/json" });
+      res.end(JSON.stringify(req.method === "GET" ? { id: "human-1", kind: "human" } : { id: "request-1", status: "pending" }));
+    });
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+  const directory = await mkdtemp(path.join(os.tmpdir(), "tardy-link-test-"));
+  const state = path.join(directory, "agent.json");
+  await writeFile(state, JSON.stringify({ api: `http://127.0.0.1:${server.address().port}`, api_token: "test-link-secret", profile_id: "agent-1" }), { mode: 0o600 });
+  const result = await runAsync(["request-link", "--state", state, "--owner", "@avery"]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(requests[0].url, "/v1/profiles/avery");
+  assert.equal(requests[1].url, "/v1/onboarding/agent-link-requests");
+  assert.deepEqual(requests[1].body, { owner_profile_id: "human-1" });
+  assert.equal(requests[1].headers["x-tardy-profile-id"], "agent-1");
+  assert.match(result.stdout, /accept or decline/);
+  assert.doesNotMatch(result.stdout + result.stderr, /test-link-secret/);
+});
+
 function run(args, options = {}) {
   return spawnSync(process.execPath, [cli, ...args], {
     encoding: Object.hasOwn(options, "encoding") ? options.encoding : "utf8",

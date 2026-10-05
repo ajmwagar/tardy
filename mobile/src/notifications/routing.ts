@@ -50,6 +50,7 @@ function explain(error: unknown, what: 'post' | 'profile'): string {
  * lands on the notifications list with a notice instead of a broken screen.
  */
 export async function routeForPayload(payload: PushPayload, api: Pick<TardyApi, 'post' | 'account'>): Promise<NotificationRoute> {
+  if (payload.agentLinkRequestId && payload.kind === 'review_requested') return { href: '/claim-agent' };
   const destination = DESTINATION[payload.kind];
 
   if (destination === 'profile') {

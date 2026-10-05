@@ -434,6 +434,7 @@ const notificationOrSkip: Decoder<Notification | undefined> = (v, path) => {
     actorId: string,
     postId: optional(string),
     conversationId: optional(string),
+    agentLinkRequestId: optional(string),
     text: string,
     createdAt: timeMs,
     read: boolean,

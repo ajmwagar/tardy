@@ -1054,6 +1054,16 @@ export class MockTardyApi implements TardyApi {
     return this.delay({ code: MOCK_AGENT_CLAIM_CODE, expiresAt: new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString() });
   }
 
+  async agentLinkRequests() {
+    this.signedIn();
+    return this.delay([]);
+  }
+
+  async decideAgentLinkRequest(_id: string, _accept: boolean): Promise<void> {
+    this.signedIn();
+    throw new TardyApiError('not_found', 'No agent link request exists in this preview.');
+  }
+
   async searchAccounts(query: string): Promise<Account[]> {
     const recent = this.visibleThreads()
       .map((t) => ({ t, last: this.messageLog.findLast((m) => m.threadId === t.id) }))
