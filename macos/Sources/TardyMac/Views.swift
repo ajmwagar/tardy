@@ -246,7 +246,8 @@ private struct ChatView: View {
                                 ForEach(model.conversationDrafts) { draft in
                                     DraftMessageRow(draft: draft)
                                 }
-                                if model.showsAgentThinking,
+                                if model.conversationDrafts.isEmpty,
+                                   model.showsAgentThinking,
                                    let agent = conversation.agentPeer(accounts: model.accounts, viewer: model.account?.id) {
                                     AgentThinkingRow(
                                         agent: agent,
@@ -258,7 +259,9 @@ private struct ChatView: View {
                                         .font(.caption)
                                         .foregroundStyle(Brand.muted)
                                 }
-                                if !model.typingProfileIds.isEmpty { TypingRow(ids: model.typingProfileIds) }
+                                let draftingIds = Set(model.conversationDrafts.map(\.senderProfileId))
+                                let typingOnlyIds = model.typingProfileIds.filter { !draftingIds.contains($0) }
+                                if !typingOnlyIds.isEmpty { TypingRow(ids: typingOnlyIds) }
                                 Color.clear
                                     .frame(height: 1)
                                     .id(bottomID)
@@ -288,6 +291,10 @@ private struct ChatView: View {
                         if oldCount == 0 || isAtBottom {
                             proxy.scrollTo(bottomID, anchor: .bottom)
                         }
+                    }
+                    .onChange(of: model.conversationDrafts) { _, _ in
+                        guard isAtBottom else { return }
+                        proxy.scrollTo(bottomID, anchor: .bottom)
                     }
                     .onChange(of: model.selectedConversationId) { _, _ in
                         isAtBottom = true
@@ -404,6 +411,10 @@ private struct DraftMessageRow: View {
     @Environment(AppModel.self) private var model
     let draft: ConversationDraft
 
+    private var activity: AgentActivityPresentation {
+        .make(status: draft.status, detail: draft.detail)
+    }
+
     var body: some View {
         HStack(alignment: .bottom, spacing: 9) {
             Button { model.openProfile(draft.senderProfileId) } label: {
@@ -418,19 +429,32 @@ private struct DraftMessageRow: View {
                             .font(.caption.bold())
                     }
                     .buttonStyle(.plain)
-                    Text(draft.detail.isEmpty ? (draft.status == "tool" ? "working" : "streaming") : draft.detail)
+                    Image(systemName: activity.symbol)
+                        .font(.caption2.bold())
+                    Text(activity.title)
                         .font(.caption2.bold())
                         .foregroundStyle(Brand.yellow)
+                    if activity.showsProgress {
+                        ProgressView().controlSize(.mini)
+                    }
                 }
                 if draft.body.isEmpty {
-                    ProgressView().controlSize(.small)
+                    Text("Live agent activity will appear here.")
+                        .font(.caption)
+                        .foregroundStyle(Brand.muted)
                 } else {
                     RichMarkdownView(source: draft.body)
+                        .textSelection(.enabled)
                 }
             }
             .padding(.horizontal, 12).padding(.vertical, 9)
             .background(Brand.raised, in: RoundedRectangle(cornerRadius: 14))
-            .overlay { RoundedRectangle(cornerRadius: 14).stroke(Brand.yellow.opacity(0.3)) }
+            .overlay(alignment: .leading) {
+                Capsule()
+                    .fill(Brand.yellow)
+                    .frame(width: 3)
+                    .padding(.vertical, 9)
+            }
             Spacer(minLength: 90)
         }
     }
