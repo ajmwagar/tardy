@@ -519,24 +519,115 @@ private struct TypingRow: View {
 
 private struct ComposerView: View {
     @Environment(AppModel.self) private var model
+    @State private var selectedMention = 0
+
+    private var mentionToken: (range: Range<String.Index>, query: String)? {
+        guard let at = model.composer.lastIndex(of: "@") else { return nil }
+        if at != model.composer.startIndex {
+            let before = model.composer[model.composer.index(before: at)]
+            guard before.isWhitespace else { return nil }
+        }
+        let after = model.composer.index(after: at)
+        let suffix = model.composer[after...]
+        guard !suffix.contains(where: \Character.isWhitespace) else { return nil }
+        return (at..<model.composer.endIndex, String(suffix).lowercased())
+    }
+
+    private var mentionCandidates: [Account] {
+        guard let token = mentionToken else { return [] }
+        let participantIDs = model.selectedConversation?.participants ?? []
+        let preferred = participantIDs.compactMap { model.accounts[$0] } + model.ownedAgents
+        var seen = Set<UUID>()
+        return preferred.filter { account in
+            guard account.id != model.account?.id, seen.insert(account.id).inserted else { return false }
+            return token.query.isEmpty
+                || account.handle.lowercased().hasPrefix(token.query)
+                || account.displayName.lowercased().contains(token.query)
+        }.prefix(6).map { $0 }
+    }
+
+    private func acceptMention(_ account: Account? = nil) {
+        guard let token = mentionToken else { return }
+        let candidates = mentionCandidates
+        guard let account = account ?? candidates[safe: min(selectedMention, candidates.count - 1)] else { return }
+        model.composer.replaceSubrange(token.range, with: "@\(account.handle) ")
+        selectedMention = 0
+        model.composerChanged()
+    }
+
     var body: some View {
         @Bindable var model = model
-        HStack(alignment: .bottom, spacing: 10) {
-            Button { } label: { Image(systemName: "plus.circle.fill").font(.title2) }
-                .buttonStyle(.plain).foregroundStyle(Brand.yellow).help("Attach a file")
-            TextField("Message…  Use @ to summon a Tardy", text: $model.composer, axis: .vertical)
-                .textFieldStyle(.plain).lineLimit(1...6).padding(10)
-                .background(Brand.raised, in: RoundedRectangle(cornerRadius: 12))
-                .onChange(of: model.composer) { _, _ in model.composerChanged() }
-                .onSubmit { Task { await model.send() } }
-            Button { Task { await model.send() } } label: {
-                Image(systemName: "arrow.up.circle.fill").font(.system(size: 27))
+        VStack(alignment: .leading, spacing: 6) {
+            if !mentionCandidates.isEmpty {
+                VStack(spacing: 0) {
+                    ForEach(Array(mentionCandidates.enumerated()), id: \.element.id) { index, account in
+                        Button { acceptMention(account) } label: {
+                            HStack(spacing: 9) {
+                                Avatar(account: account, size: 28)
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(account.displayName).font(.subheadline.weight(.semibold))
+                                    Text("@\(account.handle)").font(.caption).foregroundStyle(Brand.muted)
+                                }
+                                Spacer()
+                                if account.kind == .agent {
+                                    Label("Tardy", systemImage: "sparkles")
+                                        .font(.caption2.bold()).foregroundStyle(Brand.yellow)
+                                }
+                            }
+                            .padding(.horizontal, 10).padding(.vertical, 7)
+                            .background(index == selectedMention ? Brand.raised : Color.clear)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(5)
+                .background(Brand.panel, in: RoundedRectangle(cornerRadius: 12))
+                .overlay { RoundedRectangle(cornerRadius: 12).stroke(Brand.yellow.opacity(0.25)) }
+                .frame(maxWidth: 420)
             }
-            .buttonStyle(.plain).foregroundStyle(Brand.yellow)
-            .disabled(model.composer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isSending)
+            HStack(alignment: .bottom, spacing: 10) {
+                Button { } label: { Image(systemName: "plus.circle.fill").font(.title2) }
+                    .buttonStyle(.plain).foregroundStyle(Brand.yellow).help("Attach a file")
+                TextField("Message…  Use @ to summon a Tardy", text: $model.composer, axis: .vertical)
+                    .textFieldStyle(.plain).lineLimit(1...6).padding(10)
+                    .background(Brand.raised, in: RoundedRectangle(cornerRadius: 12))
+                    .onChange(of: model.composer) { _, _ in
+                        selectedMention = 0
+                        model.composerChanged()
+                    }
+                    .onSubmit {
+                        if mentionCandidates.isEmpty { Task { await model.send() } }
+                        else { acceptMention() }
+                    }
+                    .onKeyPress(.tab) {
+                        guard !mentionCandidates.isEmpty else { return .ignored }
+                        acceptMention()
+                        return .handled
+                    }
+                    .onKeyPress(.upArrow) {
+                        guard !mentionCandidates.isEmpty else { return .ignored }
+                        selectedMention = max(0, selectedMention - 1)
+                        return .handled
+                    }
+                    .onKeyPress(.downArrow) {
+                        guard !mentionCandidates.isEmpty else { return .ignored }
+                        selectedMention = min(mentionCandidates.count - 1, selectedMention + 1)
+                        return .handled
+                    }
+                Button { Task { await model.send() } } label: {
+                    Image(systemName: "arrow.up.circle.fill").font(.system(size: 27))
+                }
+                .buttonStyle(.plain).foregroundStyle(Brand.yellow)
+                .disabled(model.composer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isSending)
+            }
         }
         .padding(14).background(Brand.panel)
     }
+}
+
+private extension Collection {
+    subscript(safe index: Index) -> Element? { indices.contains(index) ? self[index] : nil }
 }
 
 private struct ContextInspector: View {
