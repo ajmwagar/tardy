@@ -739,6 +739,7 @@ async fn get_app_post(
     let viewer = Some(authenticated_actor(&state, &headers).await?);
     let mut post = social_store(&state)?.app_post(viewer, id).await?;
     localize_posts(&state, std::slice::from_mut(&mut post));
+    resolve_post_assets(&state, std::slice::from_mut(&mut post)).await?;
     Ok(Json(post))
 }
 
@@ -1671,6 +1672,121 @@ fn localize_posts(state: &AppState, posts: &mut [AppFeedPost]) {
     }
 }
 
+/// Only invoked after the social store has checked post visibility. Resolve
+/// author-owned assets at read time rather than persisting temporary capabilities.
+async fn resolve_post_assets(state: &AppState, posts: &mut [AppFeedPost]) -> Result<(), ApiError> {
+    for post in posts {
+        for item in &mut post.media {
+            for (id_field, url_field) in [("asset_id", "url"), ("poster_asset_id", "poster_url")] {
+                if item.get(id_field).is_none_or(serde_json::Value::is_null) {
+                    if let Some(url) = item.get(url_field).and_then(serde_json::Value::as_str) {
+                        if let Some(id) = state.media.legacy_url_asset(post.author_id, url).await? {
+                            item[id_field] = serde_json::json!(id);
+                        }
+                    }
+                }
+                if let Some(value) = item.get(id_field).and_then(serde_json::Value::as_str) {
+                    let id = Uuid::parse_str(value)
+                        .map_err(|_| ApiError::internal("invalid persisted media asset"))?;
+                    item[url_field] =
+                        serde_json::Value::String(post_asset_url(state, post.author_id, id).await?);
+                }
+            }
+            if item["type"] == "video"
+                && item
+                    .get("poster_asset_id")
+                    .is_none_or(serde_json::Value::is_null)
+            {
+                // Older videos without a separate poster use the freshly issued video
+                // URL, never the internal identity placeholder.
+                if item
+                    .get("poster_url")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|url| url.starts_with("tardy-asset://"))
+                {
+                    item["poster_url"] = item["url"].clone();
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn bind_post_assets(
+    state: &AppState,
+    actor: Uuid,
+    media: &mut [PostMedia],
+) -> Result<(), ApiError> {
+    for item in media {
+        if item.asset_id.is_none() {
+            item.asset_id = state.media.legacy_url_asset(actor, &item.url).await?;
+        }
+        if item.poster_asset_id.is_none() {
+            if let Some(url) = &item.poster_url {
+                item.poster_asset_id = state.media.legacy_url_asset(actor, url).await?;
+            }
+        }
+        if let Some(id) = item.asset_id {
+            let asset = state.media.ready_asset(actor, id).await?;
+            let prefix = match item.kind.as_str() {
+                "video" => "video/",
+                "image" => "image/",
+                _ => return Err(ApiError::bad_request("invalid post media kind")),
+            };
+            if !asset.content_type.starts_with(prefix) {
+                return Err(ApiError::bad_request("post asset type mismatch"));
+            }
+            item.url = format!("tardy-asset://{id}");
+        } else if is_temporary_media_url(&item.url) {
+            return Err(ApiError::bad_request(
+                "temporary media URLs require asset_id",
+            ));
+        }
+        if let Some(id) = item.poster_asset_id {
+            let asset = state.media.ready_asset(actor, id).await?;
+            if item.kind != "video" || !asset.content_type.starts_with("image/") {
+                return Err(ApiError::bad_request(
+                    "poster must be an image asset for a video",
+                ));
+            }
+            item.poster_url = Some(format!("tardy-asset://{id}"));
+        } else if item
+            .poster_url
+            .as_deref()
+            .is_some_and(is_temporary_media_url)
+        {
+            return Err(ApiError::bad_request(
+                "temporary poster URLs require poster_asset_id",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn is_temporary_media_url(value: &str) -> bool {
+    url::Url::parse(value).ok().is_some_and(|url| {
+        url.query_pairs()
+            .any(|(key, _)| key.eq_ignore_ascii_case("x-amz-signature"))
+    })
+}
+
+async fn resolve_tardy_post(state: &AppState, mut post: TardyPost) -> Result<TardyPost, ApiError> {
+    for item in &mut post.media {
+        if let Some(id) = item.asset_id {
+            item.url = post_asset_url(state, post.author_profile_id, id).await?;
+        }
+        if let Some(id) = item.poster_asset_id {
+            item.poster_url = Some(post_asset_url(state, post.author_profile_id, id).await?);
+        }
+    }
+    Ok(post)
+}
+
+async fn post_asset_url(state: &AppState, author: Uuid, id: Uuid) -> Result<String, ApiError> {
+    state.media.ready_asset(author, id).await?;
+    Ok(state.media.delivery_url(id).await?)
+}
+
 async fn create_feed_subscription(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -2590,22 +2706,23 @@ pub(crate) struct PublishSocialPost {
 async fn publish_social_post(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Json(body): Json<PublishSocialPost>,
+    Json(mut body): Json<PublishSocialPost>,
 ) -> Result<(StatusCode, Json<TardyPost>), ApiError> {
+    let actor = authenticated_actor(&state, &headers).await?;
+    bind_post_assets(&state, actor, &mut body.media).await?;
+    let post = social_store(&state)?
+        .publish_post_with_media(
+            actor,
+            body.client_request_id,
+            &body.caption,
+            body.shared_link_id,
+            body.visibility,
+            &body.media,
+        )
+        .await?;
     Ok((
         StatusCode::CREATED,
-        Json(
-            social_store(&state)?
-                .publish_post_with_media(
-                    authenticated_actor(&state, &headers).await?,
-                    body.client_request_id,
-                    &body.caption,
-                    body.shared_link_id,
-                    body.visibility,
-                    &body.media,
-                )
-                .await?,
-        ),
+        Json(resolve_tardy_post(&state, post).await?),
     ))
 }
 
@@ -2620,15 +2737,14 @@ async fn set_social_post_visibility(
     headers: HeaderMap,
     Json(body): Json<SetPostVisibility>,
 ) -> Result<Json<TardyPost>, ApiError> {
-    Ok(Json(
-        social_store(&state)?
-            .set_post_visibility(
-                authenticated_actor(&state, &headers).await?,
-                id,
-                body.visibility,
-            )
-            .await?,
-    ))
+    let post = social_store(&state)?
+        .set_post_visibility(
+            authenticated_actor(&state, &headers).await?,
+            id,
+            body.visibility,
+        )
+        .await?;
+    Ok(Json(resolve_tardy_post(&state, post).await?))
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -3001,6 +3117,7 @@ async fn run_search(
     }
     for result in &mut candidates {
         localize_posts(state, std::slice::from_mut(&mut result.post));
+        resolve_post_assets(state, std::slice::from_mut(&mut result.post)).await?;
     }
     Ok(Json(candidates))
 }
@@ -3102,6 +3219,7 @@ async fn feed(
     if let Some(social) = &state.social {
         let mut items = social.app_feed(viewer, query.limit as i64).await?;
         localize_posts(&state, &mut items);
+        resolve_post_assets(&state, &mut items).await?;
         return Ok(Json(serde_json::json!({"items":items,"next_cursor":null})).into_response());
     }
     let candidates = state.store.feed_candidates(viewer)?;
@@ -3140,6 +3258,7 @@ async fn reels_feed(
         .app_posts(viewer, None, query.limit as i64)
         .await?;
     localize_posts(&state, &mut items);
+    resolve_post_assets(&state, &mut items).await?;
     // Reels is a video-only surface. Home may truthfully mix photo and video posts,
     // but passing photos to the reel client produces an intentionally empty black canvas.
     items.retain(|post| {
@@ -3433,6 +3552,7 @@ async fn explore_feed(
         .app_posts(viewer, None, query.limit as i64)
         .await?;
     localize_posts(&state, &mut items);
+    resolve_post_assets(&state, &mut items).await?;
     Ok(Json(serde_json::json!({"items":items,"next_cursor":null})))
 }
 
@@ -3602,6 +3722,7 @@ async fn get_profile_posts(
         .app_posts(viewer, Some(id), query.limit as i64)
         .await?;
     localize_posts(&state, &mut items);
+    resolve_post_assets(&state, &mut items).await?;
     Ok(Json(serde_json::json!({"items":items,"next_cursor":null})))
 }
 
@@ -3858,12 +3979,18 @@ async fn complete_upload(
 ) -> Result<impl IntoResponse, ApiError> {
     let actor = authenticated_actor(&state, &headers).await?;
     let asset = state.media.complete(actor, id, now_ms()?).await?;
-    let url = state.media.delivery_url(asset.id).await?;
+    // Validation-pending originals are accepted, not an authorization failure.
+    // Never issue a playback capability before their ready transition.
+    let url = if asset.status == crate::media::MediaStatus::Ready {
+        Some(state.media.delivery_url(asset.id).await?)
+    } else {
+        None
+    };
     let mut view = serde_json::to_value(asset)
         .map_err(|error| ApiError::internal(format!("serialize completed upload: {error}")))?;
     view.as_object_mut()
         .ok_or_else(|| ApiError::internal("completed upload did not serialize as an object"))?
-        .insert("url".into(), serde_json::Value::String(url));
+        .insert("url".into(), serde_json::json!(url));
     Ok((StatusCode::ACCEPTED, Json(view)))
 }
 

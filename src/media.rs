@@ -358,7 +358,7 @@ impl R2ObjectStore {
         let response = request
             .send()
             .await
-            .map_err(|error| MediaError::ObjectStore(error.to_string()))?;
+            .map_err(|error| MediaError::ObjectStore(error.without_url().to_string()))?;
         if !response.status().is_success() {
             return Err(MediaError::ObjectStore(format!(
                 "HTTP {}",
@@ -408,7 +408,7 @@ impl ObjectStore for R2ObjectStore {
             .header("x-amz-checksum-mode", "ENABLED")
             .send()
             .await
-            .map_err(|error| MediaError::ObjectStore(error.to_string()))?;
+            .map_err(|error| MediaError::ObjectStore(error.without_url().to_string()))?;
         if !value.status().is_success() {
             return Err(MediaError::ObjectStore(format!("HTTP {}", value.status())));
         }
@@ -467,6 +467,12 @@ impl MediaService {
         let mut service = Self::from_env()?;
         service.pool = Some(pool);
         Ok(service)
+    }
+
+    pub fn with_pool(object_store: Option<Arc<dyn ObjectStore>>, pool: PgPool) -> Self {
+        let mut service = Self::new(object_store);
+        service.pool = Some(pool);
+        service
     }
 
     pub async fn authorize(
@@ -647,6 +653,40 @@ impl MediaService {
             return Err(MediaError::Forbidden);
         }
         Ok(asset)
+    }
+
+    /// Recover legacy R2 URL records using durable author-owned object metadata.
+    /// A URL, signature, or guessed UUID alone never establishes asset ownership.
+    pub async fn legacy_url_asset(
+        &self,
+        actor: Uuid,
+        value: &str,
+    ) -> Result<Option<Uuid>, MediaError> {
+        let Ok(url) = url::Url::parse(value) else {
+            return Ok(None);
+        };
+        if url.scheme() != "https"
+            || !url
+                .host_str()
+                .is_some_and(|host| host.ends_with(".r2.cloudflarestorage.com"))
+        {
+            return Ok(None);
+        }
+        let Some((_, tail)) = url.path().split_once("/quarantine/") else {
+            return Ok(None);
+        };
+        let key = format!("quarantine/{tail}");
+        let Some(pool) = &self.pool else {
+            return Ok(None);
+        };
+        sqlx::query_scalar(
+            "SELECT id FROM media_assets WHERE object_key=$1 AND profile_id=$2 AND status='ready'",
+        )
+        .bind(key)
+        .bind(actor)
+        .fetch_optional(pool)
+        .await
+        .map_err(db_media)
     }
 
     pub async fn delivery_url(&self, id: Uuid) -> Result<String, MediaError> {
@@ -873,6 +913,40 @@ mod tests {
             headers.get("content-type").map(String::as_str),
             Some("application/json")
         );
+    }
+
+    /// Explicit opt-in smoke test for a scoped R2 binding. Leaves one tiny object
+    /// under a unique diagnostics prefix; never prints credentials or signed URLs.
+    #[tokio::test]
+    #[ignore = "requires an authorized live R2 binding"]
+    async fn r2_live_roundtrip() {
+        let store = R2ObjectStore::from_env()
+            .unwrap()
+            .expect("R2 binding required");
+        let key = format!("diagnostics/tardy/{}.txt", Uuid::new_v4());
+        let bytes = b"Tardy scoped R2 roundtrip verification\n".to_vec();
+        store
+            .put_bytes(&key, "text/plain", bytes.clone())
+            .await
+            .unwrap();
+        let metadata = store.head(&key).await.unwrap();
+        assert_eq!(metadata.byte_length, bytes.len() as u64);
+        let url = store
+            .presign_get(&key, Duration::from_secs(60))
+            .await
+            .unwrap();
+        let response = store
+            .client
+            .get(url)
+            .send()
+            .await
+            .expect("R2 readback transport failed");
+        assert!(
+            response.status().is_success(),
+            "R2 GET HTTP {}",
+            response.status()
+        );
+        assert_eq!(response.bytes().await.unwrap().as_ref(), bytes.as_slice());
     }
 
     #[test]

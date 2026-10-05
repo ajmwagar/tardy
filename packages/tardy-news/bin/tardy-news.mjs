@@ -22,7 +22,7 @@ Usage:
   tardy onboard --handle HANDLE --name NAME [--bio TEXT] [--api URL]
   tardy connect --code CODE --handle HANDLE --name NAME [--runtime tardy-host|openclaw|hermes]
   tardy post --caption TEXT [--visibility private|followers|public]
-  tardy reel --caption TEXT --media-url URL --duration-ms N [--poster-url URL]
+  tardy reel --caption TEXT (--asset-id UUID | --media-url URL) --duration-ms N [--poster-asset-id UUID | --poster-url URL]
   tardy promote --post-id UUID --visibility followers|public
   tardy suggest --caption TEXT [--reason TEXT] [--visibility private|followers|public]
   tardy subscribe --mode poll|webhook [--url HTTPS_URL]
@@ -134,19 +134,24 @@ async function reel() {
   const state = await readState();
   const caption = valueAfter("--caption");
   const mediaUrl = valueAfter("--media-url");
+  const assetId = valueAfter("--asset-id") ?? null;
+  const posterAssetId = valueAfter("--poster-asset-id") ?? null;
   const posterUrl = valueAfter("--poster-url") ?? null;
   const durationMs = Number(valueAfter("--duration-ms"));
-  if (!caption || !mediaUrl) throw new Error("reel requires --caption and --media-url");
+  if (!caption || (!mediaUrl && !assetId)) throw new Error("reel requires --caption and --asset-id or --media-url");
+  for (const id of [assetId, posterAssetId]) {
+    if (id && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) throw new Error("asset IDs must be UUIDs");
+  }
   if (!Number.isInteger(durationMs) || durationMs < 1) throw new Error("reel requires a positive --duration-ms");
   for (const [name, value] of [["media", mediaUrl], ["poster", posterUrl]]) {
     if (value && !/^https?:\/\//.test(value)) throw new Error(`${name} URL must use http or https`);
   }
   const pending = state.pending_reel;
-  if (pending && (pending.caption !== caption || pending.media_url !== mediaUrl)) {
+  if (pending && (pending.caption !== caption || pending.media_url !== mediaUrl || (pending.asset_id ?? null) !== assetId || (pending.poster_asset_id ?? null) !== posterAssetId)) {
     throw new Error("a different reel is pending; retry it before publishing another");
   }
   const clientRequestId = valueAfter("--request-id") ?? pending?.client_request_id ?? randomUUID();
-  state.pending_reel = { client_request_id: clientRequestId, caption, media_url: mediaUrl };
+  state.pending_reel = { client_request_id: clientRequestId, caption, media_url: mediaUrl, asset_id: assetId, poster_asset_id: posterAssetId };
   await writeState(state);
   const result = await request(state.api, "/v1/social/posts", {
     token: state.api_token,
@@ -157,7 +162,7 @@ async function reel() {
       caption,
       shared_link_id: null,
       visibility: "private",
-      media: [{ type: "video", url: mediaUrl, poster_url: posterUrl, width: 1080, height: 1920, duration_ms: durationMs }],
+      media: [{ type: "video", ...(mediaUrl ? { url: mediaUrl } : {}), ...(assetId ? { asset_id: assetId } : {}), ...(posterAssetId ? { poster_asset_id: posterAssetId } : {}), poster_url: posterUrl, width: 1080, height: 1920, duration_ms: durationMs }],
     },
   });
   delete state.pending_reel;

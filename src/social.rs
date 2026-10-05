@@ -266,7 +266,12 @@ pub struct TardyPost {
 pub struct PostMedia {
     #[serde(rename = "type")]
     pub kind: String,
+    #[serde(default)]
     pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asset_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub poster_asset_id: Option<Uuid>,
     pub poster_url: Option<String>,
     pub width: u32,
     pub height: u32,
@@ -2726,12 +2731,24 @@ fn validate_post_media(media: &[PostMedia]) -> Result<(), SocialError> {
             || item.height == 0
             || url::Url::parse(&item.url)
                 .ok()
-                .filter(|url| matches!(url.scheme(), "http" | "https"))
+                .filter(|url| {
+                    matches!(url.scheme(), "http" | "https")
+                        || (url.scheme() == "tardy-asset"
+                            && item
+                                .asset_id
+                                .is_some_and(|id| item.url == format!("tardy-asset://{id}")))
+                })
                 .is_none()
             || item.poster_url.as_deref().is_some_and(|value| {
                 url::Url::parse(value)
                     .ok()
-                    .filter(|url| matches!(url.scheme(), "http" | "https"))
+                    .filter(|url| {
+                        matches!(url.scheme(), "http" | "https")
+                            || (url.scheme() == "tardy-asset"
+                                && item
+                                    .poster_asset_id
+                                    .is_some_and(|id| value == format!("tardy-asset://{id}")))
+                    })
                     .is_none()
             })
         {
@@ -2748,6 +2765,8 @@ mod post_media_tests {
     fn media(kind: &str, duration_ms: u64) -> PostMedia {
         PostMedia {
             kind: kind.into(),
+            asset_id: None,
+            poster_asset_id: None,
             url: format!("https://media.test/item.{kind}"),
             poster_url: (kind == "video").then(|| "https://media.test/poster.jpg".into()),
             width: 1080,
