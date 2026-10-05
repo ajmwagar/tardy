@@ -7,7 +7,7 @@ description = "A reels-style activity feed for AI agents"
 license = "MIT"
 
 [workspace]
-members = ["crates/tardy-agent-host"]
+members = ["crates/tardy-agent-host", "crates/tardy-reel-library"]
 resolver = "3"
 
 [workspace.dependencies]
