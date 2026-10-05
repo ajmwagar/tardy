@@ -173,8 +173,18 @@ pub struct ConversationDraft {
     pub body: String,
     pub status: String,
     pub detail: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub activities: Vec<ConversationDraftActivity>,
     #[schema(value_type = String, format = DateTime)]
     pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct ConversationDraftActivity {
+    pub id: String,
+    pub kind: String,
+    pub title: String,
+    pub phase: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -1387,7 +1397,7 @@ impl PgSocialStore {
             .execute(&mut *tx)
             .await?;
         let rows = sqlx::query(
-            "SELECT conversation_id,sender_profile_id,body,status,detail,updated_at
+            "SELECT conversation_id,sender_profile_id,body,status,detail,activities,updated_at
              FROM conversation_drafts WHERE conversation_id=$1
              ORDER BY updated_at,sender_profile_id",
         )
@@ -1403,6 +1413,8 @@ impl PgSocialStore {
                     body: row.try_get("body")?,
                     status: row.try_get("status")?,
                     detail: row.try_get("detail")?,
+                    activities: serde_json::from_value(row.try_get("activities")?)
+                        .map_err(|_| SocialError::Invalid("invalid stored draft activities"))?,
                     updated_at: row.try_get("updated_at")?,
                 })
             })
@@ -1416,9 +1428,17 @@ impl PgSocialStore {
         body: &str,
         status: &str,
         detail: &str,
+        activities: &[ConversationDraftActivity],
     ) -> Result<ConversationDraft, SocialError> {
         if body.len() > 20_000
             || detail.len() > 500
+            || activities.len() > 20
+            || activities.iter().any(|activity| {
+                activity.id.len() > 200
+                    || activity.kind.len() > 40
+                    || activity.title.len() > 500
+                    || !matches!(activity.phase.as_str(), "running" | "completed" | "failed")
+            })
             || !matches!(status, "writing" | "tool" | "finalizing")
         {
             return Err(SocialError::Invalid("invalid conversation draft"));
@@ -1436,17 +1456,19 @@ impl PgSocialStore {
         }
         let row = sqlx::query(
             "INSERT INTO conversation_drafts
-                (conversation_id,sender_profile_id,body,status,detail,expires_at)
-             VALUES ($1,$2,$3,$4,$5,now()+interval '5 minutes')
+                (conversation_id,sender_profile_id,body,status,detail,activities,expires_at)
+             VALUES ($1,$2,$3,$4,$5,$6,now()+interval '5 minutes')
              ON CONFLICT (conversation_id,sender_profile_id) DO UPDATE SET
-                body=excluded.body,status=excluded.status,detail=excluded.detail,updated_at=now(),expires_at=excluded.expires_at
-             RETURNING conversation_id,sender_profile_id,body,status,detail,updated_at",
+                body=excluded.body,status=excluded.status,detail=excluded.detail,activities=excluded.activities,
+                updated_at=now(),expires_at=excluded.expires_at
+             RETURNING conversation_id,sender_profile_id,body,status,detail,activities,updated_at",
         )
         .bind(conversation_id)
         .bind(actor)
         .bind(body)
         .bind(status)
         .bind(detail)
+        .bind(serde_json::to_value(activities).map_err(|_| SocialError::Invalid("invalid draft activities"))?)
         .fetch_one(&mut *tx)
         .await?;
         tx.commit().await?;
@@ -1456,6 +1478,8 @@ impl PgSocialStore {
             body: row.try_get("body")?,
             status: row.try_get("status")?,
             detail: row.try_get("detail")?,
+            activities: serde_json::from_value(row.try_get("activities")?)
+                .map_err(|_| SocialError::Invalid("invalid stored draft activities"))?,
             updated_at: row.try_get("updated_at")?,
         })
     }
