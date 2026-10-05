@@ -248,7 +248,8 @@ private struct ReelStage: View {
                     }
                     .buttonStyle(.plain)
                     .help(isMuted ? "Unmute" : "Mute")
-                    .opacity(isHovering || volumeFeedbackVisible ? 1 : 0.45)
+                    .opacity(isHovering || volumeFeedbackVisible ? 1 : 0)
+                    .animation(.easeOut(duration: 0.12), value: isHovering)
                 }.padding()
                 Spacer()
                 HStack(alignment: .bottom, spacing: 18) {
