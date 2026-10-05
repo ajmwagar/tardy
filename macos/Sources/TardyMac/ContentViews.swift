@@ -1,4 +1,5 @@
 import AVKit
+@preconcurrency import AppKit
 import SwiftUI
 
 struct AppShellView: View {
@@ -167,6 +168,7 @@ private struct ReelPager: View {
         .scrollTargetBehavior(.paging)
         .scrollPosition(id: $position)
         .background(.black)
+        .overlay { ReelScrollCapture { model.advancePost(by: $0) } }
         .focusable()
         .onAppear { position = model.selectedPostId }
         .onChange(of: model.selectedPostId) { _, id in
@@ -216,13 +218,16 @@ private struct ReelStage: View {
     let post: TardyPost
     let active: Bool
     @State private var player: AVPlayer?
-    @State private var showingCaption = false
+    @State private var isMuted = false
+    @State private var isHovering = false
+    @State private var volumeFeedbackVisible = false
+    @State private var volumeFeedbackTask: Task<Void, Never>?
 
     var body: some View {
         ZStack {
             Color.black
             if let player {
-                VideoPlayer(player: player).aspectRatio(9 / 16, contentMode: .fit).padding(18)
+                ReelPlayerView(player: player).aspectRatio(9 / 16, contentMode: .fit).padding(18)
             } else if let poster = post.primaryMedia?.posterURL {
                 AsyncImage(url: poster) { image in image.resizable().scaledToFit() } placeholder: { ProgressView() }
                     .padding(18)
@@ -235,24 +240,30 @@ private struct ReelStage: View {
                         }.buttonStyle(.plain)
                     }
                     Spacer()
+                    Button { toggleMuted() } label: {
+                        Image(systemName: isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                            .font(.system(size: 12, weight: .semibold))
+                            .frame(width: 28, height: 28)
+                            .background(.black.opacity(0.58), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(isMuted ? "Unmute" : "Mute")
+                    .opacity(isHovering || volumeFeedbackVisible ? 1 : 0.45)
                 }.padding()
                 Spacer()
                 HStack(alignment: .bottom, spacing: 18) {
-                    Button { showingCaption = true } label: {
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text(post.caption)
-                                .font(.callout)
-                                .lineLimit(3)
-                                .multilineTextAlignment(.leading)
-                            Label("Read full caption", systemImage: "text.alignleft")
-                                .font(.caption.bold())
-                                .foregroundStyle(Brand.yellow)
-                        }
-                        .padding(12)
-                        .frame(maxWidth: 430, alignment: .leading)
-                        .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 12))
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(post.caption)
+                            .font(.callout)
+                            .lineLimit(3)
+                            .multilineTextAlignment(.leading)
+                        Label("Full caption and comments in sidebar", systemImage: "sidebar.right")
+                            .font(.caption.bold())
+                            .foregroundStyle(Brand.yellow)
                     }
-                    .buttonStyle(.plain)
+                    .padding(12)
+                    .frame(maxWidth: 430, alignment: .leading)
+                    .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 12))
                     Spacer()
                     VStack(spacing: 15) {
                         ActionButton(icon: post.viewerHasLiked ? "heart.fill" : "heart", count: post.likeCount, active: post.viewerHasLiked) { Task { await model.toggleLike() } }
@@ -261,25 +272,155 @@ private struct ReelStage: View {
                     }
                 }.padding()
             }
+            if volumeFeedbackVisible {
+                Image(systemName: isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                    .padding(9)
+                    .background(.black.opacity(0.72), in: Capsule())
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
+            }
         }
+        .onHover { isHovering = $0 }
         .onAppear { if active { configurePlayer() } }
         .onChange(of: active) { _, isActive in
             if isActive { configurePlayer() } else { player?.pause(); player = nil }
         }
         .onDisappear { player?.pause(); player = nil }
-        .sheet(isPresented: $showingCaption) {
-            LongFormCaptionView(post: post)
-                .frame(minWidth: 560, idealWidth: 680, minHeight: 560, idealHeight: 760)
-        }
+        .onDisappear { volumeFeedbackTask?.cancel() }
     }
 
     private func configurePlayer() {
         player?.pause()
         guard post.primaryMedia?.type == "video", let url = post.primaryMedia?.remoteURL else { player = nil; return }
         let next = AVPlayer(url: url)
+        next.isMuted = isMuted
         player = next
         next.play()
     }
+
+    private func toggleMuted() {
+        isMuted.toggle()
+        player?.isMuted = isMuted
+        volumeFeedbackTask?.cancel()
+        withAnimation(.easeOut(duration: 0.12)) { volumeFeedbackVisible = true }
+        volumeFeedbackTask = Task {
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                withAnimation(.easeIn(duration: 0.2)) { volumeFeedbackVisible = false }
+            }
+        }
+    }
+}
+
+private struct ReelPlayerView: NSViewRepresentable {
+    let player: AVPlayer
+
+    func makeNSView(context: Context) -> ReelPlayerNSView {
+        let view = ReelPlayerNSView()
+        view.playerLayer.videoGravity = .resizeAspect
+        return view
+    }
+
+    func updateNSView(_ view: ReelPlayerNSView, context: Context) {
+        view.playerLayer.player = player
+    }
+}
+
+private final class ReelPlayerNSView: NSView {
+    let playerLayer = AVPlayerLayer()
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.addSublayer(playerLayer)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func layout() {
+        super.layout()
+        playerLayer.frame = bounds
+    }
+}
+
+private struct ReelScrollCapture: NSViewRepresentable {
+    let navigate: (Int) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(navigate: navigate) }
+
+    func makeNSView(context: Context) -> ReelScrollCaptureView {
+        let view = ReelScrollCaptureView()
+        context.coordinator.view = view
+        context.coordinator.startMonitoring()
+        return view
+    }
+
+    func updateNSView(_ view: ReelScrollCaptureView, context: Context) {
+        context.coordinator.navigate = navigate
+    }
+
+    static func dismantleNSView(_ view: ReelScrollCaptureView, coordinator: Coordinator) {
+        coordinator.stopMonitoring()
+    }
+
+    @MainActor final class Coordinator {
+        weak var view: ReelScrollCaptureView?
+        var navigate: (Int) -> Void
+        private var navigator = ReelScrollNavigator()
+        private var monitor: Any?
+
+        init(navigate: @escaping (Int) -> Void) { self.navigate = navigate }
+
+        func startMonitoring() {
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+                let windowNumber = event.windowNumber
+                let location = event.locationInWindow
+                let deltaY = event.scrollingDeltaY
+                let timestamp = event.timestamp
+                let gestureEnded = event.phase == .ended || event.momentumPhase == .ended
+                let consumed = MainActor.assumeIsolated { [weak self] in
+                    self?.handle(
+                        windowNumber: windowNumber,
+                        location: location,
+                        deltaY: deltaY,
+                        timestamp: timestamp,
+                        gestureEnded: gestureEnded
+                    ) ?? false
+                }
+                return consumed ? nil : event
+            }
+        }
+
+        private func handle(
+            windowNumber: Int,
+            location: NSPoint,
+            deltaY: Double,
+            timestamp: TimeInterval,
+            gestureEnded: Bool
+        ) -> Bool {
+            guard let view, view.window?.windowNumber == windowNumber else { return false }
+            let frameInWindow = view.convert(view.bounds, to: nil)
+            guard frameInWindow.contains(location) else { return false }
+
+            if gestureEnded {
+                navigator.reset()
+            } else if let direction = navigator.consume(deltaY: deltaY, timestamp: timestamp) {
+                navigate(direction)
+            }
+            return true
+        }
+
+        func stopMonitoring() {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            monitor = nil
+        }
+    }
+}
+
+private final class ReelScrollCaptureView: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
 private struct ActionButton: View {
@@ -302,7 +443,6 @@ private struct ActionButton: View {
 private struct PostInspector: View {
     @Environment(AppModel.self) private var model
     let post: TardyPost
-    @State private var showingCaption = false
 
     var body: some View {
         @Bindable var model = model
@@ -319,13 +459,6 @@ private struct PostInspector: View {
                         .textSelection(.enabled)
                         .font(.body)
                         .lineSpacing(4)
-                        .lineLimit(8)
-                    Button { showingCaption = true } label: {
-                        Label("Read full caption", systemImage: "arrow.up.left.and.arrow.down.right")
-                            .font(.callout.bold())
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Brand.yellow)
                     Divider()
                     HStack { Text("COMMENTS").font(.caption.bold()).foregroundStyle(Brand.yellow); Spacer(); Text("\(model.comments.count)").font(.caption).foregroundStyle(Brand.muted) }
                     if model.isLoadingComments {
@@ -345,48 +478,6 @@ private struct PostInspector: View {
                 Button { Task { await model.addComment() } } label: { Image(systemName: "arrow.up.circle.fill").font(.title2) }
                     .buttonStyle(.plain).foregroundStyle(Brand.yellow)
             }.padding(12)
-        }
-        .background(Brand.panel)
-        .sheet(isPresented: $showingCaption) {
-            LongFormCaptionView(post: post)
-                .frame(minWidth: 560, idealWidth: 680, minHeight: 560, idealHeight: 760)
-        }
-    }
-}
-
-private struct LongFormCaptionView: View {
-    @Environment(AppModel.self) private var model
-    @Environment(\.dismiss) private var dismiss
-    let post: TardyPost
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                if let author = model.accounts[post.authorId] {
-                    Avatar(account: author, size: 42)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(author.displayName).font(.headline)
-                        Text("@\(author.handle)").font(.caption).foregroundStyle(Brand.muted)
-                    }
-                } else {
-                    Text("Tardy").font(.headline)
-                }
-                Spacer()
-                Button("Done") { dismiss() }
-                    .keyboardShortcut(.cancelAction)
-            }
-            .padding(20)
-            Divider()
-            ScrollView {
-                Text(.init(post.caption))
-                    .font(.system(size: 17))
-                    .lineSpacing(7)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: 680, alignment: .leading)
-                    .padding(.horizontal, 28)
-                    .padding(.vertical, 26)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(Brand.panel)
     }
