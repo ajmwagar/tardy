@@ -30,27 +30,42 @@ fn no_problems_in_any_frame() {
     // Converting a frame without rasterizing it is fast, so every frame is checked.
     let media = TardyWorkReelsMedia::prepare().unwrap();
     for topic in ["umie", "unibus", "mycelium", "isochrone", "holodeck"] {
-        let video = TardyWorkReelsVideo::new(&media, topic);
-        let options = RenderOptions {
-            media: Some(&media),
-            ..Default::default()
-        };
-        let mut previewer = Previewer::new(&video, &options).unwrap();
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("../../reel-library/projects/{topic}.json"));
+        let project: tardy_reel_library::Project =
+            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        tardy_reel_library::validate(&project).unwrap();
+        for variant in &project.variants {
+            let plan = tardy_reel_library::Plan {
+                schema_version: 1,
+                project: topic.into(),
+                project_revision: project.revision,
+                seed: 0,
+                variant: variant.clone(),
+            };
+            let video = TardyWorkReelsVideo::new(&media, topic);
+            let video = video.with_plan(plan).unwrap();
+            let options = RenderOptions {
+                media: Some(&media),
+                ..Default::default()
+            };
+            let mut previewer = Previewer::new(&video, &options).unwrap();
 
-        let duration = previewer.timeline().duration_in_frames;
-        for frame in 0..duration {
-            let report = previewer.inspect(frame).unwrap();
-            let problems: Vec<_> = report
-                .diagnostics
-                .iter()
-                .filter(|d| d.severity >= fframes::diagnostics::Severity::Warning)
-                .map(|d| d.message.as_str())
-                .collect();
-            assert!(
-                problems.is_empty(),
-                "frame {frame} ({:.2}s): {problems:?}",
-                report.seconds
-            );
+            let duration = previewer.timeline().duration_in_frames;
+            for frame in 0..duration {
+                let report = previewer.inspect(frame).unwrap();
+                let problems: Vec<_> = report
+                    .diagnostics
+                    .iter()
+                    .filter(|d| d.severity >= fframes::diagnostics::Severity::Warning)
+                    .map(|d| d.message.as_str())
+                    .collect();
+                assert!(
+                    problems.is_empty(),
+                    "frame {frame} ({:.2}s): {problems:?}",
+                    report.seconds
+                );
+            }
         }
     }
 }

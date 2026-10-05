@@ -3305,12 +3305,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "tardy-reel-library"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "tardy-work-reels"
 version = "0.1.0"
 dependencies = [
  "fframes",
  "fframes_native_player",
  "fframes_skia_renderer",
+ "serde_json",
+ "tardy-reel-library",
 ]
 
 [[package]]

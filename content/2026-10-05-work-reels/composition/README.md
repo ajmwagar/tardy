@@ -1,5 +1,11 @@
 # FPL Work Notes
 
+Shared conceptual formats and project-owned presentation are now provided by
+`crates/tardy-reel-library`; see `../../reel-library/README.md` for the runbook.
+The CLI defaults to seeded library selection (`--format auto --seed 0`); use
+`--format legacy` to reproduce the original published layout. Existing published
+posts are immutable and were not changed by this integration.
+
 A 1080x1920 @ 30 fps video made with [fframes](https://github.com/dmtrKovalenko/fframes),
 rendered with the Skia (Metal) backend.
 

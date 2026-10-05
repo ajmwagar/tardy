@@ -74,3 +74,22 @@ by the existing source-backed composition; they are not yet an arbitrary-brief
 editor. No auto-generation, auto-posting or public promotion was introduced.
 Current outputs remain 20-second 1080×1920 reels. Broader footage, narration,
 duration and rights-aware asset catalogs are future library additions.
+
+## Verified first slice (2026-10-05)
+
+Library: four unit tests plus a CLI integration test cover deterministic selection,
+config ordering, project isolation, compatibility failure, contrast rejection,
+idempotent recording and lock contention. `cargo check` and tests pass.
+fframes integration: release check/build and three composition tests pass,
+including 18,000 frame inspections (five projects × six variants × 600 frames)
+and unchanged legacy snapshots. Existing upstream QTKit arm64 linker and block
+future-incompatibility warnings remain; no new render failure.
+
+Three UMIE contact sheets and frozen plans are saved in
+`../2026-10-05-work-reels/composition/preset-<format>-strip.png` and
+`preset-<format>-plan.json`. All three passed separate 600-frame CLI inspections
+and were visually reviewed. The pipeline preview rendered successfully as a
+20-second 1080×1920 H.264/AAC file in 10.5s; it remains a local unnormalized
+preview, not an uploaded or published post. No history usage was recorded.
+
+Tracked as Marble `tardy-reel-library`; local commits are not merge evidence.

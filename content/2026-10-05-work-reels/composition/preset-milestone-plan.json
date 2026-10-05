@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "project": "umie",
+  "project_revision": 1,
+  "seed": 42,
+  "variant": {
+    "id": "milestone-classic",
+    "format": "milestone",
+    "theme": {
+      "background": "#0A0A0D",
+      "foreground": "#FFFFFF",
+      "accent": "#FFC21A"
+    },
+    "entrance_ms": 500
+  }
+}
