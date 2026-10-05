@@ -1,7 +1,9 @@
+import AppKit
 import SwiftUI
 
 @main
 struct TardyMacApp: App {
+    @NSApplicationDelegateAdaptor(TardyAppDelegate.self) private var appDelegate
     @State private var model = AppModel()
 
     var body: some Scene {
@@ -10,6 +12,10 @@ struct TardyMacApp: App {
                 .environment(model)
                 .preferredColorScheme(.dark)
                 .task { await model.start() }
+                .onReceive(NotificationCenter.default.publisher(for: .tardySharedContent)) { note in
+                    guard let text = note.object as? String else { return }
+                    model.receiveSharedContent(text)
+                }
         }
         .defaultSize(width: 1260, height: 820)
         .windowStyle(.titleBar)

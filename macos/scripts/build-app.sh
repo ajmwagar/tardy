@@ -27,4 +27,8 @@ rm -rf "$iconset"
 
 chmod 755 "$contents/MacOS/TardyMac"
 codesign --force --sign - --timestamp=none "$app_dir"
+lsregister="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+if [ -x "$lsregister" ]; then
+    "$lsregister" -f "$app_dir"
+fi
 printf '%s\n' "$PWD/$app_dir"
