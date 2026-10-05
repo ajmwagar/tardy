@@ -397,6 +397,15 @@ final class AppModel {
         }
     }
 
+    func receiveSharedContent(_ text: String) {
+        destination = .messages
+        if selectedConversationId == nil { select(conversations.first?.id) }
+        let shared = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !shared.isEmpty else { return }
+        composer = composer.isEmpty ? shared : "\(composer)\n\(shared)"
+        composerChanged()
+    }
+
     func react(_ kind: Tapback?, to message: Message) async {
         guard let id = selectedConversationId else { return }
         do {
