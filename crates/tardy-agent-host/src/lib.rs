@@ -6,6 +6,7 @@ use serde_json::Value;
 use sha2::Sha256;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 #[cfg(test)]
@@ -902,6 +903,7 @@ impl CodexRunner {
         let mut child = command.spawn()?;
         let mut stdin = child.stdin.take().ok_or("Codex stdin unavailable")?;
         let stdout = child.stdout.take().ok_or("Codex stdout unavailable")?;
+        let mut lines = BufReader::new(stdout).lines();
         let mut stderr = child.stderr.take().ok_or("Codex stderr unavailable")?;
         let stderr_task = tokio::spawn(async move {
             let mut bytes = Vec::new();
@@ -919,6 +921,29 @@ impl CodexRunner {
             }),
         )
         .await?;
+        if let Some(progress) = &progress {
+            let _ = progress
+                .send(RuntimeEvent::Status("Connecting to Codex".into()))
+                .await;
+        }
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let line = lines
+                    .next_line()
+                    .await?
+                    .ok_or("Codex app-server ended during initialization")?;
+                let message: Value = serde_json::from_str(&line)
+                    .map_err(|error| format!("Codex app-server emitted invalid JSON: {error}"))?;
+                if message.get("id").and_then(Value::as_i64) == Some(0) {
+                    if let Some(error) = message.get("error") {
+                        return Err(format!("Codex initialization failed: {error}").into());
+                    }
+                    return Ok::<_, BoxError>(());
+                }
+            }
+        })
+        .await
+        .map_err(|_| "Codex app-server initialization timed out")??;
         write_app_server(
             &mut stdin,
             serde_json::json!({"method":"initialized","params":{}}),
@@ -944,7 +969,6 @@ impl CodexRunner {
         )
         .await?;
 
-        let mut lines = BufReader::new(stdout).lines();
         let mut active_thread = None;
         let mut streamed_reply = String::new();
         let mut authoritative_reply = None;
@@ -1222,6 +1246,9 @@ mod tests {
             r#"#!/bin/sh
 while IFS= read -r line; do
   case "$line" in
+    *'"id":0'*)
+      printf '%s\n' '{"id":0,"result":{"userAgent":"fake","codexHome":"/tmp","platformFamily":"unix","platformOs":"macos"}}'
+      ;;
     *'"id":1'*)
       printf '%s\n' '{"id":1,"result":{"thread":{"id":"thr_fake"}}}'
       ;;
@@ -1262,6 +1289,7 @@ done
         assert_eq!(
             events,
             vec![
+                RuntimeEvent::Status("Connecting to Codex".into()),
                 RuntimeEvent::Status("Running a command".into()),
                 RuntimeEvent::TextDelta("Streamed ".into()),
                 RuntimeEvent::TextDelta("reply".into()),
