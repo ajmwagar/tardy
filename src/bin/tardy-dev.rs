@@ -13,9 +13,28 @@ const MOBILE_ENV: &str = "mobile/.env.local";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    load_env(ROOT_ENV)?;
+    if Path::new(ROOT_ENV).exists() {
+        load_env(ROOT_ENV)?;
+    }
     let command = env::args().nth(1).unwrap_or_else(|| "doctor".into());
     match command.as_str() {
+        "api-r2" => api_r2().await,
+        "api-r2-child" => {
+            let database = env::var("TARDY_DEV_DATABASE_URL")
+                .map_err(|_| "api-r2-child requires the dev supervisor")?;
+            let binary = env::current_exe()?.with_file_name("tardy");
+            let status = Command::new(binary)
+                .env("DATABASE_URL", database)
+                .env_remove("TARDY_DEV_DATABASE_URL")
+                .kill_on_drop(true)
+                .status()
+                .await?;
+            if status.success() {
+                Ok(())
+            } else {
+                Err(format!("API exited with {status}").into())
+            }
+        }
         "doctor" => doctor().await,
         "expo" => {
             doctor().await?;
@@ -34,7 +53,50 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Err(format!("Expo exited with {status}").into())
             }
         }
-        _ => Err("usage: cargo run --bin tardy-dev -- [doctor|expo]".into()),
+        _ => Err("usage: cargo run --bin tardy-dev -- [doctor|expo|api-r2]".into()),
+    }
+}
+
+/// FPL owns issuing/revoking credentials; this local development supervisor
+/// only bounds process lifetime and reacquires through the public CLI contract.
+async fn api_r2() -> Result<(), Box<dyn std::error::Error>> {
+    let binding = env::var("TARDY_R2_BINDING")
+        .map_err(|_| "TARDY_R2_BINDING must name the intended scoped media binding")?;
+    if !binding.starts_with("binding://storage/") || binding.chars().any(char::is_whitespace) {
+        return Err("invalid scoped storage binding".into());
+    }
+    let database = env::var("DATABASE_URL").map_err(|_| "DATABASE_URL is required")?;
+    let executable = env::current_exe()?;
+    let lease_seconds = 3600_u64;
+    loop {
+        println!(
+            "Acquiring scoped R2 lease for local API; credentials stay in the child environment"
+        );
+        let status = Command::new("fpl")
+            .args([
+                "binding",
+                "exec",
+                "--ttl-seconds",
+                &lease_seconds.to_string(),
+                &binding,
+                "--",
+            ])
+            .arg(&executable)
+            .arg("api-r2-child")
+            // fpl intentionally strips inherited DATABASE_URL/cloud credentials.
+            // Retain the explicitly chosen local PG configuration separately;
+            // it is restored only in the child, never passed on the command line.
+            .env("TARDY_DEV_DATABASE_URL", &database)
+            .env("TARDY_MAX_RUNTIME_SECONDS", (lease_seconds / 2).to_string())
+            .kill_on_drop(true)
+            .status()
+            .await?;
+        if !status.success() {
+            return Err(
+                format!("R2 binding/API failed with {status}; refusing silent fallback").into(),
+            );
+        }
+        println!("API drained; acquiring replacement R2 lease");
     }
 }
 
