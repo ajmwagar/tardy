@@ -119,6 +119,27 @@ struct Conversation: Codable, Identifiable, Hashable, Sendable {
             .compactMap { accounts[$0]?.displayName }
         return names.isEmpty ? "Conversation" : names.joined(separator: ", ")
     }
+
+    static func hidingRedundantEmptyDirects(_ rows: [Conversation]) -> [Conversation] {
+        func directKey(_ row: Conversation) -> String? {
+            guard row.mode == .dm,
+                  row.participants.count == 2,
+                  row.title?.isEmpty != false
+            else { return nil }
+            return row.participants.map(\.uuidString).sorted().joined(separator: ":")
+        }
+
+        let keysWithMessages = Set<String>(rows.compactMap { row in
+            guard row.lastMessage != nil else { return nil }
+            return directKey(row)
+        })
+        var keptEmptyKeys = Set<String>()
+        return rows.filter { row in
+            guard row.lastMessage == nil, let key = directKey(row) else { return true }
+            guard !keysWithMessages.contains(key) else { return false }
+            return keptEmptyKeys.insert(key).inserted
+        }
+    }
 }
 
 struct Message: Codable, Identifiable, Hashable, Sendable {
