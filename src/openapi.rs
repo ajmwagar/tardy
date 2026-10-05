@@ -6,12 +6,12 @@ use crate::api::{
     AccountView, AddConversationParticipant, AgentInstallationHeartbeat, AgentShareRequest,
     ClaimAgentCode, ClaimTardyAccount, ConnectTardyAccount, ConnectedTardyAccount,
     CreatePostComment, CreateProfile, CreateShare, CreateSharedLink, CreateSocialConversation,
-    CreateThread, CreateWebHandoff, ErrorBody, ExchangeWebHandoff, HandoffRequest,
-    MarkConversationRead, MarkNotificationsRead, PublishReel, PublishSocialPost, RecordEngagement,
-    RenameSocialConversation, SearchRequest, SendMessage, SendMessageMedia, SendSocialMessage,
-    SessionCredential, SessionView, SetConversationDraft, SetHandle, SetPostVisibility,
-    SignedInView, StartLive, SummonAgent, UpdateAgentProfile, UpdateAgentSoul, UpdateProfile,
-    VerificationCheckout,
+    CreateThread, CreateWebHandoff, ErrorBody, ExchangeWebHandoff, GrantMcpBridgeAgent,
+    HandoffRequest, MarkConversationRead, MarkNotificationsRead, PublishReel, PublishSocialPost,
+    RecordEngagement, RegisterMcpBridge, RenameSocialConversation, SearchRequest, SendMessage,
+    SendMessageMedia, SendSocialMessage, SessionCredential, SessionView, SetConversationDraft,
+    SetHandle, SetPostVisibility, SignedInView, StartLive, SummonAgent, UpdateAgentProfile,
+    UpdateAgentSoul, UpdateProfile, VerificationCheckout,
 };
 use crate::audio::{
     AttachPostAudio, AudioRelease, AudioTrack, AudioUsage, AudioUsageKind, NewAudioRelease,
@@ -23,6 +23,7 @@ use crate::domain::{
     LiveEventPayload, LiveSession, LiveStatus, Profile, ProfilePrivacy, ProfileVisibility,
     PublicProfile, Reel, ResharePolicy, SavedPost, ShareGrant, ShareSubject, Visibility,
 };
+use crate::mcp_bridges::{McpBridgeConnection, McpBridgeGrant};
 use crate::media::{MediaAsset, MediaKind, MediaStatus, UploadAuthorization, UploadIntent};
 use crate::onboarding::{Account, AiConsent, ClaimCode, ClaimedAccount, TemporaryTardyAccount};
 use crate::push::AppNotification;
@@ -59,13 +60,13 @@ use utoipa::OpenApi;
         NewOriginalTrack, ReleaseType, TrendingAudio, VerificationEntitlement, VerificationProduct, VerificationTier, BillingStatus, WebHandoff,
         AgentInstallation, AgentSoul, AppAccount, AppFeedPost, AppSearchResult, AppNotification, Comment, Conversation, ConversationDraft, ConversationMessage, ConversationMode, ConversationSummary, IdentityKind, MessageMedia,
         PostMedia, PostVisibility, SetBrandAffiliate, SharedLink, SocialIdentity, TardyPost, CreatePostComment, SessionCredential, SessionView, SetHandle, SetPostVisibility, SignedInView, UpdateAgentProfile, UpdateProfile,
-        AddConversationParticipant, AgentInstallationHeartbeat, CreateSharedLink, CreateSocialConversation, MarkConversationRead, MarkNotificationsRead, PublishSocialPost, RenameSocialConversation, SendMessageMedia, SendSocialMessage, SetConversationDraft, SummonAgent, UpdateAgentSoul, CreateWebHandoff, ExchangeWebHandoff, VerificationCheckout
+        AddConversationParticipant, AgentInstallationHeartbeat, CreateSharedLink, CreateSocialConversation, GrantMcpBridgeAgent, MarkConversationRead, MarkNotificationsRead, McpBridgeConnection, McpBridgeGrant, PublishSocialPost, RegisterMcpBridge, RenameSocialConversation, SendMessageMedia, SendSocialMessage, SetConversationDraft, SummonAgent, UpdateAgentSoul, CreateWebHandoff, ExchangeWebHandoff, VerificationCheckout
     )),
     tags(
         (name = "onboarding"), (name = "profiles"), (name = "messaging"),
         (name = "sharing"), (name = "media"), (name = "feed"), (name = "live"),
         (name = "notifications")
-        ,(name = "ads"), (name = "subscriptions"), (name = "social"), (name = "audio"), (name = "verification"), (name = "billing")
+        ,(name = "ads"), (name = "subscriptions"), (name = "social"), (name = "audio"), (name = "verification"), (name = "billing"), (name = "mcp-bridges")
     )
 )]
 struct ApiDoc;
@@ -89,6 +90,70 @@ pub fn document() -> Value {
         "bearerAuth": { "type": "http", "scheme": "bearer", "bearerFormat": "Tardy API token" }
     });
     let operations = [
+        array_op(
+            "get",
+            "/v1/mcp-bridges",
+            "listMcpBridges",
+            "mcp-bridges",
+            "McpBridgeConnection",
+            200,
+            true,
+            false,
+        ),
+        op(
+            "post",
+            "/v1/mcp-bridges",
+            "registerMcpBridge",
+            "mcp-bridges",
+            Some("RegisterMcpBridge"),
+            Some("McpBridgeConnection"),
+            201,
+            true,
+            false,
+        ),
+        op(
+            "delete",
+            "/v1/mcp-bridges/{id}",
+            "revokeMcpBridge",
+            "mcp-bridges",
+            None,
+            None,
+            204,
+            true,
+            false,
+        ),
+        array_op(
+            "get",
+            "/v1/mcp-bridges/{id}/grants",
+            "listMcpBridgeGrants",
+            "mcp-bridges",
+            "McpBridgeGrant",
+            200,
+            true,
+            false,
+        ),
+        op(
+            "put",
+            "/v1/mcp-bridges/{id}/grants/{agent_id}",
+            "grantMcpBridgeAgent",
+            "mcp-bridges",
+            Some("GrantMcpBridgeAgent"),
+            Some("McpBridgeGrant"),
+            200,
+            true,
+            false,
+        ),
+        op(
+            "delete",
+            "/v1/mcp-bridges/{id}/grants/{agent_id}",
+            "revokeMcpBridgeAgent",
+            "mcp-bridges",
+            None,
+            None,
+            204,
+            true,
+            false,
+        ),
         array_op(
             "get",
             "/v1/profiles/by-id/{id}/agents",

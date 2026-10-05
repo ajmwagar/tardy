@@ -33,6 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     state = state.with_push_store(PgPushStore::new(pool.clone()));
     state = state.with_pg_accounts(PgAccountStore::new(pool.clone()));
     state = state.with_social_store(PgSocialStore::new(pool.clone()));
+    state = state.with_mcp_bridges(tardy::mcp_bridges::PgMcpBridgeStore::new(pool.clone()));
     state = state.with_audio_store(PgAudioStore::new(pool.clone()));
     let web_base_url =
         std::env::var("TARDY_WEB_BASE_URL").unwrap_or_else(|_| "https://tardy.news".into());
