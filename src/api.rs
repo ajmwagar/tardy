@@ -11,6 +11,7 @@ use crate::domain::{
     AgentCapabilities, AgentHandoff, AgentShareReceipt, EngagementKind, LiveEventPayload,
     ProfilePrivacy, ShareSubject, Visibility,
 };
+use crate::mcp_bridges::{McpBridgeConnection, McpBridgeGrant, PgMcpBridgeStore};
 use crate::media::{MediaError, MediaService, UploadIntent};
 use crate::metrics::Metrics;
 use crate::onboarding::{AccountRegistry, OnboardingError, TemporaryTardyAccount};
@@ -65,6 +66,7 @@ pub struct AppState {
     pub audio: Option<Arc<PgAudioStore>>,
     pub apple_auth: Option<Arc<AppleAuthenticator>>,
     pub web_billing: Option<Arc<PgWebBillingStore>>,
+    pub mcp_bridges: Option<Arc<PgMcpBridgeStore>>,
 }
 
 pub struct AdsRuntime {
@@ -94,6 +96,7 @@ impl AppState {
             audio: None,
             apple_auth: None,
             web_billing: None,
+            mcp_bridges: None,
         })
     }
 
@@ -117,6 +120,7 @@ impl AppState {
             audio: None,
             apple_auth: None,
             web_billing: None,
+            mcp_bridges: None,
         })
     }
 
@@ -140,6 +144,7 @@ impl AppState {
             audio: None,
             apple_auth: None,
             web_billing: None,
+            mcp_bridges: None,
         })
     }
 
@@ -185,6 +190,11 @@ impl AppState {
 
     pub fn with_web_billing(mut self, value: PgWebBillingStore) -> Self {
         self.web_billing = Some(Arc::new(value));
+        self
+    }
+
+    pub fn with_mcp_bridges(mut self, value: PgMcpBridgeStore) -> Self {
+        self.mcp_bridges = Some(Arc::new(value));
         self
     }
 
@@ -255,6 +265,19 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(
             "/v1/agents/{id}/installations/{installation_key}",
             put(heartbeat_agent_installation),
+        )
+        .route(
+            "/v1/mcp-bridges",
+            get(list_mcp_bridges).post(register_mcp_bridge),
+        )
+        .route(
+            "/v1/mcp-bridges/{id}",
+            axum::routing::delete(revoke_mcp_bridge),
+        )
+        .route("/v1/mcp-bridges/{id}/grants", get(list_mcp_bridge_grants))
+        .route(
+            "/v1/mcp-bridges/{id}/grants/{agent_id}",
+            put(grant_mcp_bridge_agent).delete(revoke_mcp_bridge_agent),
         )
         .route(
             "/v1/agents/{id}/avatar/generate",
@@ -898,6 +921,21 @@ pub(crate) struct AgentInstallationHeartbeat {
     status: String,
 }
 
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct RegisterMcpBridge {
+    provider: String,
+    display_name: String,
+    bridge_ref: String,
+    #[serde(default)]
+    capabilities: Vec<String>,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct GrantMcpBridgeAgent {
+    tool_patterns: Vec<String>,
+    approval_policy: String,
+}
+
 async fn get_agent_soul(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -968,6 +1006,89 @@ async fn heartbeat_agent_installation(
             )
             .await?,
     ))
+}
+
+async fn list_mcp_bridges(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<McpBridgeConnection>>, ApiError> {
+    let owner = authenticated_account(&state, &headers).await?;
+    Ok(Json(
+        mcp_bridge_store(&state)?.list_connections(owner).await?,
+    ))
+}
+
+async fn register_mcp_bridge(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<RegisterMcpBridge>,
+) -> Result<(StatusCode, Json<McpBridgeConnection>), ApiError> {
+    let owner = authenticated_account(&state, &headers).await?;
+    let connection = mcp_bridge_store(&state)?
+        .register_connection(
+            owner,
+            &body.provider,
+            &body.display_name,
+            &body.bridge_ref,
+            &body.capabilities,
+        )
+        .await?;
+    Ok((StatusCode::CREATED, Json(connection)))
+}
+
+async fn revoke_mcp_bridge(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, ApiError> {
+    let owner = authenticated_account(&state, &headers).await?;
+    mcp_bridge_store(&state)?
+        .revoke_connection(owner, id)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn list_mcp_bridge_grants(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<McpBridgeGrant>>, ApiError> {
+    let owner = authenticated_account(&state, &headers).await?;
+    Ok(Json(
+        mcp_bridge_store(&state)?.list_grants(owner, id).await?,
+    ))
+}
+
+async fn grant_mcp_bridge_agent(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((id, agent_id)): Path<(Uuid, Uuid)>,
+    Json(body): Json<GrantMcpBridgeAgent>,
+) -> Result<Json<McpBridgeGrant>, ApiError> {
+    let owner = authenticated_account(&state, &headers).await?;
+    Ok(Json(
+        mcp_bridge_store(&state)?
+            .grant_agent(
+                owner,
+                id,
+                agent_id,
+                &body.tool_patterns,
+                &body.approval_policy,
+            )
+            .await?,
+    ))
+}
+
+async fn revoke_mcp_bridge_agent(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((id, agent_id)): Path<(Uuid, Uuid)>,
+) -> Result<StatusCode, ApiError> {
+    let owner = authenticated_account(&state, &headers).await?;
+    mcp_bridge_store(&state)?
+        .revoke_agent(owner, id, agent_id)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn get_profile_agents(
@@ -2404,6 +2525,13 @@ pub(crate) fn social_store(state: &AppState) -> Result<&PgSocialStore, ApiError>
     state.social.as_deref().ok_or_else(|| ApiError {
         status: StatusCode::SERVICE_UNAVAILABLE,
         message: "durable social features are not configured".into(),
+    })
+}
+
+fn mcp_bridge_store(state: &AppState) -> Result<&PgMcpBridgeStore, ApiError> {
+    state.mcp_bridges.as_deref().ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        message: "managed MCP bridges are not configured".into(),
     })
 }
 

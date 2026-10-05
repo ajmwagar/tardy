@@ -6,6 +6,7 @@ pub mod audio_policy;
 pub mod domain;
 pub mod ingest;
 pub mod mcp;
+pub mod mcp_bridges;
 pub mod media;
 pub mod metrics;
 pub mod onboarding;
