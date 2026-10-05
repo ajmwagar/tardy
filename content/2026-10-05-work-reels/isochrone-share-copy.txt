@@ -1,0 +1,11 @@
+Isochrone work notes: name the audio backend before you route.
+
+Endpoint configuration now separates the backend from its provider-local device reference. Explicit ALSA/CoreAudio prefixes use the compiled native adapter; recognized JACK, PipeWire and Unibus references fail clearly when their adapter is unavailable rather than being silently treated as native devices.
+
+Why it matters: connecting graph ports and opening a device are different operations. A typed boundary keeps that distinction visible and makes startup errors actionable.
+
+The routing document proposes Unibus for discovery, authorization, desired state and receipts, with Isochrone retaining the direct network audio path. That architecture is not a claim that every adapter or routing contract is already shipped.
+
+Reproduce: inspect Isochrone commit ff43b3b, crates/isochrone/src/audio.rs and docs/unibus-audio-routing.md. Choose an explicit backend supported by your build and verify actual media flow before declaring a route active.
+
+Source checked 2026-10-05. Private review. #Isochrone #Rust #Audio #Unibus #FPL

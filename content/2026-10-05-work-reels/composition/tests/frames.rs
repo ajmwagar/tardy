@@ -29,7 +29,7 @@ fn key_frames_match_snapshots() {
 fn no_problems_in_any_frame() {
     // Converting a frame without rasterizing it is fast, so every frame is checked.
     let media = TardyWorkReelsMedia::prepare().unwrap();
-    for topic in ["umie", "unibus", "mycelium"] {
+    for topic in ["umie", "unibus", "mycelium", "isochrone", "holodeck"] {
         let video = TardyWorkReelsVideo::new(&media, topic);
         let options = RenderOptions {
             media: Some(&media),

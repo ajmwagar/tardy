@@ -3,7 +3,9 @@
 A 1080x1920 @ 30 fps video made with [fframes](https://github.com/dmtrKovalenko/fframes),
 rendered with the Skia (Metal) backend.
 
-Use `--title umie`, `--title unibus` or `--title mycelium` to select a story.
+Use `--title umie`, `--title unibus`, `--title mycelium`, `--title isochrone`
+or `--title holodeck` to select a story. Batch two evidence is recorded in
+`../batch-two-facts.md`; each new caption is saved as `../<topic>-share-copy.txt`.
 Facts and limitations live in `../facts.md`; private delivery evidence lives in
 `../../../docs/work/transcript-reels-2026-10-05.md`.
 

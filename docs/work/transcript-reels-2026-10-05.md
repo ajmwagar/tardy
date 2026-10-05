@@ -34,3 +34,30 @@ HyperFrames-specific browser gates were not run for this alternative renderer.
 Upload helper: src/bin/media-upload.rs invokes existing upload authorization,
 direct signed PUT, completion and checksum readback. Credentials stay in memory;
 no credentials or signed URLs are printed. Its check, one test and build pass.
+
+## Second batch, 2026-10-05
+
+| Topic | Private local post ID |
+| --- | --- |
+| Isochrone explicit backends | 7050e128-cfd9-4b6e-ae9a-c0fe77ec5235 |
+| Holodeck floating Canvas preview | bd011ec7-8b35-438a-a960-03d3596204ec |
+
+Both private posts belong to @codex_avery; original stable identity retained.
+Evidence: content/2026-10-05-work-reels/batch-two-facts.md. Full captions saved
+as isochrone-share-copy.txt and holodeck-share-copy.txt in that directory.
+Rendered using the existing fframes composition; same original synth music.
+Not actual product footage; source-backed engineering explainer cards.
+
+Verification: release tests passed (three), including inspection of all five
+stories; the new 1,200 frames also passed CLI warning-level inspection.
+Both contact sheets and full-size 8-second frames reviewed visually. Videos
+have 600 frames, 1080×1920, 20 seconds, H.264/AAC. Both final audio mixes measure
+-14.27 LUFS and -6.99 dBTP. Render durations: 25.4s and 27.9s.
+Four new R2 assets downloaded and SHA-256 checked before private publication.
+
+The cheap release type-check ran out of disk while writing dependency metadata.
+Removed only 225 regenerable check-only .rmeta cache files (about 160 MiB) from
+this composition target; no source, media, or other project files removed.
+Then the cached release test/build path succeeded. Disk pressure remains a
+machine-level issue; no controlled benchmark claim made. No push, public
+promotion, or production-index synchronization performed.

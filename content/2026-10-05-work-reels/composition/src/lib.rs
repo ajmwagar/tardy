@@ -80,6 +80,40 @@ impl<'a> TardyWorkReelsVideo<'a> {
                 ],
                 limitation: "Experimental edge work, not a rollout.",
             },
+            "isochrone" => Self {
+                media,
+                topic: "ISOCHRONE",
+                hook: ["Wrong audio backend?", "Fail before silence."],
+                reveal: ["Name the backend.", "Keep routing honest."],
+                steps: [
+                    "Separate devices from graphs",
+                    "Select the native adapter",
+                    "Reject unavailable adapters",
+                ],
+                evidence: [
+                    "crates/isochrone/src/audio.rs",
+                    "docs/unibus-audio-routing.md",
+                    "commit ff43b3b",
+                ],
+                limitation: "Typed boundary; not every adapter exists.",
+            },
+            "holodeck" => Self {
+                media,
+                topic: "HOLODECK",
+                hook: ["Your workspace.", "Floating beside you."],
+                reveal: ["Canvas owns the UI.", "VR owns placement."],
+                steps: [
+                    "Capture the native workspace",
+                    "Move and resize the window",
+                    "Keep stale previews visible",
+                ],
+                evidence: [
+                    "docs/canvas-window.md",
+                    "app/applets/canvas.lua",
+                    "commit 11b2f46",
+                ],
+                limitation: "View-only preview; not interactive streaming.",
+            },
             _ => unreachable!("CLI restricts topic to known stories"),
         }
     }
