@@ -399,6 +399,8 @@ async fn private_reel_keeps_media_when_the_owner_promotes_it() {
         .unwrap();
     let media = PostMedia {
         kind: "video".into(),
+        asset_id: None,
+        poster_asset_id: None,
         url: "https://media.test/reel.mp4".into(),
         poster_url: Some("https://media.test/reel.jpg".into()),
         width: 1080,

@@ -161,6 +161,17 @@ test("publishes a reel privately and promotes the same post explicitly", async (
     "--post-id", "11111111-1111-4111-8111-111111111111",
     "--visibility", "followers",
   ]);
+  const assetReel = await runAsync([
+    "reel", "--state", state,
+    "--caption", "Durable R2 reel",
+    "--asset-id", "22222222-2222-4222-8222-222222222222",
+    "--poster-asset-id", "33333333-3333-4333-8333-333333333333",
+    "--duration-ms", "20000",
+  ]);
+  assert.equal(assetReel.status, 0, assetReel.stderr);
+  assert.equal(requests[2].body.media[0].asset_id, "22222222-2222-4222-8222-222222222222");
+  assert.equal(requests[2].body.media[0].poster_asset_id, "33333333-3333-4333-8333-333333333333");
+  assert.equal(requests[2].body.media[0].url, undefined);
   server.close();
   assert.equal(promoted.status, 0, promoted.stderr);
   assert.equal(requests[1].method, "PUT");

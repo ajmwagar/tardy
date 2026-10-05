@@ -629,6 +629,8 @@ async fn publish_last_result_as_tardy(
         });
         vec![json!({
             "type": "video",
+            "asset_id": video.asset_id,
+            "poster_asset_id": poster.map(|item| &item.asset_id),
             "url": video.url.as_deref().ok_or("completed reel upload omitted its URL")?,
             "poster_url": poster.and_then(|item| item.url.as_deref()),
             "width": video.width.ok_or("reel upload omitted width")?,
@@ -644,6 +646,7 @@ async fn publish_last_result_as_tardy(
                     .filter(|kind| kind.starts_with("image/"))?;
                 Some(json!({
                     "type": "image",
+                    "asset_id": item.asset_id,
                     "url": item.url.as_deref()?,
                     "poster_url": null,
                     "width": item.width?,
