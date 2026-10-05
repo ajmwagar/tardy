@@ -406,11 +406,18 @@ private struct DraftMessageRow: View {
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 9) {
-            Avatar(account: model.accounts[draft.senderProfileId], size: 28)
+            Button { model.openProfile(draft.senderProfileId) } label: {
+                Avatar(account: model.accounts[draft.senderProfileId], size: 28)
+            }
+            .buttonStyle(.plain)
+            .help("Open profile")
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {
-                    Text(model.accounts[draft.senderProfileId]?.displayName ?? "Tardy")
-                        .font(.caption.bold())
+                    Button { model.openProfile(draft.senderProfileId) } label: {
+                        Text(model.accounts[draft.senderProfileId]?.displayName ?? "Tardy")
+                            .font(.caption.bold())
+                    }
+                    .buttonStyle(.plain)
                     Text(draft.detail.isEmpty ? (draft.status == "tool" ? "working" : "streaming") : draft.detail)
                         .font(.caption2.bold())
                         .foregroundStyle(Brand.yellow)
@@ -437,11 +444,20 @@ private struct MessageRow: View {
     var body: some View {
         HStack(alignment: .bottom, spacing: 9) {
             if mine { Spacer(minLength: 90) }
-            if !mine { Avatar(account: model.accounts[message.senderProfileId], size: 28) }
+            if !mine {
+                Button { model.openProfile(message.senderProfileId) } label: {
+                    Avatar(account: model.accounts[message.senderProfileId], size: 28)
+                }
+                .buttonStyle(.plain)
+                .help("Open profile")
+            }
             VStack(alignment: mine ? .trailing : .leading, spacing: 4) {
                 if !mine {
-                    Text(model.accounts[message.senderProfileId]?.displayName ?? "Tardy")
-                        .font(.caption.bold()).foregroundStyle(Brand.muted)
+                    Button { model.openProfile(message.senderProfileId) } label: {
+                        Text(model.accounts[message.senderProfileId]?.displayName ?? "Tardy")
+                            .font(.caption.bold()).foregroundStyle(Brand.muted)
+                    }
+                    .buttonStyle(.plain)
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     if !message.body.isEmpty {
@@ -648,7 +664,13 @@ private struct ContextInspector: View {
                     }
                     SectionLabel("In this chat")
                     ForEach(conversation.participants, id: \.self) { id in
-                        if let account = model.accounts[id] { ParticipantRow(account: account, active: true) }
+                        if let account = model.accounts[id] {
+                            Button { model.openProfile(account.id) } label: {
+                                ParticipantRow(account: account, active: true)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Open @\(account.handle)")
+                        }
                     }
                     let availableAgents = model.ownedAgents.filter { !conversation.participants.contains($0.id) }
                     if !availableAgents.isEmpty {
@@ -658,7 +680,11 @@ private struct ContextInspector: View {
                             .font(.caption).foregroundStyle(Brand.muted)
                         ForEach(availableAgents) { agent in
                             HStack {
-                                ParticipantRow(account: agent, active: false)
+                                Button { model.openProfile(agent.id) } label: {
+                                    ParticipantRow(account: agent, active: false)
+                                }
+                                .buttonStyle(.plain)
+                                .help("Open @\(agent.handle)")
                                 Spacer()
                                 Button("Add") { Task { await model.summon(agent) } }
                                     .buttonStyle(.bordered).controlSize(.small)
