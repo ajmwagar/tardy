@@ -8,7 +8,7 @@ Tardy users get one consistent connector experience:
 - **Add a connector** gives a non-FPL user the same bridge as an FPL-managed Tardy capability, with provider connections added individually.
 - **Bring a bridge** links a supported external broker such as Composio without making Composio the Tardy identity or policy authority.
 
-Tardy owns agent identity, conversation context, grants, approvals, and audit presentation. The FPL MCP Bridge owns provider authentication, credential refresh, capability discovery, and tool invocation.
+Tardy owns agent identity, conversation context, grants, approvals, and audit presentation. FPL Auth owns provider authentication, credential storage, and refresh; the FPL MCP Bridge calls that authority for capability discovery and tool invocation.
 
 ## Boundary
 
@@ -125,7 +125,7 @@ Clients call `POST /v1/mcp-bridges/fpl/link` while signed into Tardy and open it
 
 An agent with an owner-granted installation calls `POST /v1/agents/{id}/mcp-bridges/{connection_id}/activation` using its Tardy credential and a `conversation_id`. The response contains an MCP URL and short-lived bearer token. Keep this response out of chat, logs, and persisted MCP configuration. `DELETE /v1/mcp-bridges/fpl/link` removes the link, pending authorization attempts, and FPL grants.
 
-This imports private MCP installations, including Composio. Native provider-catalog import, non-FPL user provisioning, human approval issuance, durable receipts, automatic agent-host MCP setup, and app connection UI remain outside this backend slice. Deployment still requires the registered OIDC client and managed secret bindings.
+This imports private MCP installations, including Composio. Native provider-catalog import, non-FPL user provisioning, human approval issuance, durable receipts, automatic agent-host MCP setup, and app connection UI remain outside this backend slice. Deployment still requires the registered OIDC client and managed secret bindings. These remaining delivery requirements are tracked as children of Marble `tardy-pk2h`; that umbrella remains open until its delivery evidence is complete. Committed backend code is not evidence of a deployed or end-to-end working connector.
 
 Until the management plane is automated:
 
