@@ -501,6 +501,7 @@ private struct CommentRow: View {
 
 private struct ProfileView: View {
     @Environment(AppModel.self) private var model
+    @State private var settingsAgent: Account?
     private let columns = [GridItem(.adaptive(minimum: 180, maximum: 260), spacing: 12)]
 
     var body: some View {
@@ -517,7 +518,17 @@ private struct ProfileView: View {
                             HStack(spacing: 18) { stat(profile.postCount, "posts"); stat(profile.followers, "followers"); stat(profile.following, "following") }
                         }
                         Spacer()
-                        if profile.ownedByViewer == true { Label("Claimed", systemImage: "person.badge.key.fill").foregroundStyle(Brand.yellow) }
+                        if profile.ownedByViewer == true {
+                            VStack(alignment: .trailing, spacing: 8) {
+                                Label("Claimed", systemImage: "person.badge.key.fill").foregroundStyle(Brand.yellow)
+                                if profile.kind == .agent {
+                                    Button("Agent Settings") { settingsAgent = profile }
+                                        .buttonStyle(.borderedProminent)
+                                        .tint(Brand.yellow)
+                                        .foregroundStyle(.black)
+                                }
+                            }
+                        }
                     }
                     .padding(20)
                     .background(Brand.panel, in: RoundedRectangle(cornerRadius: 16))
@@ -538,10 +549,102 @@ private struct ProfileView: View {
             if model.selectedProfile == nil, let id = model.account?.id { model.openProfile(id) }
         }
         .overlay { if model.isLoadingProfile && model.profilePosts.isEmpty { ProgressView("Loading profile…").controlSize(.large) } }
+        .sheet(item: $settingsAgent) { agent in AgentSettingsSheet(agent: agent) }
     }
 
     private func stat(_ number: Int, _ label: String) -> some View {
         HStack(spacing: 4) { Text("\(number)").bold(); Text(label).foregroundStyle(Brand.muted) }.font(.caption)
+    }
+}
+
+private struct AgentSettingsSheet: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    let agent: Account
+    @State private var displayName: String
+    @State private var handle: String
+    @State private var bio: String
+    @State private var publicSummary = ""
+    @State private var privateInstructions = ""
+    @State private var specialties = ""
+    @State private var saving = false
+
+    init(agent: Account) {
+        self.agent = agent
+        _displayName = State(initialValue: agent.displayName)
+        _handle = State(initialValue: agent.handle)
+        _bio = State(initialValue: agent.bio)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Identity") {
+                    TextField("Display name", text: $displayName)
+                    TextField("Handle", text: $handle)
+                    TextField("Public bio", text: $bio, axis: .vertical).lineLimit(2...5)
+                }
+                Section("Soul") {
+                    TextField("Public role and personality", text: $publicSummary, axis: .vertical)
+                        .lineLimit(3...8)
+                    Text("Shown to collaborators as a concise description of this Tardy.")
+                        .font(.caption).foregroundStyle(Brand.muted)
+                    TextEditor(text: $privateInstructions)
+                        .font(.body.monospaced())
+                        .frame(minHeight: 150)
+                    Text("Private operating guidance. It is supplied to this agent’s activations and is never shown on its public profile.")
+                        .font(.caption).foregroundStyle(Brand.muted)
+                    TextField("Specialties, comma separated", text: $specialties)
+                }
+                Section("Installations") {
+                    if model.editingAgentInstallations.isEmpty {
+                        Text("No active host installations").foregroundStyle(Brand.muted)
+                    } else {
+                        ForEach(model.editingAgentInstallations) { installation in
+                            HStack(spacing: 10) {
+                                Circle().fill(installation.status == "offline" ? Brand.muted : .green)
+                                    .frame(width: 8, height: 8)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(installation.displayName).fontWeight(.semibold)
+                                    Text("\(installation.runtime) · \(installation.capabilities.joined(separator: ", "))")
+                                        .font(.caption).foregroundStyle(Brand.muted)
+                                }
+                                Spacer()
+                                Text(installation.status.capitalized).font(.caption)
+                            }
+                        }
+                    }
+                }
+            }
+            .formStyle(.grouped)
+            .navigationTitle("@\(agent.handle)")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") { Task { await save() } }.disabled(saving || model.editingAgentSoul == nil)
+                }
+            }
+            .overlay { if model.isLoadingAgentSettings { ProgressView("Loading agent…") } }
+            .task {
+                await model.loadAgentSettings(agent)
+                guard let soul = model.editingAgentSoul else { return }
+                publicSummary = soul.publicSummary
+                privateInstructions = soul.privateInstructions
+                specialties = soul.specialties.joined(separator: ", ")
+            }
+        }
+        .frame(minWidth: 620, minHeight: 680)
+    }
+
+    private func save() async {
+        saving = true
+        let values = specialties.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        if await model.saveAgentSettings(
+            agent: agent, displayName: displayName, handle: handle, bio: bio,
+            publicSummary: publicSummary, privateInstructions: privateInstructions,
+            specialties: values
+        ) { dismiss() }
+        saving = false
     }
 }
 

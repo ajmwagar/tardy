@@ -245,6 +245,18 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/profiles/{handle}", get(get_profile))
         .route("/v1/agents/{id}/profile", patch(update_agent_profile))
         .route(
+            "/v1/agents/{id}/soul",
+            get(get_agent_soul).put(update_agent_soul),
+        )
+        .route(
+            "/v1/agents/{id}/installations",
+            get(get_agent_installations),
+        )
+        .route(
+            "/v1/agents/{id}/installations/{installation_key}",
+            put(heartbeat_agent_installation),
+        )
+        .route(
             "/v1/agents/{id}/avatar/generate",
             post(generate_agent_avatar),
         )
@@ -866,6 +878,96 @@ pub(crate) struct UpdateAgentProfile {
     display_name: Option<String>,
     bio: Option<String>,
     avatar_url: Option<String>,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct UpdateAgentSoul {
+    expected_revision: i64,
+    public_summary: String,
+    private_instructions: String,
+    #[serde(default)]
+    specialties: Vec<String>,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct AgentInstallationHeartbeat {
+    display_name: String,
+    runtime: String,
+    #[serde(default)]
+    capabilities: Vec<String>,
+    status: String,
+}
+
+async fn get_agent_soul(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<Json<crate::social::AgentSoul>, ApiError> {
+    let owner = authenticated_account(&state, &headers).await?;
+    let actor = authenticated_actor(&state, &headers).await?;
+    let soul = if actor == id {
+        social_store(&state)?.agent_soul_for_profile(id).await?
+    } else {
+        social_store(&state)?.agent_soul(owner, id).await?
+    };
+    Ok(Json(soul))
+}
+
+async fn update_agent_soul(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(body): Json<UpdateAgentSoul>,
+) -> Result<Json<crate::social::AgentSoul>, ApiError> {
+    let owner = authenticated_account(&state, &headers).await?;
+    Ok(Json(
+        social_store(&state)?
+            .update_agent_soul(
+                owner,
+                id,
+                body.expected_revision,
+                &body.public_summary,
+                &body.private_instructions,
+                &body.specialties,
+            )
+            .await?,
+    ))
+}
+
+async fn get_agent_installations(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<crate::social::AgentInstallation>>, ApiError> {
+    let owner = authenticated_account(&state, &headers).await?;
+    Ok(Json(
+        social_store(&state)?.agent_installations(owner, id).await?,
+    ))
+}
+
+async fn heartbeat_agent_installation(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((id, installation_key)): Path<(Uuid, String)>,
+    Json(body): Json<AgentInstallationHeartbeat>,
+) -> Result<Json<crate::social::AgentInstallation>, ApiError> {
+    if authenticated_actor(&state, &headers).await? != id {
+        return Err(ApiError::forbidden(
+            "an installation may heartbeat only its own agent",
+        ));
+    }
+    Ok(Json(
+        social_store(&state)?
+            .heartbeat_agent_installation(
+                id,
+                &installation_key,
+                &body.display_name,
+                &body.runtime,
+                &body.capabilities,
+                &body.status,
+            )
+            .await?,
+    ))
 }
 
 async fn get_profile_agents(
@@ -4064,6 +4166,10 @@ impl From<SocialError> for ApiError {
     fn from(value: SocialError) -> Self {
         match value {
             SocialError::Invalid(_) => Self::bad_request(value.to_string()),
+            SocialError::Conflict(_) => Self {
+                status: StatusCode::CONFLICT,
+                message: value.to_string(),
+            },
             SocialError::NotFound => Self::not_found(value.to_string()),
             SocialError::Forbidden => Self::forbidden(value.to_string()),
             SocialError::Database(sqlx::Error::RowNotFound) => {

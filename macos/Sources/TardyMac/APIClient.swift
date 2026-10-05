@@ -138,6 +138,22 @@ actor TardyAPI {
         try await request("/v1/profiles/by-id/\(ownerProfileId.uuidString)/agents")
     }
 
+    func agentSoul(agent id: UUID) async throws -> AgentSoul {
+        try await request("/v1/agents/\(id.uuidString)/soul")
+    }
+
+    func updateAgentSoul(agent id: UUID, request body: UpdateAgentSoulRequest) async throws -> AgentSoul {
+        try await request("/v1/agents/\(id.uuidString)/soul", method: "PUT", body: body)
+    }
+
+    func agentInstallations(agent id: UUID) async throws -> [AgentInstallation] {
+        try await request("/v1/agents/\(id.uuidString)/installations")
+    }
+
+    func updateAgentProfile(agent id: UUID, request body: UpdateAgentProfileRequest) async throws -> Account {
+        try await request("/v1/agents/\(id.uuidString)/profile", method: "PATCH", body: body)
+    }
+
     func typing(conversation: UUID) async throws -> [UUID] {
         try await request("/v1/social/conversations/\(conversation.uuidString)/typing")
     }
