@@ -939,7 +939,10 @@ impl CodexRunner {
                 }))
                 .await;
         }
-        tokio::time::timeout(Duration::from_secs(10), async {
+        // A cold Codex app-server can spend more than ten seconds in dyld and plugin
+        // discovery on a busy developer Mac. Keep the bound finite, but do not discard
+        // a queued Tardy activation before the runtime has had a realistic chance to boot.
+        tokio::time::timeout(Duration::from_secs(30), async {
             loop {
                 let line = lines
                     .next_line()

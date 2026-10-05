@@ -34,7 +34,9 @@ final class AppModel {
     var showsAppRail = true
     var showsInboxSidebar = true
     var showsContextInspector = true
-    var showsAgentThinking = false
+    // Public tool/activity events are part of the normal agent experience. The user may
+    // still hide them with /thinking off; private model reasoning is never transported.
+    var showsAgentThinking = true
     var conversationStreamState: ConversationStreamState = .disconnected
     var thinkingStatusText: String?
 
