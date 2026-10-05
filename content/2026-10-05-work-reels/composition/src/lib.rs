@@ -39,6 +39,20 @@ impl<'a> TardyWorkReelsVideo<'a> {
     }
     pub fn new(media: &'a TardyWorkReelsMedia, topic: &str) -> Self {
         match topic {
+            "library" => Self {
+                plan: None,
+                media,
+                topic: "REEL LIBRARY",
+                hook: ["Same story.", "Three formats."],
+                reveal: ["Shared concepts.", "Project-owned style."],
+                steps: [
+                    "Read the source",
+                    "Find kernel candidates",
+                    "Keep evidence attached",
+                ],
+                evidence: ["tardy-reel-library", "8e49b81 + ba9e25f", "Private review"],
+                limitation: "Same UMIE example. Real library layouts.",
+            },
             "umie" => Self {
                 plan: None,
                 media,
@@ -155,7 +169,17 @@ impl Video for TardyWorkReelsVideo<'_> {
             .map_or(0.5, |p| p.variant.entrance_ms as f32 / 1000.);
         let progress = (local / entrance).clamp(0., 1.);
         let rise = (1. - (1. - (1. - progress).powi(3))) * 44.;
-        let title = if scene == 0 {
+        let demo = self.topic == "REEL LIBRARY";
+        let title = if demo && scene > 0 {
+            [
+                match scene {
+                    1 => "Milestone.",
+                    2 => "Pipeline.",
+                    _ => "Walkthrough.",
+                },
+                "Project-owned style.",
+            ]
+        } else if scene == 0 {
             self.hook
         } else if scene == 1 {
             self.reveal
@@ -164,10 +188,13 @@ impl Video for TardyWorkReelsVideo<'_> {
         } else {
             ["Real work.", "Worth keeping up with."]
         };
-        let accent = self
-            .plan
-            .as_ref()
-            .map_or("#FFC21A", |p| p.variant.theme.accent.as_str());
+        let accent = if demo && scene == 2 {
+            "#68D8FF"
+        } else {
+            self.plan
+                .as_ref()
+                .map_or("#FFC21A", |p| p.variant.theme.accent.as_str())
+        };
         let foreground = self
             .plan
             .as_ref()
@@ -186,11 +213,19 @@ impl Video for TardyWorkReelsVideo<'_> {
         } else {
             "#9A9AA5"
         };
-        let format = self
-            .plan
-            .as_ref()
-            .map_or(Format::Milestone, |p| p.variant.format);
-        let content: Vec<Svgr> = if scene == 1 && format == Format::Pipeline {
+        let format = if demo {
+            match scene {
+                2 => Format::Pipeline,
+                3 => Format::Walkthrough,
+                _ => Format::Milestone,
+            }
+        } else {
+            self.plan
+                .as_ref()
+                .map_or(Format::Milestone, |p| p.variant.format)
+        };
+        let show_steps = scene == 1 || (demo && scene > 0);
+        let content: Vec<Svgr> = if show_steps && format == Format::Pipeline {
             self.steps.iter().enumerate().map(|(i,line)| {
                 let y=890+i*168;
                 let opacity=((local-0.4-i as f32*0.15)/0.4).clamp(0.,1.);
@@ -200,7 +235,7 @@ impl Video for TardyWorkReelsVideo<'_> {
                     {if i<2 { fframes::svgr!(<path d={format!("M 138 {} v 24 m -7 -7 l 7 7 l 7 -7", y+24)} stroke={accent} stroke-width="3" fill="none" />) } else { fframes::svgr!(<text x="138" y={y+58} font-family={FONT} font-size="30" font-weight="500" fill={accent}>"OUTPUT / BOUNDARY"</text>) }}
                 </g>)
             }).collect()
-        } else if scene == 1 && format == Format::Walkthrough {
+        } else if show_steps && format == Format::Walkthrough {
             self.steps.iter().enumerate().map(|(i,line)| {
                 let y=930+i*156;
                 let opacity=((local-0.4-i as f32*0.12)/0.4).clamp(0.,1.);
@@ -211,7 +246,7 @@ impl Video for TardyWorkReelsVideo<'_> {
                     <rect x="188" y={y+40} width="790" height="2" fill={accent} />
                 </g>)
             }).collect()
-        } else if scene == 1 {
+        } else if show_steps {
             self.steps.iter().enumerate().map(|(i, line)| {
                 let y = 940 + i * 152;
                 let delay = (local - 0.6 - i as f32 * 0.2).clamp(0., 0.4) / 0.4;

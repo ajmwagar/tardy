@@ -1,0 +1,11 @@
+Same story. Three formats. A growing visual library for Tardy.
+
+We split the shared concept from the project presentation: milestone updates, pipelines and walkthroughs stay common vocabulary, while each project owns its palette and motion variants. This reel uses the same UMIE example in all three real fframes layouts so the difference is visible.
+
+The first slice has five starter project libraries and 30 compatible variants. Selection uses a persisted seed and recent project-local usage; a frozen plan makes the chosen configuration replayable. Previewing does not alter history or publish anything. Recording happens explicitly after successful delivery, and retries are idempotent.
+
+Verified: five Rust library tests, three composition tests and 18,000 variant-frame inspections. Source: local commits 8e49b81 and ba9e25f, crates/tardy-reel-library and content/reel-library/README.md. This is locally implemented work, not a production deployment.
+
+Reproduce: follow the library runbook, select a project and seed, save the plan, inspect every frame, review a contact sheet, then render using that same plan. New conceptual formats need renderer support; adding project themes does not mean inventing a new format name. Footage, narration and a broader rights-aware asset catalog are future additions.
+
+Private review. Don't be Tardy. #Tardy #Rust #fframes #Agents #FPL

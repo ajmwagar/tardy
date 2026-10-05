@@ -11,7 +11,7 @@ use tardy_work_reels::{HEIGHT, TardyWorkReelsMedia, TardyWorkReelsVideo, WIDTH};
 /// inspect, audio, ...). Run `cargo run --release -- --help`.
 #[derive(Debug, clap::Args)]
 struct VideoArgs {
-    #[arg(long, default_value = "umie", global = true, value_parser = ["umie", "unibus", "mycelium", "isochrone", "holodeck"])]
+    #[arg(long, default_value = "umie", global = true, value_parser = ["umie", "unibus", "mycelium", "isochrone", "holodeck", "library"])]
     title: String,
     #[arg(long, default_value = "auto", global = true, value_parser = ["auto", "legacy", "milestone", "pipeline", "walkthrough"])]
     format: String,
