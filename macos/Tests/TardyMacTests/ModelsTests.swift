@@ -61,6 +61,18 @@ import Testing
     #expect(conversation.agentPeer(accounts: [agentId: agent], viewer: viewer)?.id == agentId)
 }
 
+@Test func inboxHidesOnlyRedundantEmptyDirectChats() throws {
+    let viewer = UUID()
+    let friend = UUID()
+    let emptyA = Conversation(id: UUID(), mode: .dm, title: nil, participants: [viewer, friend], lastMessage: nil, unreadCount: 0)
+    let emptyB = Conversation(id: UUID(), mode: .dm, title: nil, participants: [friend, viewer], lastMessage: nil, unreadCount: 0)
+    let group = Conversation(id: UUID(), mode: .dm, title: "Planning", participants: [viewer, friend], lastMessage: nil, unreadCount: 0)
+
+    let collapsed = Conversation.hidingRedundantEmptyDirects([emptyA, emptyB, group])
+
+    #expect(collapsed.map(\.id) == [emptyA.id, group.id])
+}
+
 @Test func conversationSSEParserDecodesResumableMessageFrame() throws {
     var parser = ConversationSSEParser()
     let json = #"[{"id":"41782c9a-19c6-4eab-80fb-ef2cc89e87b9","conversation_id":"650ffada-b502-4565-86cb-b3331e25bb4e","sequence":19,"sender_profile_id":"8ca1e470-bad0-4fec-a0da-7fc1945fbd5b","body":"Streaming now","shared_link_id":null,"created_at":"2026-10-02T12:25:09.744290Z"}]"#

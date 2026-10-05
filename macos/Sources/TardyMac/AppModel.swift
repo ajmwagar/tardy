@@ -113,9 +113,9 @@ final class AppModel {
         guard let account else { return }
         do {
             let rows = try await api.conversations()
-            conversations = rows.sorted {
+            conversations = Conversation.hidingRedundantEmptyDirects(rows.sorted {
                 ($0.lastMessage?.timestamp ?? .distantPast) > ($1.lastMessage?.timestamp ?? .distantPast)
-            }
+            })
             if selectedConversationId == nil { select(conversations.first?.id) }
             let ids = Set(rows.flatMap(\.participants)).subtracting(accounts.keys)
             if !ids.isEmpty {

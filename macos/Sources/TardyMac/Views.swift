@@ -646,22 +646,24 @@ private struct ContextInspector: View {
                         )
                         Divider()
                     }
-                    SectionLabel("People & Tardies")
+                    SectionLabel("In this chat")
                     ForEach(conversation.participants, id: \.self) { id in
                         if let account = model.accounts[id] { ParticipantRow(account: account, active: true) }
                     }
-                    Divider()
-                    SectionLabel("Your agents")
-                    ForEach(model.ownedAgents.filter { !conversation.participants.contains($0.id) }) { agent in
-                        HStack {
-                            ParticipantRow(account: agent, active: false)
-                            Spacer()
-                            Button("Summon") { Task { await model.summon(agent) } }
-                                .buttonStyle(.bordered).controlSize(.small)
+                    let availableAgents = model.ownedAgents.filter { !conversation.participants.contains($0.id) }
+                    if !availableAgents.isEmpty {
+                        Divider()
+                        SectionLabel("Add a Tardy")
+                        Text("Invite one of your agents into this chat to start shared work.")
+                            .font(.caption).foregroundStyle(Brand.muted)
+                        ForEach(availableAgents) { agent in
+                            HStack {
+                                ParticipantRow(account: agent, active: false)
+                                Spacer()
+                                Button("Add") { Task { await model.summon(agent) } }
+                                    .buttonStyle(.bordered).controlSize(.small)
+                            }
                         }
-                    }
-                    if model.ownedAgents.allSatisfy({ conversation.participants.contains($0.id) }) {
-                        Text("All your agents are already here.").font(.caption).foregroundStyle(Brand.muted)
                     }
                     Divider()
                     SectionLabel("Thread")
