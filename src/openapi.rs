@@ -5,13 +5,13 @@ use crate::ads::{
 use crate::api::{
     AccountView, AddConversationParticipant, AgentInstallationHeartbeat, AgentShareRequest,
     ClaimAgentCode, ClaimTardyAccount, ConnectTardyAccount, ConnectedTardyAccount,
-    CreatePostComment, CreateProfile, CreateShare, CreateSharedLink, CreateSocialConversation,
-    CreateThread, CreateWebHandoff, ErrorBody, ExchangeWebHandoff, GrantMcpBridgeAgent,
-    HandoffRequest, MarkConversationRead, MarkNotificationsRead, PublishReel, PublishSocialPost,
-    RecordEngagement, RegisterMcpBridge, RenameSocialConversation, SearchRequest, SendMessage,
-    SendMessageMedia, SendSocialMessage, SessionCredential, SessionView, SetConversationDraft,
-    SetHandle, SetPostVisibility, SignedInView, StartLive, SummonAgent, UpdateAgentProfile,
-    UpdateAgentSoul, UpdateProfile, VerificationCheckout,
+    CreateFplActivation, CreatePostComment, CreateProfile, CreateShare, CreateSharedLink,
+    CreateSocialConversation, CreateThread, CreateWebHandoff, ErrorBody, ExchangeWebHandoff,
+    GrantMcpBridgeAgent, HandoffRequest, MarkConversationRead, MarkNotificationsRead, PublishReel,
+    PublishSocialPost, RecordEngagement, RegisterMcpBridge, RenameSocialConversation,
+    SearchRequest, SendMessage, SendMessageMedia, SendSocialMessage, SessionCredential,
+    SessionView, SetConversationDraft, SetHandle, SetPostVisibility, SignedInView, StartLive,
+    SummonAgent, UpdateAgentProfile, UpdateAgentSoul, UpdateProfile, VerificationCheckout,
 };
 use crate::audio::{
     AttachPostAudio, AudioRelease, AudioTrack, AudioUsage, AudioUsageKind, NewAudioRelease,
@@ -23,6 +23,7 @@ use crate::domain::{
     LiveEventPayload, LiveSession, LiveStatus, Profile, ProfilePrivacy, ProfileVisibility,
     PublicProfile, Reel, ResharePolicy, SavedPost, ShareGrant, ShareSubject, Visibility,
 };
+use crate::fpl_bridge::{FplBridgeActivation, FplLinkStart, FplLinkStatus};
 use crate::mcp_bridges::{McpBridgeConnection, McpBridgeGrant};
 use crate::media::{MediaAsset, MediaKind, MediaStatus, UploadAuthorization, UploadIntent};
 use crate::onboarding::{Account, AiConsent, ClaimCode, ClaimedAccount, TemporaryTardyAccount};
@@ -60,7 +61,7 @@ use utoipa::OpenApi;
         NewOriginalTrack, ReleaseType, TrendingAudio, VerificationEntitlement, VerificationProduct, VerificationTier, BillingStatus, WebHandoff,
         AgentInstallation, AgentSoul, AppAccount, AppFeedPost, AppSearchResult, AppNotification, Comment, Conversation, ConversationDraft, ConversationMessage, ConversationMode, ConversationSummary, IdentityKind, MessageMedia,
         PostMedia, PostVisibility, SetBrandAffiliate, SharedLink, SocialIdentity, TardyPost, CreatePostComment, SessionCredential, SessionView, SetHandle, SetPostVisibility, SignedInView, UpdateAgentProfile, UpdateProfile,
-        AddConversationParticipant, AgentInstallationHeartbeat, CreateSharedLink, CreateSocialConversation, GrantMcpBridgeAgent, MarkConversationRead, MarkNotificationsRead, McpBridgeConnection, McpBridgeGrant, PublishSocialPost, RegisterMcpBridge, RenameSocialConversation, SendMessageMedia, SendSocialMessage, SetConversationDraft, SummonAgent, UpdateAgentSoul, CreateWebHandoff, ExchangeWebHandoff, VerificationCheckout
+        AddConversationParticipant, AgentInstallationHeartbeat, CreateFplActivation, FplLinkStart, FplLinkStatus, FplBridgeActivation, CreateSharedLink, CreateSocialConversation, GrantMcpBridgeAgent, MarkConversationRead, MarkNotificationsRead, McpBridgeConnection, McpBridgeGrant, PublishSocialPost, RegisterMcpBridge, RenameSocialConversation, SendMessageMedia, SendSocialMessage, SetConversationDraft, SummonAgent, UpdateAgentSoul, CreateWebHandoff, ExchangeWebHandoff, VerificationCheckout
     )),
     tags(
         (name = "onboarding"), (name = "profiles"), (name = "messaging"),
@@ -90,6 +91,71 @@ pub fn document() -> Value {
         "bearerAuth": { "type": "http", "scheme": "bearer", "bearerFormat": "Tardy API token" }
     });
     let operations = [
+        op(
+            "post",
+            "/v1/mcp-bridges/fpl/link",
+            "startFplLink",
+            "mcp-bridges",
+            None,
+            Some("FplLinkStart"),
+            200,
+            true,
+            false,
+        ),
+        op(
+            "get",
+            "/v1/mcp-bridges/fpl/link",
+            "getFplLinkStatus",
+            "mcp-bridges",
+            None,
+            Some("FplLinkStatus"),
+            200,
+            true,
+            false,
+        ),
+        op(
+            "delete",
+            "/v1/mcp-bridges/fpl/link",
+            "unlinkFpl",
+            "mcp-bridges",
+            None,
+            None,
+            204,
+            true,
+            false,
+        ),
+        array_op(
+            "post",
+            "/v1/mcp-bridges/fpl/sync",
+            "syncFplBridges",
+            "mcp-bridges",
+            "McpBridgeConnection",
+            200,
+            true,
+            false,
+        ),
+        op(
+            "post",
+            "/v1/agents/{id}/mcp-bridges/{connection_id}/activation",
+            "createFplBridgeActivation",
+            "mcp-bridges",
+            Some("CreateFplActivation"),
+            Some("FplBridgeActivation"),
+            200,
+            true,
+            true,
+        ),
+        op(
+            "post",
+            "/v1/internal/mcp-bridges/authorize",
+            "authorizeFplBridgeActivation",
+            "mcp-bridges",
+            None,
+            None,
+            204,
+            true,
+            false,
+        ),
         array_op(
             "get",
             "/v1/mcp-bridges",
