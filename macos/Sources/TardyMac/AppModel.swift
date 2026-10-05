@@ -11,6 +11,9 @@ final class AppModel {
     var conversations: [Conversation] = []
     var accounts: [UUID: Account] = [:]
     var ownedAgents: [Account] = []
+    var editingAgentSoul: AgentSoul?
+    var editingAgentInstallations: [AgentInstallation] = []
+    var isLoadingAgentSettings = false
     var selectedConversationId: UUID?
     var messages: [Message] = []
     var typingProfileIds: [UUID] = []
@@ -107,8 +110,57 @@ final class AppModel {
         account = nil
         conversations = []
         accounts = [:]
+        editingAgentSoul = nil
+        editingAgentInstallations = []
         messages = []
         phase = .signedOut
+    }
+
+    func loadAgentSettings(_ agent: Account) async {
+        guard agent.ownedByViewer == true else { return }
+        isLoadingAgentSettings = true
+        defer { isLoadingAgentSettings = false }
+        do {
+            async let soul = api.agentSoul(agent: agent.id)
+            async let installations = api.agentInstallations(agent: agent.id)
+            (editingAgentSoul, editingAgentInstallations) = try await (soul, installations)
+        } catch { show(error) }
+    }
+
+    func saveAgentSettings(
+        agent: Account,
+        displayName: String,
+        handle: String,
+        bio: String,
+        publicSummary: String,
+        privateInstructions: String,
+        specialties: [String]
+    ) async -> Bool {
+        guard let soul = editingAgentSoul else { return false }
+        do {
+            async let profileResult = api.updateAgentProfile(
+                agent: agent.id,
+                request: .init(handle: handle, displayName: displayName, bio: bio, avatarUrl: nil)
+            )
+            async let soulResult = api.updateAgentSoul(
+                agent: agent.id,
+                request: .init(
+                    expectedRevision: soul.revision,
+                    publicSummary: publicSummary,
+                    privateInstructions: privateInstructions,
+                    specialties: specialties
+                )
+            )
+            let (profile, updatedSoul) = try await (profileResult, soulResult)
+            accounts[profile.id] = profile
+            if let index = ownedAgents.firstIndex(where: { $0.id == profile.id }) { ownedAgents[index] = profile }
+            if selectedProfile?.id == profile.id { selectedProfile = profile }
+            editingAgentSoul = updatedSoul
+            return true
+        } catch {
+            show(error)
+            return false
+        }
     }
 
     func refreshInbox() async {

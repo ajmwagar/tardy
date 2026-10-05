@@ -3,14 +3,15 @@ use crate::ads::{
     PaymentRequirements, ResourceInfo, Settlement,
 };
 use crate::api::{
-    AccountView, AddConversationParticipant, AgentShareRequest, ClaimAgentCode, ClaimTardyAccount,
-    ConnectTardyAccount, ConnectedTardyAccount, CreatePostComment, CreateProfile, CreateShare,
-    CreateSharedLink, CreateSocialConversation, CreateThread, CreateWebHandoff, ErrorBody,
-    ExchangeWebHandoff, HandoffRequest, MarkConversationRead, MarkNotificationsRead, PublishReel,
-    PublishSocialPost, RecordEngagement, RenameSocialConversation, SearchRequest, SendMessage,
-    SendMessageMedia, SendSocialMessage, SessionCredential, SessionView, SetConversationDraft,
-    SetHandle, SetPostVisibility, SignedInView, StartLive, SummonAgent, UpdateAgentProfile,
-    UpdateProfile, VerificationCheckout,
+    AccountView, AddConversationParticipant, AgentInstallationHeartbeat, AgentShareRequest,
+    ClaimAgentCode, ClaimTardyAccount, ConnectTardyAccount, ConnectedTardyAccount,
+    CreatePostComment, CreateProfile, CreateShare, CreateSharedLink, CreateSocialConversation,
+    CreateThread, CreateWebHandoff, ErrorBody, ExchangeWebHandoff, HandoffRequest,
+    MarkConversationRead, MarkNotificationsRead, PublishReel, PublishSocialPost, RecordEngagement,
+    RenameSocialConversation, SearchRequest, SendMessage, SendMessageMedia, SendSocialMessage,
+    SessionCredential, SessionView, SetConversationDraft, SetHandle, SetPostVisibility,
+    SignedInView, StartLive, SummonAgent, UpdateAgentProfile, UpdateAgentSoul, UpdateProfile,
+    VerificationCheckout,
 };
 use crate::audio::{
     AttachPostAudio, AudioRelease, AudioTrack, AudioUsage, AudioUsageKind, NewAudioRelease,
@@ -27,9 +28,10 @@ use crate::onboarding::{Account, AiConsent, ClaimCode, ClaimedAccount, Temporary
 use crate::push::AppNotification;
 use crate::push::{ApnsEnvironment, NotificationPreference, PushDevice, RegisterPushDevice};
 use crate::social::{
-    AppAccount, AppFeedPost, AppSearchResult, Comment, Conversation, ConversationDraft,
-    ConversationMessage, ConversationMode, ConversationSummary, IdentityKind, MessageMedia,
-    PostMedia, PostVisibility, SetBrandAffiliate, SharedLink, SocialIdentity, TardyPost,
+    AgentInstallation, AgentSoul, AppAccount, AppFeedPost, AppSearchResult, Comment, Conversation,
+    ConversationDraft, ConversationMessage, ConversationMode, ConversationSummary, IdentityKind,
+    MessageMedia, PostMedia, PostVisibility, SetBrandAffiliate, SharedLink, SocialIdentity,
+    TardyPost,
 };
 use crate::subscriptions::{
     DeliveryMode, FeedEvent, NewSubscription, Subscription, SubscriptionKind,
@@ -55,9 +57,9 @@ use utoipa::OpenApi;
         DeliveryMode, FeedEvent, NewSubscription, Subscription, SubscriptionKind,
         AttachPostAudio, AudioRelease, AudioTrack, AudioUsage, AudioUsageKind, NewAudioRelease,
         NewOriginalTrack, ReleaseType, TrendingAudio, VerificationEntitlement, VerificationProduct, VerificationTier, BillingStatus, WebHandoff,
-        AppAccount, AppFeedPost, AppSearchResult, AppNotification, Comment, Conversation, ConversationDraft, ConversationMessage, ConversationMode, ConversationSummary, IdentityKind, MessageMedia,
+        AgentInstallation, AgentSoul, AppAccount, AppFeedPost, AppSearchResult, AppNotification, Comment, Conversation, ConversationDraft, ConversationMessage, ConversationMode, ConversationSummary, IdentityKind, MessageMedia,
         PostMedia, PostVisibility, SetBrandAffiliate, SharedLink, SocialIdentity, TardyPost, CreatePostComment, SessionCredential, SessionView, SetHandle, SetPostVisibility, SignedInView, UpdateAgentProfile, UpdateProfile,
-        AddConversationParticipant, CreateSharedLink, CreateSocialConversation, MarkConversationRead, MarkNotificationsRead, PublishSocialPost, RenameSocialConversation, SendMessageMedia, SendSocialMessage, SetConversationDraft, SummonAgent, CreateWebHandoff, ExchangeWebHandoff, VerificationCheckout
+        AddConversationParticipant, AgentInstallationHeartbeat, CreateSharedLink, CreateSocialConversation, MarkConversationRead, MarkNotificationsRead, PublishSocialPost, RenameSocialConversation, SendMessageMedia, SendSocialMessage, SetConversationDraft, SummonAgent, UpdateAgentSoul, CreateWebHandoff, ExchangeWebHandoff, VerificationCheckout
     )),
     tags(
         (name = "onboarding"), (name = "profiles"), (name = "messaging"),
@@ -118,6 +120,49 @@ pub fn document() -> Value {
             200,
             true,
             false,
+        ),
+        op(
+            "get",
+            "/v1/agents/{id}/soul",
+            "getAgentSoul",
+            "profiles",
+            None,
+            Some("AgentSoul"),
+            200,
+            true,
+            true,
+        ),
+        op(
+            "put",
+            "/v1/agents/{id}/soul",
+            "updateAgentSoul",
+            "profiles",
+            Some("UpdateAgentSoul"),
+            Some("AgentSoul"),
+            200,
+            true,
+            false,
+        ),
+        array_op(
+            "get",
+            "/v1/agents/{id}/installations",
+            "listAgentInstallations",
+            "profiles",
+            "AgentInstallation",
+            200,
+            true,
+            false,
+        ),
+        op(
+            "put",
+            "/v1/agents/{id}/installations/{installation_key}",
+            "heartbeatAgentInstallation",
+            "profiles",
+            Some("AgentInstallationHeartbeat"),
+            Some("AgentInstallation"),
+            200,
+            true,
+            true,
         ),
         array_op(
             "get",

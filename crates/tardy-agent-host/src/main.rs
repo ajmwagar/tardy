@@ -163,6 +163,7 @@ async fn main() -> Result<(), BoxError> {
         tapbacks,
     };
     let worker = tokio::spawn(work_loop(app.clone()));
+    let presence = tokio::spawn(installation_presence_loop(app.clone(), runtime.as_str()));
     let mode = env_or("TARDY_AGENT_DELIVERY", "poll");
     if mode == "webhook" {
         serve_webhook(app.clone()).await?;
@@ -172,7 +173,38 @@ async fn main() -> Result<(), BoxError> {
         return Err("TARDY_AGENT_DELIVERY must be poll or webhook".into());
     }
     worker.abort();
+    presence.abort();
     Ok(())
+}
+
+async fn installation_presence_loop(app: App, runtime: &'static str) {
+    let key = env_or("TARDY_AGENT_INSTALLATION_KEY", "local");
+    let name = env_or("TARDY_AGENT_INSTALLATION_NAME", &key);
+    let capabilities = ["chat", "streaming", "tools", "media"];
+    loop {
+        let result = request_ok(
+            app.client
+                .put(format!(
+                    "{}/v1/agents/{}/installations/{}",
+                    api(&app),
+                    app.credential.profile_id,
+                    key
+                ))
+                .bearer_auth(&app.credential.api_token)
+                .header("x-tardy-profile-id", &app.credential.profile_id)
+                .json(&json!({
+                    "display_name": name,
+                    "runtime": runtime,
+                    "capabilities": capabilities,
+                    "status": "available"
+                })),
+        )
+        .await;
+        if let Err(error) = result {
+            tracing::warn!(%error, "agent installation heartbeat failed");
+        }
+        tokio::time::sleep(Duration::from_secs(30)).await;
+    }
 }
 
 async fn doctor() -> Result<(), BoxError> {
@@ -780,11 +812,21 @@ async fn process_one(app: &App, queued: &QueuedEvent) -> Result<(), BoxError> {
                     })),
                 )
             };
+            let base_prompt = activation_prompt(&app.credential.handle, &activation, &context);
+            let private_soul = fetch_private_soul(app).await?;
+            let prompt = if private_soul.is_empty() {
+                base_prompt
+            } else {
+                format!(
+                    "{base_prompt}\n\nPersistent private soul for @{} (owner-controlled; follow it unless the current request or safety policy conflicts):\n{}",
+                    app.credential.handle, private_soul
+                )
+            };
             let dispatch_result = app
                 .runner
                 .dispatch(
                     thread_id.as_deref(),
-                    &activation_prompt(&app.credential.handle, &activation, &context),
+                    &prompt,
                     progress,
                 )
                 .await;
@@ -849,6 +891,32 @@ async fn process_one(app: &App, queued: &QueuedEvent) -> Result<(), BoxError> {
     result?;
     typing_result?;
     Ok(())
+}
+
+async fn fetch_private_soul(app: &App) -> Result<String, BoxError> {
+    let response = app
+        .client
+        .get(format!(
+            "{}/v1/agents/{}/soul",
+            api(app),
+            app.credential.profile_id
+        ))
+        .bearer_auth(&app.credential.api_token)
+        .header("x-tardy-profile-id", &app.credential.profile_id)
+        .send()
+        .await?;
+    if response.status() == StatusCode::NOT_FOUND {
+        return Ok(String::new());
+    }
+    if !response.status().is_success() {
+        return Err(format!("agent soul fetch returned HTTP {}", response.status()).into());
+    }
+    let body: Value = response.json().await?;
+    Ok(body
+        .get("private_instructions")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned())
 }
 
 async fn fetch_context(

@@ -30,6 +30,40 @@ struct Account: Codable, Identifiable, Hashable, Sendable {
     var avatarURL: URL? { URL(string: avatarUrl) }
 }
 
+struct AgentSoul: Codable, Equatable, Sendable {
+    let agentProfileId: UUID
+    let revision: Int64
+    let publicSummary: String
+    let privateInstructions: String
+    let specialties: [String]
+    let updatedAt: String
+}
+
+struct AgentInstallation: Codable, Identifiable, Equatable, Sendable {
+    let id: UUID
+    let agentProfileId: UUID
+    let installationKey: String
+    let displayName: String
+    let runtime: String
+    let capabilities: [String]
+    let status: String
+    let lastSeenAt: String
+}
+
+struct UpdateAgentSoulRequest: Encodable, Sendable {
+    let expectedRevision: Int64
+    let publicSummary: String
+    let privateInstructions: String
+    let specialties: [String]
+}
+
+struct UpdateAgentProfileRequest: Encodable, Sendable {
+    let handle: String?
+    let displayName: String?
+    let bio: String?
+    let avatarUrl: String?
+}
+
 enum AccountKind: String, Codable, Sendable {
     case human, agent, project, channel
 }
