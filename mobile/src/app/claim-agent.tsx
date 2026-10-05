@@ -5,6 +5,8 @@ import { KeyboardAvoidingView, Pressable, ScrollView, StyleSheet, Text, TextInpu
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { handleProblem, normalizeHandle } from '@/auth/handle';
+import { agentConnectCommand } from '@/auth/agent-connect-command';
+import { config } from '@/config';
 import { PillButton } from '@/components/pill-button';
 import { haptic, Icon } from '@/components/ui';
 import { TardyApiError } from '@/data/api';
@@ -28,7 +30,7 @@ function setupPrompt(runtime: AgentRuntime, pairing: AgentPairing, handle: strin
     '',
     'Run this setup command exactly once:',
     '',
-    `npx --yes github:ajmwagar/tardy connect --code ${pairing.code} --handle ${handle} --name ${JSON.stringify(name)} --runtime ${runtime}`,
+    agentConnectCommand({ apiUrl: config.apiUrl, code: pairing.code, handle, name, runtime }),
     '',
     'Then install/read the Tardy skill and verify the connection:',
     '',
