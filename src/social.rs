@@ -21,10 +21,36 @@ pub enum SocialError {
     Notification(#[from] crate::push::PushError),
     #[error("invalid social request: {0}")]
     Invalid(&'static str),
+    #[error("social state conflict: {0}")]
+    Conflict(&'static str),
     #[error("social resource not found")]
     NotFound,
     #[error("social action is not permitted")]
     Forbidden,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct AgentSoul {
+    pub agent_profile_id: Uuid,
+    pub revision: i64,
+    pub public_summary: String,
+    pub private_instructions: String,
+    pub specialties: Vec<String>,
+    #[schema(value_type = String, format = DateTime)]
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct AgentInstallation {
+    pub id: Uuid,
+    pub agent_profile_id: Uuid,
+    pub installation_key: String,
+    pub display_name: String,
+    pub runtime: String,
+    pub capabilities: Vec<String>,
+    pub status: String,
+    #[schema(value_type = String, format = DateTime)]
+    pub last_seen_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -166,6 +192,27 @@ pub struct ConversationMessage {
     pub read_by: Vec<Uuid>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct ConversationDraft {
+    pub conversation_id: Uuid,
+    pub sender_profile_id: Uuid,
+    pub body: String,
+    pub status: String,
+    pub detail: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub activities: Vec<ConversationDraftActivity>,
+    #[schema(value_type = String, format = DateTime)]
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct ConversationDraftActivity {
+    pub id: String,
+    pub kind: String,
+    pub title: String,
+    pub phase: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct MessageMedia {
     pub asset_id: Uuid,
@@ -219,7 +266,12 @@ pub struct TardyPost {
 pub struct PostMedia {
     #[serde(rename = "type")]
     pub kind: String,
+    #[serde(default)]
     pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asset_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub poster_asset_id: Option<Uuid>,
     pub poster_url: Option<String>,
     pub width: u32,
     pub height: u32,
@@ -868,6 +920,210 @@ impl PgSocialStore {
         Ok(())
     }
 
+    pub async fn agent_soul(
+        &self,
+        owner_account_id: Uuid,
+        profile_id: Uuid,
+    ) -> Result<AgentSoul, SocialError> {
+        self.require_agent_owner(owner_account_id, profile_id)
+            .await?;
+        self.agent_soul_for_profile(profile_id).await
+    }
+
+    pub async fn agent_soul_for_profile(&self, profile_id: Uuid) -> Result<AgentSoul, SocialError> {
+        let is_agent: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM social_identities WHERE profile_id=$1 AND kind='agent')",
+        )
+        .bind(profile_id)
+        .fetch_one(&self.pool)
+        .await?;
+        if !is_agent {
+            return Err(SocialError::Forbidden);
+        }
+        let row = sqlx::query(
+            "SELECT revision,public_summary,private_instructions,specialties,created_at
+             FROM agent_soul_revisions WHERE agent_profile_id=$1 ORDER BY revision DESC LIMIT 1",
+        )
+        .bind(profile_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(match row {
+            Some(row) => AgentSoul {
+                agent_profile_id: profile_id,
+                revision: row.try_get("revision")?,
+                public_summary: row.try_get("public_summary")?,
+                private_instructions: row.try_get("private_instructions")?,
+                specialties: row.try_get("specialties")?,
+                updated_at: row.try_get("created_at")?,
+            },
+            None => AgentSoul {
+                agent_profile_id: profile_id,
+                revision: 0,
+                public_summary: String::new(),
+                private_instructions: String::new(),
+                specialties: Vec::new(),
+                updated_at: Utc::now(),
+            },
+        })
+    }
+
+    pub async fn update_agent_soul(
+        &self,
+        owner_account_id: Uuid,
+        profile_id: Uuid,
+        expected_revision: i64,
+        public_summary: &str,
+        private_instructions: &str,
+        specialties: &[String],
+    ) -> Result<AgentSoul, SocialError> {
+        let public_summary = public_summary.trim();
+        let private_instructions = private_instructions.trim();
+        let specialties = specialties
+            .iter()
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>();
+        if expected_revision < 0
+            || public_summary.chars().count() > 1000
+            || private_instructions.chars().count() > 12000
+            || specialties.len() > 24
+            || specialties.iter().any(|value| value.chars().count() > 80)
+        {
+            return Err(SocialError::Invalid("invalid agent soul"));
+        }
+        let mut tx = self.pool.begin().await?;
+        let owns: Option<i32> = sqlx::query_scalar(
+            "SELECT 1 FROM profile_ownership o JOIN social_identities s ON s.profile_id=o.profile_id
+             WHERE o.owner_account_id=$1 AND o.profile_id=$2 AND s.kind='agent' FOR UPDATE OF o",
+        )
+        .bind(owner_account_id)
+        .bind(profile_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if owns.is_none() {
+            return Err(SocialError::Forbidden);
+        }
+        let current: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(revision),0) FROM agent_soul_revisions WHERE agent_profile_id=$1",
+        )
+        .bind(profile_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if current != expected_revision {
+            return Err(SocialError::Conflict("agent soul was updated elsewhere"));
+        }
+        let row = sqlx::query(
+            "INSERT INTO agent_soul_revisions (agent_profile_id,revision,public_summary,private_instructions,specialties,created_by_account_id)
+             VALUES ($1,$2,$3,$4,$5,$6)
+             RETURNING revision,public_summary,private_instructions,specialties,created_at",
+        )
+        .bind(profile_id)
+        .bind(current + 1)
+        .bind(public_summary)
+        .bind(private_instructions)
+        .bind(&specialties)
+        .bind(owner_account_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(AgentSoul {
+            agent_profile_id: profile_id,
+            revision: row.try_get("revision")?,
+            public_summary: row.try_get("public_summary")?,
+            private_instructions: row.try_get("private_instructions")?,
+            specialties: row.try_get("specialties")?,
+            updated_at: row.try_get("created_at")?,
+        })
+    }
+
+    pub async fn agent_installations(
+        &self,
+        owner_account_id: Uuid,
+        profile_id: Uuid,
+    ) -> Result<Vec<AgentInstallation>, SocialError> {
+        self.require_agent_owner(owner_account_id, profile_id)
+            .await?;
+        let rows = sqlx::query(
+            "SELECT id,agent_profile_id,installation_key,display_name,runtime,capabilities,
+                    CASE WHEN last_seen_at < now()-interval '90 seconds' THEN 'offline' ELSE status END AS status,
+                    last_seen_at
+             FROM agent_installations WHERE agent_profile_id=$1 ORDER BY last_seen_at DESC,id",
+        )
+        .bind(profile_id)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(AgentInstallation {
+                    id: row.try_get("id")?,
+                    agent_profile_id: row.try_get("agent_profile_id")?,
+                    installation_key: row.try_get("installation_key")?,
+                    display_name: row.try_get("display_name")?,
+                    runtime: row.try_get("runtime")?,
+                    capabilities: row.try_get("capabilities")?,
+                    status: row.try_get("status")?,
+                    last_seen_at: row.try_get("last_seen_at")?,
+                })
+            })
+            .collect()
+    }
+
+    pub async fn heartbeat_agent_installation(
+        &self,
+        agent_profile_id: Uuid,
+        installation_key: &str,
+        display_name: &str,
+        runtime: &str,
+        capabilities: &[String],
+        status: &str,
+    ) -> Result<AgentInstallation, SocialError> {
+        let installation_key = installation_key.trim();
+        let display_name = display_name.trim();
+        if installation_key.is_empty()
+            || installation_key.len() > 120
+            || display_name.is_empty()
+            || display_name.chars().count() > 120
+            || !matches!(runtime, "codex" | "opencode" | "hermes" | "openclaw")
+            || !matches!(status, "available" | "busy" | "paused")
+            || capabilities.len() > 64
+            || capabilities.iter().any(|value| value.len() > 120)
+        {
+            return Err(SocialError::Invalid("invalid agent installation heartbeat"));
+        }
+        let row = sqlx::query(
+            "INSERT INTO agent_installations (id,agent_profile_id,installation_key,display_name,runtime,capabilities,status)
+             SELECT $1,$2,$3,$4,$5,$6,$7 WHERE EXISTS(SELECT 1 FROM social_identities WHERE profile_id=$2 AND kind='agent')
+             ON CONFLICT (agent_profile_id,installation_key) DO UPDATE SET
+                display_name=excluded.display_name,runtime=excluded.runtime,capabilities=excluded.capabilities,
+                status=excluded.status,last_seen_at=now()
+             RETURNING id,agent_profile_id,installation_key,display_name,runtime,capabilities,status,last_seen_at",
+        )
+        .bind(Uuid::new_v4()).bind(agent_profile_id).bind(installation_key).bind(display_name)
+        .bind(runtime).bind(capabilities).bind(status)
+        .fetch_optional(&self.pool).await?.ok_or(SocialError::Forbidden)?;
+        Ok(AgentInstallation {
+            id: row.try_get("id")?,
+            agent_profile_id: row.try_get("agent_profile_id")?,
+            installation_key: row.try_get("installation_key")?,
+            display_name: row.try_get("display_name")?,
+            runtime: row.try_get("runtime")?,
+            capabilities: row.try_get("capabilities")?,
+            status: row.try_get("status")?,
+            last_seen_at: row.try_get("last_seen_at")?,
+        })
+    }
+
+    async fn require_agent_owner(&self, owner: Uuid, profile: Uuid) -> Result<(), SocialError> {
+        let owns: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM profile_ownership o JOIN social_identities s ON s.profile_id=o.profile_id WHERE o.owner_account_id=$1 AND o.profile_id=$2 AND s.kind='agent')",
+        ).bind(owner).bind(profile).fetch_one(&self.pool).await?;
+        if owns {
+            Ok(())
+        } else {
+            Err(SocialError::Forbidden)
+        }
+    }
+
     pub async fn set_brand_affiliate(
         &self,
         actor_account_id: Uuid,
@@ -1365,6 +1621,118 @@ impl PgSocialStore {
         rows.into_iter().map(|row| message_from_row(&row)).collect()
     }
 
+    pub async fn drafts(
+        &self,
+        actor: Uuid,
+        conversation_id: Uuid,
+    ) -> Result<Vec<ConversationDraft>, SocialError> {
+        let mut tx = self.pool.begin().await?;
+        require_participant(&mut tx, conversation_id, actor).await?;
+        sqlx::query("DELETE FROM conversation_drafts WHERE expires_at<=now()")
+            .execute(&mut *tx)
+            .await?;
+        let rows = sqlx::query(
+            "SELECT conversation_id,sender_profile_id,body,status,detail,activities,updated_at
+             FROM conversation_drafts WHERE conversation_id=$1
+             ORDER BY updated_at,sender_profile_id",
+        )
+        .bind(conversation_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(ConversationDraft {
+                    conversation_id: row.try_get("conversation_id")?,
+                    sender_profile_id: row.try_get("sender_profile_id")?,
+                    body: row.try_get("body")?,
+                    status: row.try_get("status")?,
+                    detail: row.try_get("detail")?,
+                    activities: serde_json::from_value(row.try_get("activities")?)
+                        .map_err(|_| SocialError::Invalid("invalid stored draft activities"))?,
+                    updated_at: row.try_get("updated_at")?,
+                })
+            })
+            .collect()
+    }
+
+    pub async fn set_draft(
+        &self,
+        actor: Uuid,
+        conversation_id: Uuid,
+        body: &str,
+        status: &str,
+        detail: &str,
+        activities: &[ConversationDraftActivity],
+    ) -> Result<ConversationDraft, SocialError> {
+        if body.len() > 20_000
+            || detail.len() > 500
+            || activities.len() > 20
+            || activities.iter().any(|activity| {
+                activity.id.len() > 200
+                    || activity.kind.len() > 40
+                    || activity.title.len() > 500
+                    || !matches!(activity.phase.as_str(), "running" | "completed" | "failed")
+            })
+            || !matches!(status, "writing" | "tool" | "finalizing")
+        {
+            return Err(SocialError::Invalid("invalid conversation draft"));
+        }
+        let mut tx = self.pool.begin().await?;
+        require_participant(&mut tx, conversation_id, actor).await?;
+        let is_agent: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM social_identities WHERE profile_id=$1 AND kind='agent')",
+        )
+        .bind(actor)
+        .fetch_one(&mut *tx)
+        .await?;
+        if !is_agent {
+            return Err(SocialError::Forbidden);
+        }
+        let row = sqlx::query(
+            "INSERT INTO conversation_drafts
+                (conversation_id,sender_profile_id,body,status,detail,activities,expires_at)
+             VALUES ($1,$2,$3,$4,$5,$6,now()+interval '5 minutes')
+             ON CONFLICT (conversation_id,sender_profile_id) DO UPDATE SET
+                body=excluded.body,status=excluded.status,detail=excluded.detail,activities=excluded.activities,
+                updated_at=now(),expires_at=excluded.expires_at
+             RETURNING conversation_id,sender_profile_id,body,status,detail,activities,updated_at",
+        )
+        .bind(conversation_id)
+        .bind(actor)
+        .bind(body)
+        .bind(status)
+        .bind(detail)
+        .bind(serde_json::to_value(activities).map_err(|_| SocialError::Invalid("invalid draft activities"))?)
+        .fetch_one(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(ConversationDraft {
+            conversation_id: row.try_get("conversation_id")?,
+            sender_profile_id: row.try_get("sender_profile_id")?,
+            body: row.try_get("body")?,
+            status: row.try_get("status")?,
+            detail: row.try_get("detail")?,
+            activities: serde_json::from_value(row.try_get("activities")?)
+                .map_err(|_| SocialError::Invalid("invalid stored draft activities"))?,
+            updated_at: row.try_get("updated_at")?,
+        })
+    }
+
+    pub async fn clear_draft(&self, actor: Uuid, conversation_id: Uuid) -> Result<(), SocialError> {
+        let mut tx = self.pool.begin().await?;
+        require_participant(&mut tx, conversation_id, actor).await?;
+        sqlx::query(
+            "DELETE FROM conversation_drafts WHERE conversation_id=$1 AND sender_profile_id=$2",
+        )
+        .bind(conversation_id)
+        .bind(actor)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
     pub async fn summon_agent(
         &self,
         actor_account: Uuid,
@@ -1705,6 +2073,13 @@ impl PgSocialStore {
             reactions: Vec::new(),
             read_by: Vec::new(),
         };
+        sqlx::query(
+            "DELETE FROM conversation_drafts WHERE conversation_id=$1 AND sender_profile_id=$2",
+        )
+        .bind(conversation_id)
+        .bind(actor)
+        .execute(&mut *tx)
+        .await?;
         tx.commit().await?;
         Ok(message)
     }
@@ -1885,12 +2260,12 @@ impl PgSocialStore {
             return Err(SocialError::Invalid("too many mentions"));
         }
         let mut tx = self.pool.begin().await?;
-        let post_author: Uuid =
-            sqlx::query_scalar("SELECT author_profile_id FROM tardy_posts WHERE id=$1")
-                .bind(post_id)
-                .fetch_optional(&mut *tx)
-                .await?
-                .ok_or(SocialError::NotFound)?;
+        let post_author: Uuid = sqlx::query_scalar(VISIBLE_POST_AUTHOR_SQL)
+            .bind(post_id)
+            .bind(actor)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(SocialError::NotFound)?;
         let actor_handle = identity_handle(&mut tx, actor).await?;
         let id = Uuid::new_v4();
         let created_at: DateTime<Utc> = sqlx::query_scalar("INSERT INTO post_comments (id,post_id,author_profile_id,body) VALUES ($1,$2,$3,$4) RETURNING created_at")
@@ -1944,25 +2319,12 @@ impl PgSocialStore {
     }
 
     pub async fn comments(&self, actor: Uuid, post_id: Uuid) -> Result<Vec<Comment>, SocialError> {
-        let visible: bool = sqlx::query_scalar(
-            "SELECT EXISTS(
-                SELECT 1 FROM tardy_posts p
-                WHERE p.id=$1 AND (
-                    p.visibility='public'
-                    OR p.author_profile_id=$2
-                    OR (p.visibility='followers' AND EXISTS (
-                        SELECT 1 FROM profile_follows f
-                        WHERE f.follower_profile_id=$2
-                          AND f.followed_profile_id=p.author_profile_id
-                    ))
-                )
-            )",
-        )
-        .bind(post_id)
-        .bind(actor)
-        .fetch_one(&self.pool)
-        .await?;
-        if !visible {
+        let visible = sqlx::query_scalar::<_, Uuid>(VISIBLE_POST_AUTHOR_SQL)
+            .bind(post_id)
+            .bind(actor)
+            .fetch_optional(&self.pool)
+            .await?;
+        if visible.is_none() {
             return Err(SocialError::NotFound);
         }
         let rows = sqlx::query(
@@ -1993,6 +2355,26 @@ impl PgSocialStore {
             .collect()
     }
 }
+
+const VISIBLE_POST_AUTHOR_SQL: &str = "SELECT p.author_profile_id
+     FROM tardy_posts p
+     WHERE p.id=$1 AND (
+         p.visibility='public'
+         OR p.author_profile_id=$2
+         OR EXISTS (
+             SELECT 1
+             FROM social_identities viewer_identity
+             JOIN profile_ownership owned
+               ON owned.owner_account_id=viewer_identity.account_id
+             WHERE viewer_identity.profile_id=$2
+               AND owned.profile_id=p.author_profile_id
+         )
+         OR (p.visibility='followers' AND EXISTS (
+             SELECT 1 FROM profile_follows f
+             WHERE f.follower_profile_id=$2
+               AND f.followed_profile_id=p.author_profile_id
+         ))
+     )";
 
 async fn require_identity(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -2349,12 +2731,24 @@ fn validate_post_media(media: &[PostMedia]) -> Result<(), SocialError> {
             || item.height == 0
             || url::Url::parse(&item.url)
                 .ok()
-                .filter(|url| matches!(url.scheme(), "http" | "https"))
+                .filter(|url| {
+                    matches!(url.scheme(), "http" | "https")
+                        || (url.scheme() == "tardy-asset"
+                            && item
+                                .asset_id
+                                .is_some_and(|id| item.url == format!("tardy-asset://{id}")))
+                })
                 .is_none()
             || item.poster_url.as_deref().is_some_and(|value| {
                 url::Url::parse(value)
                     .ok()
-                    .filter(|url| matches!(url.scheme(), "http" | "https"))
+                    .filter(|url| {
+                        matches!(url.scheme(), "http" | "https")
+                            || (url.scheme() == "tardy-asset"
+                                && item
+                                    .poster_asset_id
+                                    .is_some_and(|id| value == format!("tardy-asset://{id}")))
+                    })
                     .is_none()
             })
         {
@@ -2371,6 +2765,8 @@ mod post_media_tests {
     fn media(kind: &str, duration_ms: u64) -> PostMedia {
         PostMedia {
             kind: kind.into(),
+            asset_id: None,
+            poster_asset_id: None,
             url: format!("https://media.test/item.{kind}"),
             poster_url: (kind == "video").then(|| "https://media.test/poster.jpg".into()),
             width: 1080,

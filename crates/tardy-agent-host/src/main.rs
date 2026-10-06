@@ -14,10 +14,11 @@ use std::{
 };
 use tardy_agent_host::{
     AgentCommand, AgentCredential, BoxError, CodexRunner, ConversationMessage, HostData,
-    InboxEvent, OpenCodeRunner, PendingMedia, PendingReply, QueuedEvent, RuntimeKind,
-    RuntimeRunner, TapbackDecider, WorkActivation, activation_prompt, dispatchable_deliveries,
-    extract_image_directives, extract_tardy_caption, load_json, obvious_tapback,
-    should_publish_tardy, store_json, verify_signature,
+    InboxEvent, OpenCodeRunner, PendingMedia, PendingReply, QueuedEvent, RuntimeActivity,
+    RuntimeEvent, RuntimeKind, RuntimeRunner, Tapback, TapbackDecider, WorkActivation,
+    activation_prompt, dispatchable_deliveries, extract_image_directives, extract_manim_directives,
+    extract_mermaid_directives, extract_tardy_caption, load_json, obvious_presence_reply,
+    obvious_tapback, should_publish_tardy, store_json, verify_signature,
 };
 use tokio::sync::{Mutex, Notify};
 
@@ -53,6 +54,9 @@ async fn main() -> Result<(), BoxError> {
             return Err("tapback requires a message to classify".into());
         }
         let decision = tokio::task::spawn_blocking(move || {
+            if let Some(obvious) = obvious_tapback(&body) {
+                return Ok::<_, BoxError>(obvious);
+            }
             TapbackDecider::from_env()?.decide("host-doctor", &body)
         })
         .await??;
@@ -62,8 +66,25 @@ async fn main() -> Result<(), BoxError> {
     if command == "doctor" {
         return doctor().await;
     }
+    if command == "render-manim" {
+        let path = std::env::args()
+            .nth(2)
+            .ok_or("render-manim requires a workspace-relative request.json path")?;
+        let rendered = render_manim(&[tardy_agent_host::ManimDirective {
+            path: PathBuf::from(path),
+            alt_text: None,
+        }])
+        .await?;
+        for artifact in rendered {
+            println!("{}", artifact.path.display());
+        }
+        return Ok(());
+    }
     if command != "run" {
-        return Err(format!("unknown command {command}; expected run, doctor, or help").into());
+        return Err(format!(
+            "unknown command {command}; expected run, doctor, render-manim, or help"
+        )
+        .into());
     }
     let credential_path = expand_path(&env_or("TARDY_STATE_PATH", "~/.config/tardy/agent.json"));
     let data_path = expand_path(&env_or(
@@ -142,6 +163,7 @@ async fn main() -> Result<(), BoxError> {
         tapbacks,
     };
     let worker = tokio::spawn(work_loop(app.clone()));
+    let presence = tokio::spawn(installation_presence_loop(app.clone(), runtime.as_str()));
     let mode = env_or("TARDY_AGENT_DELIVERY", "poll");
     if mode == "webhook" {
         serve_webhook(app.clone()).await?;
@@ -151,7 +173,38 @@ async fn main() -> Result<(), BoxError> {
         return Err("TARDY_AGENT_DELIVERY must be poll or webhook".into());
     }
     worker.abort();
+    presence.abort();
     Ok(())
+}
+
+async fn installation_presence_loop(app: App, runtime: &'static str) {
+    let key = env_or("TARDY_AGENT_INSTALLATION_KEY", "local");
+    let name = env_or("TARDY_AGENT_INSTALLATION_NAME", &key);
+    let capabilities = ["chat", "streaming", "tools", "media"];
+    loop {
+        let result = request_ok(
+            app.client
+                .put(format!(
+                    "{}/v1/agents/{}/installations/{}",
+                    api(&app),
+                    app.credential.profile_id,
+                    key
+                ))
+                .bearer_auth(&app.credential.api_token)
+                .header("x-tardy-profile-id", &app.credential.profile_id)
+                .json(&json!({
+                    "display_name": name,
+                    "runtime": runtime,
+                    "capabilities": capabilities,
+                    "status": "available"
+                })),
+        )
+        .await;
+        if let Err(error) = result {
+            tracing::warn!(%error, "agent installation heartbeat failed");
+        }
+        tokio::time::sleep(Duration::from_secs(30)).await;
+    }
 }
 
 async fn doctor() -> Result<(), BoxError> {
@@ -207,7 +260,7 @@ async fn poll_loop(app: App) -> Result<(), BoxError> {
         .ok_or("missing subscription")?;
     loop {
         let cursor = app.data.lock().await.cursor;
-        let response = app
+        let response = match app
             .client
             .get(format!(
                 "{}/v1/feed-subscriptions/{subscription}/events",
@@ -215,14 +268,32 @@ async fn poll_loop(app: App) -> Result<(), BoxError> {
             ))
             .query(&[("after", cursor), ("limit", 50_i64)])
             .bearer_auth(&app.credential.api_token)
+            .header(reqwest::header::CONNECTION, "close")
+            .timeout(Duration::from_secs(5))
             .send()
-            .await?;
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => {
+                tracing::warn!(%error, "Tardy inbox poll request failed; retrying");
+                tokio::time::sleep(Duration::from_secs(3)).await;
+                continue;
+            }
+        };
         if !response.status().is_success() {
             tracing::warn!(status = %response.status(), "Tardy inbox poll failed");
             tokio::time::sleep(Duration::from_secs(3)).await;
             continue;
         }
-        for event in response.json::<Vec<InboxEvent>>().await? {
+        let events = match response.json::<Vec<InboxEvent>>().await {
+            Ok(events) => events,
+            Err(error) => {
+                tracing::warn!(%error, "Tardy inbox poll body failed; retrying");
+                tokio::time::sleep(Duration::from_secs(3)).await;
+                continue;
+            }
+        };
+        for event in events {
             enqueue(&app, format!("poll:{}", event.id), event).await?;
         }
         tokio::select! {
@@ -274,18 +345,31 @@ async fn webhook(
 }
 
 async fn enqueue(app: &App, delivery_id: String, event: InboxEvent) -> Result<(), BoxError> {
+    let activation = WorkActivation::from_event(&event);
     let mut data = app.data.lock().await;
-    if data.processed_deliveries.contains(&delivery_id)
-        || data
-            .queue
-            .iter()
-            .any(|queued| queued.delivery_id == delivery_id)
-    {
+    if data.processed_deliveries.contains(&delivery_id) {
         return Ok(());
     }
-    data.queue.push_back(QueuedEvent { delivery_id, event });
-    store_json(&app.data_path, &*data).await?;
+    let already_queued = data
+        .queue
+        .iter()
+        .any(|queued| queued.delivery_id == delivery_id);
+    if !already_queued {
+        data.queue.push_back(QueuedEvent { delivery_id, event });
+        store_json(&app.data_path, &*data).await?;
+    }
     drop(data);
+    // Acknowledgement is a fast, independent lane. A busy Codex/OpenCode session must not
+    // delay the human-visible receipt for work that is already durably queued.
+    if let Some(activation) = activation
+        && !activation.legacy_dm
+        && !activation.message_id.is_empty()
+        && let Err(error) = acknowledge(app, &activation).await
+    {
+        // The durable queue remains the retry boundary: process_one calls acknowledge again
+        // before dispatch, and acknowledged message ids keep successful sends idempotent.
+        tracing::warn!(%error, "immediate message acknowledgement failed; retained for retry");
+    }
     app.notify.notify_one();
     Ok(())
 }
@@ -545,6 +629,8 @@ async fn publish_last_result_as_tardy(
         });
         vec![json!({
             "type": "video",
+            "asset_id": video.asset_id,
+            "poster_asset_id": poster.map(|item| &item.asset_id),
             "url": video.url.as_deref().ok_or("completed reel upload omitted its URL")?,
             "poster_url": poster.and_then(|item| item.url.as_deref()),
             "width": video.width.ok_or("reel upload omitted width")?,
@@ -560,6 +646,7 @@ async fn publish_last_result_as_tardy(
                     .filter(|kind| kind.starts_with("image/"))?;
                 Some(json!({
                     "type": "image",
+                    "asset_id": item.asset_id,
                     "url": item.url.as_deref()?,
                     "poster_url": null,
                     "width": item.width?,
@@ -643,6 +730,20 @@ async fn process_one(app: &App, queued: &QueuedEvent) -> Result<(), BoxError> {
     if !activation.legacy_dm && !activation.message_id.is_empty() {
         acknowledge(app, &activation).await?;
     }
+    if let Some(body) = obvious_presence_reply(&activation.body) {
+        return send_reply(
+            app,
+            &PendingReply {
+                conversation_id: activation.conversation_id,
+                body: body.to_owned(),
+                media: Vec::new(),
+                legacy_dm: activation.legacy_dm,
+                context_cursor: activation.sequence,
+                publish_tardy: false,
+            },
+        )
+        .await;
+    }
     let typing_renewal = if activation.legacy_dm {
         None
     } else {
@@ -701,14 +802,48 @@ async fn process_one(app: &App, queued: &QueuedEvent) -> Result<(), BoxError> {
                 .last()
                 .map(|message| message.sequence)
                 .or(activation.sequence);
-            let result = app
+            let (progress, forwarder) = if activation.legacy_dm {
+                (None, None)
+            } else {
+                let (sender, receiver) = tokio::sync::mpsc::channel(64);
+                let draft_app = app.clone();
+                let conversation = activation.conversation_id.clone();
+                (
+                    Some(sender),
+                    Some(tokio::spawn(async move {
+                        forward_runtime_events(&draft_app, &conversation, receiver).await
+                    })),
+                )
+            };
+            let base_prompt = activation_prompt(&app.credential.handle, &activation, &context);
+            let private_soul = fetch_private_soul(app).await?;
+            let prompt = if private_soul.is_empty() {
+                base_prompt
+            } else {
+                format!(
+                    "{base_prompt}\n\nPersistent private soul for @{} (owner-controlled; follow it unless the current request or safety policy conflicts):\n{}",
+                    app.credential.handle, private_soul
+                )
+            };
+            let dispatch_result = app
                 .runner
                 .dispatch(
                     thread_id.as_deref(),
-                    &activation_prompt(&app.credential.handle, &activation, &context),
+                    &prompt,
+                    progress,
                 )
-                .await?;
-            let (body, directives) = extract_image_directives(&result.reply)?;
+                .await;
+            if let Some(forwarder) = forwarder {
+                forwarder.await??;
+            }
+            let result = dispatch_result?;
+            let (body, manim) = extract_manim_directives(&result.reply)?;
+            let manim_media = render_manim(&manim).await?;
+            let (body, diagrams) = extract_mermaid_directives(&body)?;
+            let rendered = render_mermaid(&app.data_path, &diagrams).await?;
+            let (body, mut directives) = extract_image_directives(&body)?;
+            directives.extend(rendered);
+            directives.extend(manim_media);
             let (body, tardy_caption) = extract_tardy_caption(&body);
             let media = upload_images(app, &directives).await?;
             let publish_tardy = should_publish_tardy(tardy_caption.as_deref(), &media);
@@ -753,9 +888,38 @@ async fn process_one(app: &App, queued: &QueuedEvent) -> Result<(), BoxError> {
     } else {
         set_typing(app, &activation.conversation_id, false).await
     };
+    if result.is_err() && !activation.legacy_dm {
+        let _ = clear_draft(app, &activation.conversation_id).await;
+    }
     result?;
     typing_result?;
     Ok(())
+}
+
+async fn fetch_private_soul(app: &App) -> Result<String, BoxError> {
+    let response = app
+        .client
+        .get(format!(
+            "{}/v1/agents/{}/soul",
+            api(app),
+            app.credential.profile_id
+        ))
+        .bearer_auth(&app.credential.api_token)
+        .header("x-tardy-profile-id", &app.credential.profile_id)
+        .send()
+        .await?;
+    if response.status() == StatusCode::NOT_FOUND {
+        return Ok(String::new());
+    }
+    if !response.status().is_success() {
+        return Err(format!("agent soul fetch returned HTTP {}", response.status()).into());
+    }
+    let body: Value = response.json().await?;
+    Ok(body
+        .get("private_instructions")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned())
 }
 
 async fn fetch_context(
@@ -821,29 +985,34 @@ async fn acknowledge(app: &App, activation: &WorkActivation) -> Result<(), BoxEr
     {
         return Ok(());
     }
-    let obvious = obvious_tapback(&activation.body);
-    let acknowledgement = if obvious.is_some() {
+    let acknowledgement = if let Some(obvious) = obvious_tapback(&activation.body) {
         obvious
     } else if let Some(decider) = app.tapbacks.as_ref() {
         let decider = Arc::clone(decider);
         let handle = app.credential.handle.clone();
         let body = activation.body.clone();
-        match tokio::task::spawn_blocking(move || decider.decide(&handle, &body)).await {
-            Ok(Ok(tapback)) => Some(tapback),
-            Ok(Err(error)) => {
+        match tokio::time::timeout(
+            Duration::from_millis(1_200),
+            tokio::task::spawn_blocking(move || decider.decide(&handle, &body)),
+        )
+        .await
+        {
+            Ok(Ok(Ok(tapback))) => tapback,
+            Ok(Ok(Err(error))) => {
                 tracing::warn!(%error, "RLCD tapback failed; adding no reaction");
-                None
+                Tapback::None
             }
-            Err(error) => {
+            Ok(Err(error)) => {
                 tracing::warn!(%error, "RLCD tapback task failed; adding no reaction");
-                None
+                Tapback::None
+            }
+            Err(_) => {
+                tracing::warn!("RLCD tapback exceeded 1200 ms; dispatching without a reaction");
+                Tapback::None
             }
         }
     } else {
-        obvious_tapback(&activation.body)
-    };
-    let Some(acknowledgement) = acknowledgement else {
-        return Ok(());
+        Tapback::None
     };
     if let Some(body) = acknowledgement.as_message() {
         request_ok(
@@ -873,7 +1042,8 @@ async fn acknowledge(app: &App, activation: &WorkActivation) -> Result<(), BoxEr
         )
         .await?;
     } else {
-        return Ok(());
+        // `none` is still a completed classification. Persist it so a replay does not pay for
+        // the same RLCD decision repeatedly or later add a stale reaction.
     }
     let mut data = app.data.lock().await;
     data.acknowledged_messages
@@ -893,6 +1063,87 @@ async fn set_typing(app: &App, conversation: &str, active: bool) -> Result<(), B
                 method,
                 format!("{}/v1/social/conversations/{conversation}/typing", api(app)),
             )
+            .bearer_auth(&app.credential.api_token)
+            .header("x-tardy-profile-id", &app.credential.profile_id),
+    )
+    .await
+}
+
+async fn forward_runtime_events(
+    app: &App,
+    conversation: &str,
+    mut events: tokio::sync::mpsc::Receiver<RuntimeEvent>,
+) -> Result<(), BoxError> {
+    let mut body = String::new();
+    let mut status = "writing";
+    let mut detail = String::new();
+    let mut activities: Vec<RuntimeActivity> = Vec::new();
+    let mut dirty = false;
+    let mut interval = tokio::time::interval(Duration::from_millis(80));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        tokio::select! {
+            event = events.recv() => match event {
+                Some(RuntimeEvent::TextDelta(delta)) => {
+                    if body.len().saturating_add(delta.len()) <= 20_000 {
+                        body.push_str(&delta);
+                    }
+                    status = "writing";
+                    detail.clear();
+                    dirty = true;
+                }
+                Some(RuntimeEvent::Activity(activity)) => {
+                    status = "tool";
+                    detail = activity.title.chars().take(500).collect();
+                    if let Some(existing) = activities.iter_mut().find(|item| item.id == activity.id) {
+                        *existing = activity;
+                    } else {
+                        activities.push(activity);
+                        if activities.len() > 20 { activities.remove(0); }
+                    }
+                    dirty = true;
+                }
+                None => {
+                    if dirty { set_draft(app, conversation, &body, "finalizing", "Finishing up", &activities).await?; }
+                    return Ok(());
+                }
+            },
+            _ = interval.tick(), if dirty => {
+                set_draft(app, conversation, &body, status, &detail, &activities).await?;
+                dirty = false;
+            }
+        }
+    }
+}
+
+async fn set_draft(
+    app: &App,
+    conversation: &str,
+    body: &str,
+    status: &str,
+    detail: &str,
+    activities: &[RuntimeActivity],
+) -> Result<(), BoxError> {
+    request_ok(
+        app.client
+            .put(format!(
+                "{}/v1/social/conversations/{conversation}/draft",
+                api(app)
+            ))
+            .bearer_auth(&app.credential.api_token)
+            .header("x-tardy-profile-id", &app.credential.profile_id)
+            .json(&json!({"body":body,"status":status,"detail":detail,"activities":activities})),
+    )
+    .await
+}
+
+async fn clear_draft(app: &App, conversation: &str) -> Result<(), BoxError> {
+    request_ok(
+        app.client
+            .delete(format!(
+                "{}/v1/social/conversations/{conversation}/draft",
+                api(app)
+            ))
             .bearer_auth(&app.credential.api_token)
             .header("x-tardy-profile-id", &app.credential.profile_id),
     )
@@ -957,6 +1208,7 @@ async fn upload_images(
             "m4a" => ("audio/mp4", None),
             "ogg" => ("audio/ogg", None),
             "flac" => ("audio/flac", None),
+            "json" => ("application/json", None),
             "pdf" => ("application/pdf", None),
             "md" | "markdown" => ("text/markdown", None),
             "txt" => ("text/plain", None),
@@ -1037,6 +1289,204 @@ async fn upload_images(
         });
     }
     Ok(uploaded)
+}
+
+const MERMAID_CLI_PACKAGE: &str = "@mermaid-js/mermaid-cli@11.12.0";
+const MAX_MERMAID_SOURCE_BYTES: u64 = 256 * 1024;
+
+async fn render_mermaid(
+    _data_path: &Path,
+    directives: &[tardy_agent_host::MermaidDirective],
+) -> Result<Vec<tardy_agent_host::ImageDirective>, BoxError> {
+    let workspace = std::fs::canonicalize(env_or("TARDY_AGENT_WORKSPACE", "."))?;
+    // Keep generated files under the configured workspace so the ordinary attachment
+    // confinement check remains the single upload authorization boundary.
+    let cache = workspace.join(".tardy/artifacts/mermaid");
+    tokio::fs::create_dir_all(&cache).await?;
+    let mut rendered = Vec::with_capacity(directives.len());
+    for directive in directives {
+        let candidate = if directive.path.is_absolute() {
+            directive.path.clone()
+        } else {
+            workspace.join(&directive.path)
+        };
+        let source = std::fs::canonicalize(candidate)?;
+        if !source.starts_with(&workspace) {
+            return Err("TARDY_MERMAID path must stay inside the configured workspace".into());
+        }
+        let bytes = tokio::fs::read(&source).await?;
+        if bytes.is_empty() || bytes.len() as u64 > MAX_MERMAID_SOURCE_BYTES {
+            return Err("TARDY_MERMAID source must be between 1 byte and 256 KiB".into());
+        }
+        std::str::from_utf8(&bytes).map_err(|_| "TARDY_MERMAID source must be UTF-8")?;
+        let digest = hex::encode(Sha256::digest(
+            [MERMAID_CLI_PACKAGE.as_bytes(), b"\0", bytes.as_slice()].concat(),
+        ));
+        let output = cache.join(format!("{digest}.png"));
+        if !tokio::fs::try_exists(&output).await? {
+            let mut command = tokio::process::Command::new(env_or("TARDY_NPX_COMMAND", "npx"));
+            command
+                .args(["--yes", MERMAID_CLI_PACKAGE, "-i"])
+                .arg(&source)
+                .arg("-o")
+                .arg(&output)
+                .args(["-b", "transparent", "-w", "1600"])
+                .kill_on_drop(true);
+            if let Ok(browser) = std::env::var("TARDY_MERMAID_BROWSER") {
+                command
+                    .env("PUPPETEER_EXECUTABLE_PATH", browser)
+                    .env("PUPPETEER_SKIP_DOWNLOAD", "true");
+            }
+            match tokio::time::timeout(Duration::from_secs(120), command.output()).await {
+                Ok(Ok(result)) if result.status.success() => {}
+                Ok(Ok(result)) => {
+                    return Err(format!(
+                        "Mermaid CLI failed: {}",
+                        String::from_utf8_lossy(&result.stderr)
+                            .chars()
+                            .take(1000)
+                            .collect::<String>()
+                    )
+                    .into());
+                }
+                Ok(Err(error)) => return Err(error.into()),
+                Err(_) => {
+                    // Some externally supplied Chromium builds finish the PNG but hang while
+                    // closing. kill_on_drop terminates them; accept only a complete PNG header.
+                    let finished = tokio::fs::read(&output).await.unwrap_or_default();
+                    const PNG_IEND: &[u8] = b"\0\0\0\0IEND\xaeB`\x82";
+                    if finished.len() < 100
+                        || png_dimensions(&finished).is_err()
+                        || !finished.ends_with(PNG_IEND)
+                    {
+                        return Err("Mermaid CLI timed out after 120 seconds".into());
+                    }
+                    tracing::warn!(path = %output.display(), "Mermaid renderer timed out after producing a valid PNG");
+                }
+            }
+        }
+        rendered.push(tardy_agent_host::ImageDirective {
+            path: output,
+            alt_text: directive
+                .alt_text
+                .clone()
+                .or_else(|| Some("Mermaid diagram".into())),
+        });
+    }
+    Ok(rendered)
+}
+
+const MANIM_VERSION: &str = "0.19.0";
+const MAX_MANIM_REQUEST_BYTES: u64 = 64 * 1024;
+const MAX_MANIM_SOURCE_BYTES: u64 = 512 * 1024;
+
+async fn render_manim(
+    directives: &[tardy_agent_host::ManimDirective],
+) -> Result<Vec<tardy_agent_host::ImageDirective>, BoxError> {
+    let workspace = std::fs::canonicalize(env_or("TARDY_AGENT_WORKSPACE", "."))?;
+    let cache = workspace.join(".tardy/artifacts/manim");
+    tokio::fs::create_dir_all(&cache).await?;
+    let mut rendered = Vec::with_capacity(directives.len());
+    for directive in directives {
+        let manifest_path = workspace.join(&directive.path).canonicalize()?;
+        if !manifest_path.starts_with(&workspace) {
+            return Err("TARDY_MANIM request must stay inside the configured workspace".into());
+        }
+        let manifest = tokio::fs::read(&manifest_path).await?;
+        if manifest.is_empty() || manifest.len() as u64 > MAX_MANIM_REQUEST_BYTES {
+            return Err("TARDY_MANIM request must be between 1 byte and 64 KiB".into());
+        }
+        let request = tardy_agent_host::ManimRenderRequest::parse(&manifest)?;
+        let manifest_dir = manifest_path
+            .parent()
+            .ok_or("Manim request has no parent")?;
+        let source_path = manifest_dir.join(&request.source).canonicalize()?;
+        if !source_path.starts_with(&workspace) {
+            return Err("Manim source must stay inside the configured workspace".into());
+        }
+        let source = tokio::fs::read(&source_path).await?;
+        if source.is_empty() || source.len() as u64 > MAX_MANIM_SOURCE_BYTES {
+            return Err("Manim source must be between 1 byte and 512 KiB".into());
+        }
+        std::str::from_utf8(&source).map_err(|_| "Manim source must be UTF-8")?;
+        let digest = hex::encode(Sha256::digest(
+            [manifest.as_slice(), b"\0", source.as_slice()].concat(),
+        ));
+        let output = cache.join(format!("{digest}.mp4"));
+        if !tokio::fs::try_exists(&output).await? {
+            let media_dir = cache.join(format!("work-{digest}"));
+            tokio::fs::create_dir_all(&media_dir).await?;
+            let mut command = tokio::process::Command::new(env_or("TARDY_UVX_COMMAND", "uvx"));
+            command
+                .args([
+                    "--from",
+                    &format!("manim=={MANIM_VERSION}"),
+                    "manim",
+                    "render",
+                ])
+                .arg("--disable_caching")
+                .arg("--format=mp4")
+                .arg(format!("--resolution={},{}", request.width, request.height))
+                .arg(format!("--fps={}", request.fps))
+                .arg("--media_dir")
+                .arg(&media_dir)
+                .arg("--output_file")
+                .arg(&output)
+                .arg(&source_path)
+                .arg(&request.scene)
+                .env("PYTHONHASHSEED", "0")
+                .current_dir(manifest_dir)
+                .kill_on_drop(true);
+            if request.transparent {
+                command.arg("--transparent");
+            }
+            let result = tokio::time::timeout(Duration::from_secs(300), command.output())
+                .await
+                .map_err(|_| "Manim render timed out after 300 seconds")??;
+            if !result.status.success() {
+                return Err(format!(
+                    "Manim render failed: {}",
+                    String::from_utf8_lossy(&result.stderr)
+                        .chars()
+                        .take(2000)
+                        .collect::<String>()
+                )
+                .into());
+            }
+            if !tokio::fs::try_exists(&output).await? {
+                return Err("Manim completed without producing its declared output".into());
+            }
+            tokio::fs::remove_dir_all(&media_dir).await?;
+        }
+        let metadata = tokio::fs::metadata(&output).await?;
+        if metadata.len() == 0 || metadata.len() > 250 * 1024 * 1024 {
+            return Err("Manim output violates attachment size bounds".into());
+        }
+        let (width, height, duration_ms) = probe_media(&output)
+            .await
+            .ok_or("Manim output could not be probed")?;
+        if width != Some(request.width) || height != Some(request.height) {
+            return Err("Manim output dimensions do not match the request".into());
+        }
+        if duration_ms.is_none()
+            || duration_ms
+                .is_some_and(|duration| duration > u64::from(request.max_duration_seconds) * 1000)
+        {
+            return Err("Manim output exceeds max_duration_seconds".into());
+        }
+        rendered.push(tardy_agent_host::ImageDirective {
+            path: manifest_path,
+            alt_text: Some("Manim render request and citations".into()),
+        });
+        rendered.push(tardy_agent_host::ImageDirective {
+            path: output,
+            alt_text: directive
+                .alt_text
+                .clone()
+                .or_else(|| Some("Manim lesson".into())),
+        });
+    }
+    Ok(rendered)
 }
 
 async fn probe_media(path: &Path) -> Option<(Option<u32>, Option<u32>, Option<u64>)> {
@@ -1134,7 +1584,7 @@ fn internal(error: BoxError) -> (StatusCode, String) {
 
 fn print_help() {
     println!(
-        "Tardy agent host\n\nUsage:\n  tardy-agent-host doctor\n  tardy-agent-host tapback <message>\n  tardy-agent-host run\n\nEnvironment:\n  TARDY_STATE_PATH         Agent credential from `tardy onboard`\n  TARDY_AGENT_WORKSPACE    Workspace this agent may access\n  TARDY_AGENT_HOST_STATE   Durable session and outbox state\n  TARDY_AGENT_DELIVERY     poll (default) or webhook\n  TARDY_AGENT_RUNTIME      codex (default) or opencode\n  TARDY_CODEX_SANDBOX      read-only or workspace-write (default)\n  TARDY_CODEX_NETWORK      enabled (default) or disabled\n  TARDY_OPENCODE_BIN       OpenCode executable (default: opencode)\n  TARDY_OPENCODE_MODEL     Optional provider/model routed by OpenCode\n  TARDY_OPENCODE_AGENT     Optional OpenCode agent name\n  TARDY_OPENCODE_PURE      yes disables external OpenCode plugins\n  TARDY_AGENT_BIND         Webhook bind address"
+        "Tardy agent host\n\nUsage:\n  tardy-agent-host doctor\n  tardy-agent-host tapback <message>\n  tardy-agent-host render-manim <request.json>\n  tardy-agent-host run\n\nEnvironment:\n  TARDY_STATE_PATH         Agent credential from `tardy onboard`\n  TARDY_AGENT_WORKSPACE    Workspace this agent may access\n  TARDY_AGENT_HOST_STATE   Durable session and outbox state\n  TARDY_AGENT_DELIVERY     poll (default) or webhook\n  TARDY_AGENT_RUNTIME      codex (default) or opencode\n  TARDY_CODEX_SANDBOX      read-only or workspace-write (default)\n  TARDY_CODEX_NETWORK      enabled (default) or disabled\n  TARDY_OPENCODE_BIN       OpenCode executable (default: opencode)\n  TARDY_OPENCODE_MODEL     Optional provider/model routed by OpenCode\n  TARDY_OPENCODE_AGENT     Optional OpenCode agent name\n  TARDY_OPENCODE_PURE      yes disables external OpenCode plugins\n  TARDY_UVX_COMMAND        uvx-compatible Manim launcher\n  TARDY_AGENT_BIND         Webhook bind address"
     );
 }
 

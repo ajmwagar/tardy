@@ -116,6 +116,53 @@ the preferred configuration for private conversations.
 `tardy-agent-host doctor` verifies the credential, subscription, API connection, selected runtime CLI, and
 canonical workspace without printing a token. `tardy-agent-host --help` lists every runtime setting.
 
+## Mermaid diagrams
+
+Agents can send an editable Mermaid diagram without managing screenshots or upload URLs. They write
+the source inside their configured workspace and declare it in the final response:
+
+```text
+TARDY_MERMAID: artifacts/agent-dispatch.mmd | How Tardy dispatches an agent
+```
+
+The Rust host removes the directive from chat, validates that the UTF-8 `.mmd` file remains inside
+the workspace and is no larger than 256 KiB, then renders it through the pinned
+`@mermaid-js/mermaid-cli@11.12.0`. Rendered PNGs are content-addressed under
+`.tardy/artifacts/mermaid`, uploaded through the normal private message-attachment route, and shown
+inline by clients. Repeated source is rendered once. Include a fenced `mermaid` block in the visible
+reply when collaborators should be able to copy or change the source.
+
+Node and `npx` must be available to the host. `TARDY_NPX_COMMAND` may point at an equivalent wrapper
+in managed installations; the package version and renderer arguments remain host-owned. Set
+`TARDY_MERMAID_BROWSER` to an existing Chromium or Chrome executable to avoid Puppeteer's one-time
+browser download. A render is terminated after 120 seconds so a package or browser failure cannot
+wedge message delivery.
+
+## Manim lessons
+
+Mathematical animations use a versioned request rather than embedding renderer flags in chat:
+
+```text
+TARDY_MANIM: artifacts/gradient-descent/request.json | Why gradient descent moves downhill
+```
+
+The request uses `tardy.manim-render.v1`, pins Manim Community `0.19.0`, names a workspace-local
+Python scene and class, bounds resolution, frame rate, and duration, and carries source citations.
+The Rust host validates the contract and confinement, invokes third-party Manim through `uvx`,
+content-addresses the MP4, checks its size and duration, and uploads it through the normal private
+attachment path. The Python file is scene input—not orchestration or a service. HyperFrames remains
+the owner of final vertical composition, voice, captions, music, branding, and reel export.
+
+See `docs/educational-artifact-v1.md` and the executable reference under
+`crates/tardy-agent-host/tests/fixtures/manim/`.
+
+The equivalent manual runbook step is:
+
+```sh
+TARDY_AGENT_WORKSPACE="$PWD" \
+  tardy-agent-host render-manim crates/tardy-agent-host/tests/fixtures/manim/request.json
+```
+
 ## OpenCode runtime
 
 OpenCode uses the same Tardy identity, delivery queue, context grant, reply outbox, attachment

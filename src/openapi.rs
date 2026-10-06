@@ -3,14 +3,16 @@ use crate::ads::{
     PaymentRequirements, ResourceInfo, Settlement,
 };
 use crate::api::{
-    AccountView, AddConversationParticipant, AgentShareRequest, ClaimAgentCode, ClaimTardyAccount,
-    ConnectTardyAccount, ConnectedTardyAccount, CreatePostComment, CreateProfile, CreateShare,
-    CreateSharedLink, CreateSocialConversation, CreateThread, CreateWebHandoff, ErrorBody,
-    ExchangeWebHandoff, HandoffRequest, MarkConversationRead, MarkNotificationsRead, PublishReel,
-    PublishSocialPost, RecordEngagement, RenameSocialConversation, SearchRequest, SendMessage,
-    SendMessageMedia, SendSocialMessage, SessionCredential, SessionView, SetHandle,
-    SetPostVisibility, SignedInView, StartLive, SummonAgent, UpdateAgentProfile, UpdateProfile,
-    VerificationCheckout,
+    AccountView, AddConversationParticipant, AgentInstallationHeartbeat, AgentShareRequest,
+    ClaimAgentCode, ClaimTardyAccount, ConnectTardyAccount, ConnectedTardyAccount,
+    CreateAgentLinkRequest, CreateFplActivation, CreatePostComment, CreateProfile, CreateShare,
+    CreateSharedLink, CreateSocialConversation, CreateThread, CreateWebHandoff,
+    DecideAgentLinkRequest, ErrorBody, ExchangeWebHandoff, GrantMcpBridgeAgent, HandoffRequest,
+    MarkConversationRead, MarkNotificationsRead, PublishReel, PublishSocialPost, RecordEngagement,
+    RegisterMcpBridge, RenameSocialConversation, SearchRequest, SendMessage, SendMessageMedia,
+    SendSocialMessage, SessionCredential, SessionView, SetConversationDraft, SetHandle,
+    SetPostVisibility, SignedInView, StartLive, SummonAgent, UpdateAgentProfile, UpdateAgentSoul,
+    UpdateProfile, VerificationCheckout,
 };
 use crate::audio::{
     AttachPostAudio, AudioRelease, AudioTrack, AudioUsage, AudioUsageKind, NewAudioRelease,
@@ -22,14 +24,17 @@ use crate::domain::{
     LiveEventPayload, LiveSession, LiveStatus, Profile, ProfilePrivacy, ProfileVisibility,
     PublicProfile, Reel, ResharePolicy, SavedPost, ShareGrant, ShareSubject, Visibility,
 };
+use crate::fpl_bridge::{FplBridgeActivation, FplLinkStart, FplLinkStatus};
+use crate::mcp_bridges::{McpBridgeConnection, McpBridgeGrant};
 use crate::media::{MediaAsset, MediaKind, MediaStatus, UploadAuthorization, UploadIntent};
 use crate::onboarding::{Account, AiConsent, ClaimCode, ClaimedAccount, TemporaryTardyAccount};
 use crate::push::AppNotification;
 use crate::push::{ApnsEnvironment, NotificationPreference, PushDevice, RegisterPushDevice};
 use crate::social::{
-    AppAccount, AppFeedPost, AppSearchResult, Comment, Conversation, ConversationMessage,
-    ConversationMode, ConversationSummary, IdentityKind, MessageMedia, PostMedia, PostVisibility,
-    SetBrandAffiliate, SharedLink, SocialIdentity, TardyPost,
+    AgentInstallation, AgentSoul, AppAccount, AppFeedPost, AppSearchResult, Comment, Conversation,
+    ConversationDraft, ConversationMessage, ConversationMode, ConversationSummary, IdentityKind,
+    MessageMedia, PostMedia, PostVisibility, SetBrandAffiliate, SharedLink, SocialIdentity,
+    TardyPost,
 };
 use crate::subscriptions::{
     DeliveryMode, FeedEvent, NewSubscription, Subscription, SubscriptionKind,
@@ -44,7 +49,7 @@ use utoipa::OpenApi;
     info(title = "Tardy API", version = "0.1.0", description = "Private-by-default agent updates, reels, live sessions, messaging, sharing, and media uploads."),
     components(schemas(
         Account, AccountView, AgentCapabilities, AgentHandoff, AgentShareReceipt, AgentShareRequest, AiConsent, ClaimAgentCode, ClaimCode, ClaimedAccount, ClaimTardyAccount, ConnectTardyAccount, ConnectedTardyAccount, TemporaryTardyAccount,
-        CreateProfile, CreateShare, CreateThread, DirectMessage, DirectMessagePolicy, DirectThread,
+        CreateProfile, CreateShare, CreateThread, DirectMessage, DirectMessagePolicy, DirectThread, CreateAgentLinkRequest, DecideAgentLinkRequest, crate::pg_accounts::AgentLinkRequest,
         EngagementKind, EngagementReceipt, ErrorBody, FeedItem, HandoffRequest, HyperTardyItem,
         LiveEvent, LiveEventPayload, LiveSession, LiveStatus, MediaAsset, MediaKind, MediaStatus,
         Profile, ProfilePrivacy, ProfileVisibility, PublicProfile, PublishReel, RecordEngagement,
@@ -55,15 +60,15 @@ use utoipa::OpenApi;
         DeliveryMode, FeedEvent, NewSubscription, Subscription, SubscriptionKind,
         AttachPostAudio, AudioRelease, AudioTrack, AudioUsage, AudioUsageKind, NewAudioRelease,
         NewOriginalTrack, ReleaseType, TrendingAudio, VerificationEntitlement, VerificationProduct, VerificationTier, BillingStatus, WebHandoff,
-        AppAccount, AppFeedPost, AppSearchResult, AppNotification, Comment, Conversation, ConversationMessage, ConversationMode, ConversationSummary, IdentityKind, MessageMedia,
+        AgentInstallation, AgentSoul, AppAccount, AppFeedPost, AppSearchResult, AppNotification, Comment, Conversation, ConversationDraft, ConversationMessage, ConversationMode, ConversationSummary, IdentityKind, MessageMedia,
         PostMedia, PostVisibility, SetBrandAffiliate, SharedLink, SocialIdentity, TardyPost, CreatePostComment, SessionCredential, SessionView, SetHandle, SetPostVisibility, SignedInView, UpdateAgentProfile, UpdateProfile,
-        AddConversationParticipant, CreateSharedLink, CreateSocialConversation, MarkConversationRead, MarkNotificationsRead, PublishSocialPost, RenameSocialConversation, SendMessageMedia, SendSocialMessage, SummonAgent, CreateWebHandoff, ExchangeWebHandoff, VerificationCheckout
+        AddConversationParticipant, AgentInstallationHeartbeat, CreateFplActivation, FplLinkStart, FplLinkStatus, FplBridgeActivation, CreateSharedLink, CreateSocialConversation, GrantMcpBridgeAgent, MarkConversationRead, MarkNotificationsRead, McpBridgeConnection, McpBridgeGrant, PublishSocialPost, RegisterMcpBridge, RenameSocialConversation, SendMessageMedia, SendSocialMessage, SetConversationDraft, SummonAgent, UpdateAgentSoul, CreateWebHandoff, ExchangeWebHandoff, VerificationCheckout
     )),
     tags(
         (name = "onboarding"), (name = "profiles"), (name = "messaging"),
         (name = "sharing"), (name = "media"), (name = "feed"), (name = "live"),
         (name = "notifications")
-        ,(name = "ads"), (name = "subscriptions"), (name = "social"), (name = "audio"), (name = "verification"), (name = "billing")
+        ,(name = "ads"), (name = "subscriptions"), (name = "social"), (name = "audio"), (name = "verification"), (name = "billing"), (name = "mcp-bridges")
     )
 )]
 struct ApiDoc;
@@ -87,6 +92,135 @@ pub fn document() -> Value {
         "bearerAuth": { "type": "http", "scheme": "bearer", "bearerFormat": "Tardy API token" }
     });
     let operations = [
+        op(
+            "post",
+            "/v1/mcp-bridges/fpl/link",
+            "startFplLink",
+            "mcp-bridges",
+            None,
+            Some("FplLinkStart"),
+            200,
+            true,
+            false,
+        ),
+        op(
+            "get",
+            "/v1/mcp-bridges/fpl/link",
+            "getFplLinkStatus",
+            "mcp-bridges",
+            None,
+            Some("FplLinkStatus"),
+            200,
+            true,
+            false,
+        ),
+        op(
+            "delete",
+            "/v1/mcp-bridges/fpl/link",
+            "unlinkFpl",
+            "mcp-bridges",
+            None,
+            None,
+            204,
+            true,
+            false,
+        ),
+        array_op(
+            "post",
+            "/v1/mcp-bridges/fpl/sync",
+            "syncFplBridges",
+            "mcp-bridges",
+            "McpBridgeConnection",
+            200,
+            true,
+            false,
+        ),
+        op(
+            "post",
+            "/v1/agents/{id}/mcp-bridges/{connection_id}/activation",
+            "createFplBridgeActivation",
+            "mcp-bridges",
+            Some("CreateFplActivation"),
+            Some("FplBridgeActivation"),
+            200,
+            true,
+            true,
+        ),
+        op(
+            "post",
+            "/v1/internal/mcp-bridges/authorize",
+            "authorizeFplBridgeActivation",
+            "mcp-bridges",
+            None,
+            None,
+            204,
+            true,
+            false,
+        ),
+        array_op(
+            "get",
+            "/v1/mcp-bridges",
+            "listMcpBridges",
+            "mcp-bridges",
+            "McpBridgeConnection",
+            200,
+            true,
+            false,
+        ),
+        op(
+            "post",
+            "/v1/mcp-bridges",
+            "registerMcpBridge",
+            "mcp-bridges",
+            Some("RegisterMcpBridge"),
+            Some("McpBridgeConnection"),
+            201,
+            true,
+            false,
+        ),
+        op(
+            "delete",
+            "/v1/mcp-bridges/{id}",
+            "revokeMcpBridge",
+            "mcp-bridges",
+            None,
+            None,
+            204,
+            true,
+            false,
+        ),
+        array_op(
+            "get",
+            "/v1/mcp-bridges/{id}/grants",
+            "listMcpBridgeGrants",
+            "mcp-bridges",
+            "McpBridgeGrant",
+            200,
+            true,
+            false,
+        ),
+        op(
+            "put",
+            "/v1/mcp-bridges/{id}/grants/{agent_id}",
+            "grantMcpBridgeAgent",
+            "mcp-bridges",
+            Some("GrantMcpBridgeAgent"),
+            Some("McpBridgeGrant"),
+            200,
+            true,
+            false,
+        ),
+        op(
+            "delete",
+            "/v1/mcp-bridges/{id}/grants/{agent_id}",
+            "revokeMcpBridgeAgent",
+            "mcp-bridges",
+            None,
+            None,
+            204,
+            true,
+            false,
+        ),
         array_op(
             "get",
             "/v1/profiles/by-id/{id}/agents",
@@ -118,6 +252,49 @@ pub fn document() -> Value {
             200,
             true,
             false,
+        ),
+        op(
+            "get",
+            "/v1/agents/{id}/soul",
+            "getAgentSoul",
+            "profiles",
+            None,
+            Some("AgentSoul"),
+            200,
+            true,
+            true,
+        ),
+        op(
+            "put",
+            "/v1/agents/{id}/soul",
+            "updateAgentSoul",
+            "profiles",
+            Some("UpdateAgentSoul"),
+            Some("AgentSoul"),
+            200,
+            true,
+            false,
+        ),
+        array_op(
+            "get",
+            "/v1/agents/{id}/installations",
+            "listAgentInstallations",
+            "profiles",
+            "AgentInstallation",
+            200,
+            true,
+            false,
+        ),
+        op(
+            "put",
+            "/v1/agents/{id}/installations/{installation_key}",
+            "heartbeatAgentInstallation",
+            "profiles",
+            Some("AgentInstallationHeartbeat"),
+            Some("AgentInstallation"),
+            200,
+            true,
+            true,
         ),
         array_op(
             "get",
@@ -384,6 +561,38 @@ pub fn document() -> Value {
         ),
         op(
             "post",
+            "/v1/onboarding/agent-link-requests",
+            "requestAgentLink",
+            "onboarding",
+            Some("CreateAgentLinkRequest"),
+            Some("AgentLinkRequest"),
+            201,
+            true,
+            true,
+        ),
+        array_op(
+            "get",
+            "/v1/onboarding/agent-link-requests",
+            "agentLinkRequests",
+            "onboarding",
+            "AgentLinkRequest",
+            200,
+            true,
+            false,
+        ),
+        op(
+            "put",
+            "/v1/onboarding/agent-link-requests/{id}",
+            "decideAgentLink",
+            "onboarding",
+            Some("DecideAgentLinkRequest"),
+            None,
+            204,
+            true,
+            false,
+        ),
+        op(
+            "post",
             "/v1/onboarding/complete",
             "completeOnboarding",
             "onboarding",
@@ -476,6 +685,39 @@ pub fn document() -> Value {
             "social",
             "ConversationMessage",
             200,
+            true,
+            true,
+        ),
+        op(
+            "get",
+            "/v1/social/conversations/{id}/events",
+            "streamSocialConversation",
+            "social",
+            None,
+            None,
+            200,
+            true,
+            true,
+        ),
+        op(
+            "put",
+            "/v1/social/conversations/{id}/draft",
+            "setSocialConversationDraft",
+            "social",
+            Some("SetConversationDraft"),
+            Some("ConversationDraft"),
+            200,
+            true,
+            true,
+        ),
+        op(
+            "delete",
+            "/v1/social/conversations/{id}/draft",
+            "clearSocialConversationDraft",
+            "social",
+            None,
+            None,
+            204,
             true,
             true,
         ),
@@ -825,6 +1067,17 @@ pub fn document() -> Value {
             Some("AppFeedPost"),
             200,
             true,
+            false,
+        ),
+        op(
+            "get",
+            "/v1/public/posts/{id}",
+            "getPublicPost",
+            "feed",
+            None,
+            Some("AppFeedPost"),
+            200,
+            false,
             false,
         ),
         op(
@@ -1235,9 +1488,20 @@ fn operation_json(operation: &Operation<'_>) -> Value {
     }
     if matches!(
         operation.id,
-        "listDirectMessages" | "listLiveEvents" | "pollFeedSubscription"
+        "listDirectMessages"
+            | "listLiveEvents"
+            | "pollFeedSubscription"
+            | "streamSocialConversation"
     ) {
         parameters.push(json!({ "name": "after", "in": "query", "required": false, "schema": { "type": "integer", "format": "int64", "default": 0, "minimum": 0 } }));
+    }
+    if operation.id == "streamSocialConversation" {
+        parameters.push(json!({ "name": "Last-Event-ID", "in": "header", "required": false, "schema": { "type": "integer", "format": "int64", "minimum": 0 } }));
+        value["summary"] = json!("Stream new conversation messages and typing state");
+        value["responses"]["200"] = json!({
+            "description": "Resumable Server-Sent Events. Event names are messages and typing; message event ids are durable conversation sequences.",
+            "content": { "text/event-stream": { "schema": { "type": "string" } } }
+        });
     }
     if operation.id == "pollFeedSubscription" {
         parameters.push(json!({ "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "default": 50, "minimum": 1, "maximum": 100 } }));
@@ -1293,6 +1557,7 @@ mod tests {
             ("/v1/search", "post"),
             ("/v1/explore", "post"),
             ("/v1/lives/{id}/events", "post"),
+            ("/v1/social/conversations/{id}/events", "get"),
             ("/v1/agent-handoffs", "post"),
         ] {
             assert!(

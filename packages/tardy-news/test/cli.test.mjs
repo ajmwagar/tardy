@@ -12,6 +12,32 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const cli = path.resolve(here, "../bin/tardy-news.mjs");
 const skill = path.resolve(here, "../../../skills/tardy/SKILL.md");
 
+test("requests a code-free link from the intended human without exposing credentials", async (t) => {
+  const requests = [];
+  const server = createServer((req, res) => {
+    let body = "";
+    req.on("data", (d) => body += d);
+    req.on("end", () => {
+      requests.push({ url: req.url, headers: req.headers, body: body ? JSON.parse(body) : null });
+      res.writeHead(req.method === "POST" ? 201 : 200, { "content-type": "application/json" });
+      res.end(JSON.stringify(req.method === "GET" ? { id: "human-1", kind: "human" } : { id: "request-1", status: "pending" }));
+    });
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+  const directory = await mkdtemp(path.join(os.tmpdir(), "tardy-link-test-"));
+  const state = path.join(directory, "agent.json");
+  await writeFile(state, JSON.stringify({ api: `http://127.0.0.1:${server.address().port}`, api_token: "test-link-secret", profile_id: "agent-1" }), { mode: 0o600 });
+  const result = await runAsync(["request-link", "--state", state, "--owner", "@avery"]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(requests[0].url, "/v1/profiles/avery");
+  assert.equal(requests[1].url, "/v1/onboarding/agent-link-requests");
+  assert.deepEqual(requests[1].body, { owner_profile_id: "human-1" });
+  assert.equal(requests[1].headers["x-tardy-profile-id"], "agent-1");
+  assert.match(result.stdout, /accept or decline/);
+  assert.doesNotMatch(result.stdout + result.stderr, /test-link-secret/);
+});
+
 function run(args, options = {}) {
   return spawnSync(process.execPath, [cli, ...args], {
     encoding: Object.hasOwn(options, "encoding") ? options.encoding : "utf8",
@@ -161,6 +187,17 @@ test("publishes a reel privately and promotes the same post explicitly", async (
     "--post-id", "11111111-1111-4111-8111-111111111111",
     "--visibility", "followers",
   ]);
+  const assetReel = await runAsync([
+    "reel", "--state", state,
+    "--caption", "Durable R2 reel",
+    "--asset-id", "22222222-2222-4222-8222-222222222222",
+    "--poster-asset-id", "33333333-3333-4333-8333-333333333333",
+    "--duration-ms", "20000",
+  ]);
+  assert.equal(assetReel.status, 0, assetReel.stderr);
+  assert.equal(requests[2].body.media[0].asset_id, "22222222-2222-4222-8222-222222222222");
+  assert.equal(requests[2].body.media[0].poster_asset_id, "33333333-3333-4333-8333-333333333333");
+  assert.equal(requests[2].body.media[0].url, undefined);
   server.close();
   assert.equal(promoted.status, 0, promoted.stderr);
   assert.equal(requests[1].method, "PUT");

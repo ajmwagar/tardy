@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "project": "umie",
+  "project_revision": 1,
+  "seed": 42,
+  "variant": {
+    "id": "pipeline-bright",
+    "format": "pipeline",
+    "theme": {
+      "background": "#101018",
+      "foreground": "#FFFFFF",
+      "accent": "#68D8FF"
+    },
+    "entrance_ms": 400
+  }
+}

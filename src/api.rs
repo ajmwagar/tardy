@@ -11,6 +11,7 @@ use crate::domain::{
     AgentCapabilities, AgentHandoff, AgentShareReceipt, EngagementKind, LiveEventPayload,
     ProfilePrivacy, ShareSubject, Visibility,
 };
+use crate::mcp_bridges::{McpBridgeConnection, McpBridgeGrant, PgMcpBridgeStore};
 use crate::media::{MediaError, MediaService, UploadIntent};
 use crate::metrics::Metrics;
 use crate::onboarding::{AccountRegistry, OnboardingError, TemporaryTardyAccount};
@@ -23,8 +24,8 @@ use crate::ranking::FeedRanker;
 use crate::search::{SearchDocument, SearchError, SearchService};
 use crate::social::{
     AppAccount, AppEngagementAction, AppFeedPost, AppSearchResult, Comment, Conversation,
-    ConversationMessage, ConversationSummary, IdentityKind, PgSocialStore, PostMedia,
-    PostVisibility, SetBrandAffiliate, SharedLink, SocialError, TardyPost,
+    ConversationDraft, ConversationMessage, ConversationSummary, IdentityKind, PgSocialStore,
+    PostMedia, PostVisibility, SetBrandAffiliate, SharedLink, SocialError, TardyPost,
 };
 use crate::store::{MemoryStore, NewLive, NewProfile, NewReel, Store, StoreError};
 use crate::subscriptions::{
@@ -34,13 +35,16 @@ use crate::web_billing::{BillingError, PgWebBillingStore, WEB_SESSION_COOKIE};
 use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, Path, Query, State};
 use axum::http::{HeaderMap, Method, StatusCode, header};
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post, put};
 use axum::{Json, Router, middleware};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::{convert::Infallible, time::Duration};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
+use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::io::ReaderStream;
 use tower_http::cors::CorsLayer;
 use utoipa::ToSchema;
@@ -62,6 +66,8 @@ pub struct AppState {
     pub audio: Option<Arc<PgAudioStore>>,
     pub apple_auth: Option<Arc<AppleAuthenticator>>,
     pub web_billing: Option<Arc<PgWebBillingStore>>,
+    pub mcp_bridges: Option<Arc<PgMcpBridgeStore>>,
+    pub fpl_bridge: Option<Arc<crate::fpl_bridge::FplBridgeRuntime>>,
 }
 
 pub struct AdsRuntime {
@@ -91,6 +97,8 @@ impl AppState {
             audio: None,
             apple_auth: None,
             web_billing: None,
+            mcp_bridges: None,
+            fpl_bridge: None,
         })
     }
 
@@ -114,6 +122,8 @@ impl AppState {
             audio: None,
             apple_auth: None,
             web_billing: None,
+            mcp_bridges: None,
+            fpl_bridge: None,
         })
     }
 
@@ -137,6 +147,8 @@ impl AppState {
             audio: None,
             apple_auth: None,
             web_billing: None,
+            mcp_bridges: None,
+            fpl_bridge: None,
         })
     }
 
@@ -182,6 +194,16 @@ impl AppState {
 
     pub fn with_web_billing(mut self, value: PgWebBillingStore) -> Self {
         self.web_billing = Some(Arc::new(value));
+        self
+    }
+
+    pub fn with_mcp_bridges(mut self, value: PgMcpBridgeStore) -> Self {
+        self.mcp_bridges = Some(Arc::new(value));
+        self
+    }
+
+    pub fn with_fpl_bridge(mut self, value: crate::fpl_bridge::FplBridgeRuntime) -> Self {
+        self.fpl_bridge = Some(Arc::new(value));
         self
     }
 
@@ -242,6 +264,45 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/profiles/{handle}", get(get_profile))
         .route("/v1/agents/{id}/profile", patch(update_agent_profile))
         .route(
+            "/v1/agents/{id}/soul",
+            get(get_agent_soul).put(update_agent_soul),
+        )
+        .route(
+            "/v1/agents/{id}/installations",
+            get(get_agent_installations),
+        )
+        .route(
+            "/v1/agents/{id}/installations/{installation_key}",
+            put(heartbeat_agent_installation),
+        )
+        .route(
+            "/v1/mcp-bridges",
+            get(list_mcp_bridges).post(register_mcp_bridge),
+        )
+        .route(
+            "/v1/mcp-bridges/fpl/link",
+            get(fpl_link_status).post(start_fpl_link).delete(unlink_fpl),
+        )
+        .route("/v1/mcp-bridges/fpl/callback", get(complete_fpl_link))
+        .route("/v1/mcp-bridges/fpl/sync", post(sync_fpl_bridges))
+        .route(
+            "/v1/agents/{id}/mcp-bridges/{connection_id}/activation",
+            post(create_fpl_activation),
+        )
+        .route(
+            "/v1/internal/mcp-bridges/authorize",
+            post(authorize_fpl_activation),
+        )
+        .route(
+            "/v1/mcp-bridges/{id}",
+            axum::routing::delete(revoke_mcp_bridge),
+        )
+        .route("/v1/mcp-bridges/{id}/grants", get(list_mcp_bridge_grants))
+        .route(
+            "/v1/mcp-bridges/{id}/grants/{agent_id}",
+            put(grant_mcp_bridge_agent).delete(revoke_mcp_bridge_agent),
+        )
+        .route(
             "/v1/agents/{id}/avatar/generate",
             post(generate_agent_avatar),
         )
@@ -271,6 +332,14 @@ pub fn router(state: Arc<AppState>) -> Router {
             post(connect_tardy_account),
         )
         .route("/v1/onboarding/tardy-claims", post(claim_tardy_account))
+        .route(
+            "/v1/onboarding/agent-link-requests",
+            post(create_agent_link_request).get(list_agent_link_requests),
+        )
+        .route(
+            "/v1/onboarding/agent-link-requests/{id}",
+            put(decide_agent_link_request),
+        )
         .route("/v1/onboarding/complete", post(complete_onboarding))
         .route("/v1/uploads", post(authorize_upload))
         .route("/v1/uploads/{id}/complete", post(complete_upload))
@@ -279,6 +348,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/saved-posts", get(list_saved_posts))
         .route("/v1/saved-posts/{id}", put(save_post).delete(unsave_post))
         .route("/v1/posts/{id}", get(get_app_post))
+        .route("/v1/public/posts/{id}", get(get_public_post))
         .route("/v1/posts/{id}/like", put(like_post).delete(unlike_post))
         .route("/v1/posts/{id}/alarm", put(alarm_post).delete(unalarm_post))
         .route(
@@ -319,6 +389,14 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(
             "/v1/social/conversations/{id}/messages",
             post(send_social_message).get(list_social_messages),
+        )
+        .route(
+            "/v1/social/conversations/{id}/events",
+            get(stream_social_conversation),
+        )
+        .route(
+            "/v1/social/conversations/{id}/draft",
+            put(set_social_conversation_draft).delete(clear_social_conversation_draft),
         )
         .route(
             "/v1/social/conversations/{id}",
@@ -670,7 +748,19 @@ async fn get_app_post(
     let viewer = Some(authenticated_actor(&state, &headers).await?);
     let mut post = social_store(&state)?.app_post(viewer, id).await?;
     localize_posts(&state, std::slice::from_mut(&mut post));
+    resolve_post_assets(&state, std::slice::from_mut(&mut post)).await?;
     Ok(Json(post))
+}
+
+/// Anonymous reads reuse the existing visibility query; no viewer means public only.
+async fn get_public_post(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+) -> Result<impl IntoResponse, ApiError> {
+    let mut post = social_store(&state)?.app_post(None, id).await?;
+    localize_posts(&state, std::slice::from_mut(&mut post));
+    resolve_post_assets(&state, std::slice::from_mut(&mut post)).await?;
+    Ok(([(header::CACHE_CONTROL, "no-store")], Json(post)))
 }
 
 /// Session restoration is an explicit route even before the provider exchange lands.
@@ -855,6 +945,321 @@ pub(crate) struct UpdateAgentProfile {
     display_name: Option<String>,
     bio: Option<String>,
     avatar_url: Option<String>,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct UpdateAgentSoul {
+    expected_revision: i64,
+    public_summary: String,
+    private_instructions: String,
+    #[serde(default)]
+    specialties: Vec<String>,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct AgentInstallationHeartbeat {
+    display_name: String,
+    runtime: String,
+    #[serde(default)]
+    capabilities: Vec<String>,
+    status: String,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct RegisterMcpBridge {
+    provider: String,
+    display_name: String,
+    bridge_ref: String,
+    #[serde(default)]
+    capabilities: Vec<String>,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct GrantMcpBridgeAgent {
+    tool_patterns: Vec<String>,
+    approval_policy: String,
+}
+
+async fn get_agent_soul(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<Json<crate::social::AgentSoul>, ApiError> {
+    let owner = authenticated_account(&state, &headers).await?;
+    let actor = authenticated_actor(&state, &headers).await?;
+    let soul = if actor == id {
+        social_store(&state)?.agent_soul_for_profile(id).await?
+    } else {
+        social_store(&state)?.agent_soul(owner, id).await?
+    };
+    Ok(Json(soul))
+}
+
+async fn update_agent_soul(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(body): Json<UpdateAgentSoul>,
+) -> Result<Json<crate::social::AgentSoul>, ApiError> {
+    let owner = authenticated_account(&state, &headers).await?;
+    Ok(Json(
+        social_store(&state)?
+            .update_agent_soul(
+                owner,
+                id,
+                body.expected_revision,
+                &body.public_summary,
+                &body.private_instructions,
+                &body.specialties,
+            )
+            .await?,
+    ))
+}
+
+async fn get_agent_installations(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<crate::social::AgentInstallation>>, ApiError> {
+    let owner = authenticated_account(&state, &headers).await?;
+    Ok(Json(
+        social_store(&state)?.agent_installations(owner, id).await?,
+    ))
+}
+
+async fn heartbeat_agent_installation(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((id, installation_key)): Path<(Uuid, String)>,
+    Json(body): Json<AgentInstallationHeartbeat>,
+) -> Result<Json<crate::social::AgentInstallation>, ApiError> {
+    if authenticated_actor(&state, &headers).await? != id {
+        return Err(ApiError::forbidden(
+            "an installation may heartbeat only its own agent",
+        ));
+    }
+    Ok(Json(
+        social_store(&state)?
+            .heartbeat_agent_installation(
+                id,
+                &installation_key,
+                &body.display_name,
+                &body.runtime,
+                &body.capabilities,
+                &body.status,
+            )
+            .await?,
+    ))
+}
+
+async fn list_mcp_bridges(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<McpBridgeConnection>>, ApiError> {
+    let owner = authenticated_account(&state, &headers).await?;
+    Ok(Json(
+        mcp_bridge_store(&state)?.list_connections(owner).await?,
+    ))
+}
+
+fn fpl_bridge_runtime(state: &AppState) -> Result<&crate::fpl_bridge::FplBridgeRuntime, ApiError> {
+    state.fpl_bridge.as_deref().ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        message: "FPL connection is not configured".into(),
+    })
+}
+
+fn fpl_bridge_error(error: crate::fpl_bridge::FplBridgeError) -> ApiError {
+    use crate::fpl_bridge::FplBridgeError;
+    let status = match error {
+        FplBridgeError::Invalid => StatusCode::BAD_REQUEST,
+        FplBridgeError::Forbidden => StatusCode::FORBIDDEN,
+        _ => StatusCode::BAD_GATEWAY,
+    };
+    tracing::warn!(%error, "FPL bridge operation failed");
+    ApiError {
+        status,
+        message: error.to_string(),
+    }
+}
+
+async fn start_fpl_link(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<crate::fpl_bridge::FplLinkStart>, ApiError> {
+    let owner = authenticated_account(&state, &headers).await?;
+    Ok(Json(
+        fpl_bridge_runtime(&state)?
+            .start(owner)
+            .await
+            .map_err(fpl_bridge_error)?,
+    ))
+}
+
+async fn fpl_link_status(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<crate::fpl_bridge::FplLinkStatus>, ApiError> {
+    let owner = authenticated_account(&state, &headers).await?;
+    Ok(Json(
+        fpl_bridge_runtime(&state)?
+            .status(owner)
+            .await
+            .map_err(fpl_bridge_error)?,
+    ))
+}
+
+#[derive(Deserialize)]
+struct FplCallback {
+    state: String,
+    code: String,
+}
+async fn complete_fpl_link(
+    State(state): State<Arc<AppState>>,
+    Query(callback): Query<FplCallback>,
+) -> Result<impl IntoResponse, ApiError> {
+    fpl_bridge_runtime(&state)?
+        .complete(&callback.state, &callback.code)
+        .await
+        .map_err(fpl_bridge_error)?;
+    Ok((
+        [
+            (header::CACHE_CONTROL, "no-store"),
+            (header::REFERRER_POLICY, "no-referrer"),
+        ],
+        "FPL connected. You can return to Tardy.",
+    ))
+}
+
+async fn unlink_fpl(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    let owner = authenticated_account(&state, &headers).await?;
+    fpl_bridge_runtime(&state)?
+        .unlink(owner)
+        .await
+        .map_err(fpl_bridge_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn sync_fpl_bridges(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<McpBridgeConnection>>, ApiError> {
+    let owner = authenticated_account(&state, &headers).await?;
+    Ok(Json(
+        fpl_bridge_runtime(&state)?
+            .sync(owner)
+            .await
+            .map_err(fpl_bridge_error)?,
+    ))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct CreateFplActivation {
+    conversation_id: Uuid,
+}
+async fn create_fpl_activation(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((id, connection_id)): Path<(Uuid, Uuid)>,
+    Json(body): Json<CreateFplActivation>,
+) -> Result<impl IntoResponse, ApiError> {
+    if authenticated_actor(&state, &headers).await? != id {
+        return Err(ApiError::forbidden("activation belongs to another agent"));
+    }
+    let value = fpl_bridge_runtime(&state)?
+        .activation(id, connection_id, body.conversation_id)
+        .await
+        .map_err(fpl_bridge_error)?;
+    Ok(([(header::CACHE_CONTROL, "no-store")], Json(value)))
+}
+
+async fn authorize_fpl_activation(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    let token = bearer_token(&headers)?
+        .ok_or_else(|| ApiError::unauthorized("activation token required"))?;
+    fpl_bridge_runtime(&state)?
+        .authorize_token(token)
+        .await
+        .map_err(fpl_bridge_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn register_mcp_bridge(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<RegisterMcpBridge>,
+) -> Result<(StatusCode, Json<McpBridgeConnection>), ApiError> {
+    let owner = authenticated_account(&state, &headers).await?;
+    let connection = mcp_bridge_store(&state)?
+        .register_connection(
+            owner,
+            &body.provider,
+            &body.display_name,
+            &body.bridge_ref,
+            &body.capabilities,
+        )
+        .await?;
+    Ok((StatusCode::CREATED, Json(connection)))
+}
+
+async fn revoke_mcp_bridge(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, ApiError> {
+    let owner = authenticated_account(&state, &headers).await?;
+    mcp_bridge_store(&state)?
+        .revoke_connection(owner, id)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn list_mcp_bridge_grants(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<McpBridgeGrant>>, ApiError> {
+    let owner = authenticated_account(&state, &headers).await?;
+    Ok(Json(
+        mcp_bridge_store(&state)?.list_grants(owner, id).await?,
+    ))
+}
+
+async fn grant_mcp_bridge_agent(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((id, agent_id)): Path<(Uuid, Uuid)>,
+    Json(body): Json<GrantMcpBridgeAgent>,
+) -> Result<Json<McpBridgeGrant>, ApiError> {
+    let owner = authenticated_account(&state, &headers).await?;
+    Ok(Json(
+        mcp_bridge_store(&state)?
+            .grant_agent(
+                owner,
+                id,
+                agent_id,
+                &body.tool_patterns,
+                &body.approval_policy,
+            )
+            .await?,
+    ))
+}
+
+async fn revoke_mcp_bridge_agent(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((id, agent_id)): Path<(Uuid, Uuid)>,
+) -> Result<StatusCode, ApiError> {
+    let owner = authenticated_account(&state, &headers).await?;
+    mcp_bridge_store(&state)?
+        .revoke_agent(owner, id, agent_id)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn get_profile_agents(
@@ -1285,6 +1690,121 @@ fn localize_posts(state: &AppState, posts: &mut [AppFeedPost]) {
             }));
         }
     }
+}
+
+/// Only invoked after the social store has checked post visibility. Resolve
+/// author-owned assets at read time rather than persisting temporary capabilities.
+async fn resolve_post_assets(state: &AppState, posts: &mut [AppFeedPost]) -> Result<(), ApiError> {
+    for post in posts {
+        for item in &mut post.media {
+            for (id_field, url_field) in [("asset_id", "url"), ("poster_asset_id", "poster_url")] {
+                if item.get(id_field).is_none_or(serde_json::Value::is_null) {
+                    if let Some(url) = item.get(url_field).and_then(serde_json::Value::as_str) {
+                        if let Some(id) = state.media.legacy_url_asset(post.author_id, url).await? {
+                            item[id_field] = serde_json::json!(id);
+                        }
+                    }
+                }
+                if let Some(value) = item.get(id_field).and_then(serde_json::Value::as_str) {
+                    let id = Uuid::parse_str(value)
+                        .map_err(|_| ApiError::internal("invalid persisted media asset"))?;
+                    item[url_field] =
+                        serde_json::Value::String(post_asset_url(state, post.author_id, id).await?);
+                }
+            }
+            if item["type"] == "video"
+                && item
+                    .get("poster_asset_id")
+                    .is_none_or(serde_json::Value::is_null)
+            {
+                // Older videos without a separate poster use the freshly issued video
+                // URL, never the internal identity placeholder.
+                if item
+                    .get("poster_url")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|url| url.starts_with("tardy-asset://"))
+                {
+                    item["poster_url"] = item["url"].clone();
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn bind_post_assets(
+    state: &AppState,
+    actor: Uuid,
+    media: &mut [PostMedia],
+) -> Result<(), ApiError> {
+    for item in media {
+        if item.asset_id.is_none() {
+            item.asset_id = state.media.legacy_url_asset(actor, &item.url).await?;
+        }
+        if item.poster_asset_id.is_none() {
+            if let Some(url) = &item.poster_url {
+                item.poster_asset_id = state.media.legacy_url_asset(actor, url).await?;
+            }
+        }
+        if let Some(id) = item.asset_id {
+            let asset = state.media.ready_asset(actor, id).await?;
+            let prefix = match item.kind.as_str() {
+                "video" => "video/",
+                "image" => "image/",
+                _ => return Err(ApiError::bad_request("invalid post media kind")),
+            };
+            if !asset.content_type.starts_with(prefix) {
+                return Err(ApiError::bad_request("post asset type mismatch"));
+            }
+            item.url = format!("tardy-asset://{id}");
+        } else if is_temporary_media_url(&item.url) {
+            return Err(ApiError::bad_request(
+                "temporary media URLs require asset_id",
+            ));
+        }
+        if let Some(id) = item.poster_asset_id {
+            let asset = state.media.ready_asset(actor, id).await?;
+            if item.kind != "video" || !asset.content_type.starts_with("image/") {
+                return Err(ApiError::bad_request(
+                    "poster must be an image asset for a video",
+                ));
+            }
+            item.poster_url = Some(format!("tardy-asset://{id}"));
+        } else if item
+            .poster_url
+            .as_deref()
+            .is_some_and(is_temporary_media_url)
+        {
+            return Err(ApiError::bad_request(
+                "temporary poster URLs require poster_asset_id",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn is_temporary_media_url(value: &str) -> bool {
+    url::Url::parse(value).ok().is_some_and(|url| {
+        url.query_pairs()
+            .any(|(key, _)| key.eq_ignore_ascii_case("x-amz-signature"))
+    })
+}
+
+async fn resolve_tardy_post(state: &AppState, mut post: TardyPost) -> Result<TardyPost, ApiError> {
+    for item in &mut post.media {
+        if let Some(id) = item.asset_id {
+            item.url = post_asset_url(state, post.author_profile_id, id).await?;
+        }
+        if let Some(id) = item.poster_asset_id {
+            item.poster_url = Some(post_asset_url(state, post.author_profile_id, id).await?);
+        }
+    }
+    Ok(post)
+}
+
+async fn post_asset_url(state: &AppState, author: Uuid, id: Uuid) -> Result<String, ApiError> {
+    state.media.ready_asset(author, id).await?;
+    Ok(state.media.delivery_url(id).await?)
 }
 
 async fn create_feed_subscription(
@@ -1983,6 +2503,185 @@ async fn list_social_messages(
 }
 
 #[derive(Deserialize, ToSchema)]
+pub(crate) struct SetConversationDraft {
+    body: String,
+    status: String,
+    #[serde(default)]
+    detail: String,
+    #[serde(default)]
+    activities: Vec<crate::social::ConversationDraftActivity>,
+}
+
+async fn set_social_conversation_draft(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(body): Json<SetConversationDraft>,
+) -> Result<Json<ConversationDraft>, ApiError> {
+    Ok(Json(
+        social_store(&state)?
+            .set_draft(
+                authenticated_actor(&state, &headers).await?,
+                id,
+                &body.body,
+                &body.status,
+                &body.detail,
+                &body.activities,
+            )
+            .await?,
+    ))
+}
+
+async fn clear_social_conversation_draft(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    social_store(&state)?
+        .clear_draft(authenticated_actor(&state, &headers).await?, id)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct ConversationStreamQuery {
+    #[serde(default)]
+    after: i64,
+}
+
+async fn stream_social_conversation(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Query(query): Query<ConversationStreamQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor = authenticated_actor(&state, &headers).await?;
+    let header_after = headers
+        .get("last-event-id")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or_default();
+    let mut last_sequence = query.after.max(header_after);
+    if last_sequence < 0 {
+        return Err(ApiError::bad_request("invalid conversation event cursor"));
+    }
+
+    // Check membership before sending SSE headers. This also loads any durable replay.
+    let social = state.social.clone().ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        message: "durable social features are not configured".into(),
+    })?;
+    let mut initial_messages = social.messages(actor, id, last_sequence, 100).await?;
+    for message in &mut initial_messages {
+        hydrate_message_media(&state, message).await?;
+    }
+    let initial_typing = social.typing(actor, id).await?;
+    let initial_drafts = social.drafts(actor, id).await?;
+    let (sender, receiver) = tokio::sync::mpsc::channel(16);
+    tokio::spawn(async move {
+        if let Some(message) = initial_messages.last() {
+            last_sequence = message.sequence;
+        }
+        if !initial_messages.is_empty()
+            && send_sse_json(&sender, "messages", Some(last_sequence), &initial_messages)
+                .await
+                .is_err()
+        {
+            return;
+        }
+        if send_sse_json(&sender, "typing", None, &initial_typing)
+            .await
+            .is_err()
+        {
+            return;
+        }
+        if send_sse_json(&sender, "drafts", None, &initial_drafts)
+            .await
+            .is_err()
+        {
+            return;
+        }
+        let mut last_typing = initial_typing;
+        let mut last_drafts = initial_drafts;
+        let mut interval = tokio::time::interval(Duration::from_millis(200));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            let result = async {
+                let mut fresh = social.messages(actor, id, last_sequence, 100).await?;
+                for message in &mut fresh {
+                    hydrate_message_media(&state, message).await?;
+                }
+                let typing = social.typing(actor, id).await?;
+                let drafts = social.drafts(actor, id).await?;
+                Ok::<_, ApiError>((fresh, typing, drafts))
+            }
+            .await;
+            let (fresh, typing, drafts) = match result {
+                Ok(value) => value,
+                Err(error) => {
+                    tracing::warn!(conversation_id = %id, %error, "conversation SSE stream failed");
+                    let _ = sender
+                        .send(Ok(Event::default()
+                            .event("error")
+                            .data("{\"error\":\"conversation stream interrupted\"}")))
+                        .await;
+                    return;
+                }
+            };
+            if let Some(message) = fresh.last() {
+                last_sequence = message.sequence;
+            }
+            if !fresh.is_empty()
+                && send_sse_json(&sender, "messages", Some(last_sequence), &fresh)
+                    .await
+                    .is_err()
+            {
+                return;
+            }
+            if typing != last_typing {
+                last_typing = typing;
+                if send_sse_json(&sender, "typing", None, &last_typing)
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            if drafts != last_drafts {
+                last_drafts = drafts;
+                if send_sse_json(&sender, "drafts", None, &last_drafts)
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+            }
+        }
+    });
+    Ok(Sse::new(ReceiverStream::new(receiver)).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("keep-alive"),
+    ))
+}
+
+async fn send_sse_json<T: Serialize>(
+    sender: &tokio::sync::mpsc::Sender<Result<Event, Infallible>>,
+    event: &'static str,
+    id: Option<i64>,
+    value: &T,
+) -> Result<(), ()> {
+    let data = serde_json::to_string(value).map_err(|_| ())?;
+    let mut frame = Event::default().event(event).data(data);
+    if let Some(id) = id {
+        frame = frame.id(id.to_string());
+    }
+    sender.send(Ok(frame)).await.map_err(|_| ())
+}
+
+#[derive(Deserialize, ToSchema)]
 pub(crate) struct SummonAgent {
     agent_profile_id: Uuid,
     #[serde(default = "default_true")]
@@ -2027,22 +2726,23 @@ pub(crate) struct PublishSocialPost {
 async fn publish_social_post(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Json(body): Json<PublishSocialPost>,
+    Json(mut body): Json<PublishSocialPost>,
 ) -> Result<(StatusCode, Json<TardyPost>), ApiError> {
+    let actor = authenticated_actor(&state, &headers).await?;
+    bind_post_assets(&state, actor, &mut body.media).await?;
+    let post = social_store(&state)?
+        .publish_post_with_media(
+            actor,
+            body.client_request_id,
+            &body.caption,
+            body.shared_link_id,
+            body.visibility,
+            &body.media,
+        )
+        .await?;
     Ok((
         StatusCode::CREATED,
-        Json(
-            social_store(&state)?
-                .publish_post_with_media(
-                    authenticated_actor(&state, &headers).await?,
-                    body.client_request_id,
-                    &body.caption,
-                    body.shared_link_id,
-                    body.visibility,
-                    &body.media,
-                )
-                .await?,
-        ),
+        Json(resolve_tardy_post(&state, post).await?),
     ))
 }
 
@@ -2057,15 +2757,14 @@ async fn set_social_post_visibility(
     headers: HeaderMap,
     Json(body): Json<SetPostVisibility>,
 ) -> Result<Json<TardyPost>, ApiError> {
-    Ok(Json(
-        social_store(&state)?
-            .set_post_visibility(
-                authenticated_actor(&state, &headers).await?,
-                id,
-                body.visibility,
-            )
-            .await?,
-    ))
+    let post = social_store(&state)?
+        .set_post_visibility(
+            authenticated_actor(&state, &headers).await?,
+            id,
+            body.visibility,
+        )
+        .await?;
+    Ok(Json(resolve_tardy_post(&state, post).await?))
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -2112,6 +2811,13 @@ pub(crate) fn social_store(state: &AppState) -> Result<&PgSocialStore, ApiError>
     state.social.as_deref().ok_or_else(|| ApiError {
         status: StatusCode::SERVICE_UNAVAILABLE,
         message: "durable social features are not configured".into(),
+    })
+}
+
+fn mcp_bridge_store(state: &AppState) -> Result<&PgMcpBridgeStore, ApiError> {
+    state.mcp_bridges.as_deref().ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        message: "managed MCP bridges are not configured".into(),
     })
 }
 
@@ -2431,6 +3137,7 @@ async fn run_search(
     }
     for result in &mut candidates {
         localize_posts(state, std::slice::from_mut(&mut result.post));
+        resolve_post_assets(state, std::slice::from_mut(&mut result.post)).await?;
     }
     Ok(Json(candidates))
 }
@@ -2532,6 +3239,7 @@ async fn feed(
     if let Some(social) = &state.social {
         let mut items = social.app_feed(viewer, query.limit as i64).await?;
         localize_posts(&state, &mut items);
+        resolve_post_assets(&state, &mut items).await?;
         return Ok(Json(serde_json::json!({"items":items,"next_cursor":null})).into_response());
     }
     let candidates = state.store.feed_candidates(viewer)?;
@@ -2570,6 +3278,7 @@ async fn reels_feed(
         .app_posts(viewer, None, query.limit as i64)
         .await?;
     localize_posts(&state, &mut items);
+    resolve_post_assets(&state, &mut items).await?;
     // Reels is a video-only surface. Home may truthfully mix photo and video posts,
     // but passing photos to the reel client produces an intentionally empty black canvas.
     items.retain(|post| {
@@ -2863,6 +3572,7 @@ async fn explore_feed(
         .app_posts(viewer, None, query.limit as i64)
         .await?;
     localize_posts(&state, &mut items);
+    resolve_post_assets(&state, &mut items).await?;
     Ok(Json(serde_json::json!({"items":items,"next_cursor":null})))
 }
 
@@ -3032,6 +3742,7 @@ async fn get_profile_posts(
         .app_posts(viewer, Some(id), query.limit as i64)
         .await?;
     localize_posts(&state, &mut items);
+    resolve_post_assets(&state, &mut items).await?;
     Ok(Json(serde_json::json!({"items":items,"next_cursor":null})))
 }
 
@@ -3234,6 +3945,66 @@ pub(crate) struct ClaimTardyAccount {
     code: String,
 }
 
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct CreateAgentLinkRequest {
+    owner_profile_id: Uuid,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct DecideAgentLinkRequest {
+    accept: bool,
+}
+
+async fn create_agent_link_request(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<CreateAgentLinkRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let account = authenticated_account(&state, &headers).await?;
+    let actor = authenticated_actor(&state, &headers).await?;
+    let store = state
+        .pg_accounts
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("PostgreSQL accounts required"))?;
+    Ok((
+        StatusCode::CREATED,
+        Json(
+            store
+                .request_agent_link(account, actor, body.owner_profile_id, now_ms()?)
+                .await?,
+        ),
+    ))
+}
+
+async fn list_agent_link_requests(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, ApiError> {
+    let account = authenticated_account(&state, &headers).await?;
+    let store = state
+        .pg_accounts
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("PostgreSQL accounts required"))?;
+    Ok(Json(store.agent_link_requests(account, now_ms()?).await?))
+}
+
+async fn decide_agent_link_request(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(body): Json<DecideAgentLinkRequest>,
+) -> Result<StatusCode, ApiError> {
+    let account = authenticated_account(&state, &headers).await?;
+    let store = state
+        .pg_accounts
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("PostgreSQL accounts required"))?;
+    store
+        .decide_agent_link(account, id, body.accept, now_ms()?)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn claim_tardy_account(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -3241,12 +4012,34 @@ async fn claim_tardy_account(
 ) -> Result<StatusCode, ApiError> {
     purge_expired_tardies(&state).await?;
     let account = authenticated_account(&state, &headers).await?;
-    let profiles = claim_registered_tardy(&state, account, &body.code, now_ms()?).await?;
+    let canonical = canonical_claim_code(&body.code);
+    let profiles = claim_registered_tardy(&state, account, &canonical, now_ms()?).await?;
     let social = social_store(&state)?;
     for profile in profiles {
         social.transfer_identity(profile, account).await?;
     }
     Ok(StatusCode::NO_CONTENT)
+}
+
+fn canonical_claim_code(code: &str) -> String {
+    let code = code.trim();
+    if code.len() == 32 && code.bytes().all(|b| b.is_ascii_hexdigit()) {
+        code.to_ascii_lowercase()
+    } else {
+        code.to_owned()
+    }
+}
+
+#[cfg(test)]
+mod claim_code_case_tests {
+    #[test]
+    fn uuid_codes_ignore_paste_case_without_changing_legacy_codes() {
+        assert_eq!(
+            super::canonical_claim_code(" 31D29609BD5B46C6B10FB4D686324AB5 "),
+            "31d29609bd5b46c6b10fb4d686324ab5"
+        );
+        assert_eq!(super::canonical_claim_code(" TARDY-7Q4K "), "TARDY-7Q4K");
+    }
 }
 
 async fn purge_expired_tardies(state: &AppState) -> Result<(), ApiError> {
@@ -3288,12 +4081,18 @@ async fn complete_upload(
 ) -> Result<impl IntoResponse, ApiError> {
     let actor = authenticated_actor(&state, &headers).await?;
     let asset = state.media.complete(actor, id, now_ms()?).await?;
-    let url = state.media.delivery_url(asset.id).await?;
+    // Validation-pending originals are accepted, not an authorization failure.
+    // Never issue a playback capability before their ready transition.
+    let url = if asset.status == crate::media::MediaStatus::Ready {
+        Some(state.media.delivery_url(asset.id).await?)
+    } else {
+        None
+    };
     let mut view = serde_json::to_value(asset)
         .map_err(|error| ApiError::internal(format!("serialize completed upload: {error}")))?;
     view.as_object_mut()
         .ok_or_else(|| ApiError::internal("completed upload did not serialize as an object"))?
-        .insert("url".into(), serde_json::Value::String(url));
+        .insert("url".into(), serde_json::json!(url));
     Ok((StatusCode::ACCEPTED, Json(view)))
 }
 
@@ -3730,7 +4529,7 @@ impl From<PgAccountError> for ApiError {
             PgAccountError::InvalidDisplayName | PgAccountError::InvalidBio => {
                 Self::bad_request(value.to_string())
             }
-            PgAccountError::Database(_) | PgAccountError::Timestamp => {
+            PgAccountError::Database(_) | PgAccountError::Push(_) | PgAccountError::Timestamp => {
                 Self::internal(value.to_string())
             }
         }
@@ -3874,6 +4673,10 @@ impl From<SocialError> for ApiError {
     fn from(value: SocialError) -> Self {
         match value {
             SocialError::Invalid(_) => Self::bad_request(value.to_string()),
+            SocialError::Conflict(_) => Self {
+                status: StatusCode::CONFLICT,
+                message: value.to_string(),
+            },
             SocialError::NotFound => Self::not_found(value.to_string()),
             SocialError::Forbidden => Self::forbidden(value.to_string()),
             SocialError::Database(sqlx::Error::RowNotFound) => {

@@ -1,15 +1,17 @@
 import * as Clipboard from 'expo-clipboard';
-import { router } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { router, useFocusEffect } from 'expo-router';
+import { useCallback, useMemo, useState } from 'react';
 import { KeyboardAvoidingView, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { handleProblem, normalizeHandle } from '@/auth/handle';
+import { agentConnectCommand } from '@/auth/agent-connect-command';
+import { config } from '@/config';
 import { PillButton } from '@/components/pill-button';
 import { haptic, Icon } from '@/components/ui';
 import { TardyApiError } from '@/data/api';
 import { MOCK_AGENT_CLAIM_CODE } from '@/data/mock/mock-api';
-import type { AgentPairing, AgentRuntime } from '@/data/types';
+import type { AgentPairing, AgentRuntime, AgentLinkRequest } from '@/data/types';
 import { api, usesMockBackend } from '@/state/store';
 import { colors, radius, type } from '@/theme';
 
@@ -28,7 +30,7 @@ function setupPrompt(runtime: AgentRuntime, pairing: AgentPairing, handle: strin
     '',
     'Run this setup command exactly once:',
     '',
-    `npx --yes github:ajmwagar/tardy connect --code ${pairing.code} --handle ${handle} --name ${JSON.stringify(name)} --runtime ${runtime}`,
+    agentConnectCommand({ apiUrl: config.apiUrl, code: pairing.code, handle, name, runtime }),
     '',
     'Then install/read the Tardy skill and verify the connection:',
     '',
@@ -52,6 +54,31 @@ export default function AddAgentScreen() {
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [requests, setRequests] = useState<AgentLinkRequest[]>([]);
+  const [requestError, setRequestError] = useState<string | null>(null);
+  useFocusEffect(useCallback(() => {
+    let active = true;
+    let loading = false;
+    const load = async () => {
+      if (loading) return;
+      loading = true;
+      try { const incoming = await api.agentLinkRequests(); if (active) { setRequests(incoming); setRequestError(null); } }
+      catch (reason) { if (active) setRequestError(`Couldn't load agent requests: ${reason instanceof Error ? reason.message : String(reason)}`); }
+      finally { loading = false; }
+    };
+    void load();
+    const timer = setInterval(() => void load(), 5000);
+    return () => { active = false; clearInterval(timer); };
+  }, []));
+  const decideRequest = async (request: AgentLinkRequest, accept: boolean) => {
+    setBusy(true); setError(null);
+    try {
+      await api.decideAgentLinkRequest(request.id, accept);
+      setRequests((current) => current.filter((item) => item.id !== request.id));
+      haptic.impact();
+    } catch (reason) { setError(`Couldn't ${accept ? 'link' : 'decline'} this agent: ${reason instanceof Error ? reason.message : String(reason)}`); }
+    finally { setBusy(false); }
+  };
   const normalizedHandle = normalizeHandle(handle);
   const prompt = useMemo(() => pairing ? setupPrompt(runtime, pairing, normalizedHandle, name.trim()) : '', [runtime, pairing, normalizedHandle, name]);
   const problem = !name.trim() ? 'Give this agent a name.' : handleProblem(normalizedHandle);
@@ -74,6 +101,19 @@ export default function AddAgentScreen() {
     <KeyboardAvoidingView style={styles.screen} behavior="padding">
       <ScrollView contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + 32 }]} keyboardShouldPersistTaps="handled">
         <Text style={type.secondary}>Each agent is its own persistent Tardy identity. Connect one here, or claim one that already introduced itself.</Text>
+        {requests.map((request) => (
+          <View key={request.id} style={styles.card}>
+            <Icon name="cpu" size={23} color={colors.primary} />
+            <View style={styles.grow}>
+              <Text style={styles.cardTitle}>Link {request.displayName}?</Text>
+              <Text style={styles.cardSub}>@{request.handle} wants to become your agent. Only accept agents you recognize.</Text>
+              <Text style={styles.footnote}>Linking gives you ownership and settings control. It does not grant access to existing chats.</Text>
+              <PillButton label="Accept agent" busy={busy} disabled={busy} onPress={() => void decideRequest(request, true)} />
+              <Pressable disabled={busy} style={styles.linkButton} onPress={() => void decideRequest(request, false)}><Text style={styles.linkText}>Decline</Text></Pressable>
+            </View>
+          </View>
+        ))}
+        {requestError && <Text style={styles.error}>{requestError}</Text>}
         <View style={styles.switcher}>
           <Pressable style={[styles.switch, !agentDriven && styles.switchActive]} onPress={() => setAgentDriven(false)}><Text style={[styles.switchText, !agentDriven && styles.switchTextActive]}>Add an agent</Text></Pressable>
           <Pressable style={[styles.switch, agentDriven && styles.switchActive]} onPress={() => setAgentDriven(true)}><Text style={[styles.switchText, agentDriven && styles.switchTextActive]}>Agent has a code</Text></Pressable>
@@ -83,7 +123,7 @@ export default function AddAgentScreen() {
           <>
             <Text style={styles.label}>Code from your agent</Text>
             {usesMockBackend && <Text style={styles.hint}>Test build: {MOCK_AGENT_CLAIM_CODE}</Text>}
-            <TextInput value={code} onChangeText={(value) => setCode(value.toUpperCase())} placeholder="TARDY-XXXX" placeholderTextColor={colors.textTertiary} style={styles.code} autoCapitalize="characters" autoCorrect={false} />
+            <TextInput value={code} onChangeText={setCode} placeholder="Code from your agent" placeholderTextColor={colors.textTertiary} style={styles.code} autoCapitalize="none" autoCorrect={false} />
             <PillButton label="Claim agent" busy={busy} disabled={code.trim().length < 4} onPress={() => void claim(code.trim())} />
           </>
         ) : pairing ? (

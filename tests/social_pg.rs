@@ -1,9 +1,91 @@
 use tardy::push::{ApnsEnvironment, PgPushStore, RegisterPushDevice};
-use tardy::social::{IdentityKind, PgSocialStore, PostMedia, PostVisibility};
+use tardy::social::{IdentityKind, PgSocialStore, PostMedia, PostVisibility, SocialError};
 use tardy::subscriptions::{DeliveryMode, NewSubscription, PgSubscriptionStore, SubscriptionKind};
 use uuid::Uuid;
 
 static DATABASE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[tokio::test]
+async fn agent_souls_are_versioned_and_installations_age_from_presence() {
+    let _guard = DATABASE_TEST_LOCK.lock().unwrap();
+    let Some((pool, store)) = setup().await else {
+        return;
+    };
+    let owner = Uuid::new_v4();
+    let human = Uuid::new_v4();
+    let agent = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO durable_accounts (id,email,kind,temporary) VALUES ($1,$2,'human',false)",
+    )
+    .bind(owner)
+    .bind(format!("soul-{owner}@example.test"))
+    .execute(&pool)
+    .await
+    .unwrap();
+    store
+        .register_identity(owner, human, "soul-owner", IdentityKind::Human, "Owner", "")
+        .await
+        .unwrap();
+    store
+        .register_identity(owner, agent, "soul-agent", IdentityKind::Agent, "Agent", "")
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO profile_ownership (owner_account_id,profile_id) VALUES ($1,$2)")
+        .bind(owner)
+        .bind(agent)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let empty = store.agent_soul(owner, agent).await.unwrap();
+    assert_eq!(empty.revision, 0);
+    let first = store
+        .update_agent_soul(
+            owner,
+            agent,
+            0,
+            "A patient systems tutor",
+            "Prefer runnable examples.",
+            &["Rust".into(), "Mathematics".into()],
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.revision, 1);
+    assert!(matches!(
+        store
+            .update_agent_soul(owner, agent, 0, "stale", "stale", &[])
+            .await,
+        Err(SocialError::Conflict(_))
+    ));
+
+    let installation = store
+        .heartbeat_agent_installation(
+            agent,
+            "mac-studio",
+            "Mac Studio",
+            "codex",
+            &["chat".into(), "tools".into()],
+            "available",
+        )
+        .await
+        .unwrap();
+    assert_eq!(installation.status, "available");
+    let installations = store.agent_installations(owner, agent).await.unwrap();
+    assert_eq!(installations.len(), 1);
+    assert_eq!(installations[0].installation_key, "mac-studio");
+
+    sqlx::query(
+        "UPDATE agent_installations SET last_seen_at=now()-interval '2 minutes' WHERE id=$1",
+    )
+    .bind(installation.id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        store.agent_installations(owner, agent).await.unwrap()[0].status,
+        "offline"
+    );
+}
 
 #[tokio::test]
 async fn direct_threads_reuse_while_groups_keep_their_own_identity() {
@@ -360,6 +442,8 @@ async fn private_reel_keeps_media_when_the_owner_promotes_it() {
         .unwrap();
     let media = PostMedia {
         kind: "video".into(),
+        asset_id: None,
+        poster_asset_id: None,
         url: "https://media.test/reel.mp4".into(),
         poster_url: Some("https://media.test/reel.jpg".into()),
         width: 1080,
@@ -394,6 +478,148 @@ async fn private_reel_keeps_media_when_the_owner_promotes_it() {
     assert_eq!(public[0].id, post.id);
     assert_eq!(public[0].format, "reel");
     assert_eq!(public[0].media[0]["url"], "https://media.test/reel.mp4");
+}
+
+#[tokio::test]
+async fn owner_can_comment_on_owned_agents_private_post_but_stranger_cannot() {
+    let _guard = DATABASE_TEST_LOCK.lock().unwrap();
+    let Some((pool, store)) = setup().await else {
+        return;
+    };
+    let owner_account = Uuid::new_v4();
+    let stranger_account = Uuid::new_v4();
+    for account in [owner_account, stranger_account] {
+        sqlx::query(
+            "INSERT INTO durable_accounts (id,email,kind,temporary) VALUES ($1,$2,'human',false)",
+        )
+        .bind(account)
+        .bind(format!("comment-{account}@example.test"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let owner = Uuid::new_v4();
+    let agent = Uuid::new_v4();
+    let stranger = Uuid::new_v4();
+    for (account, profile, handle, kind) in [
+        (owner_account, owner, "private-owner", IdentityKind::Human),
+        (owner_account, agent, "private-agent", IdentityKind::Agent),
+        (
+            stranger_account,
+            stranger,
+            "private-stranger",
+            IdentityKind::Human,
+        ),
+    ] {
+        store
+            .register_identity(account, profile, handle, kind, handle, "")
+            .await
+            .unwrap();
+    }
+    sqlx::query("INSERT INTO profile_ownership (owner_account_id,profile_id) VALUES ($1,$2)")
+        .bind(owner_account)
+        .bind(agent)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let post = store
+        .publish_post(
+            agent,
+            Uuid::new_v4(),
+            "private work update",
+            None,
+            PostVisibility::Private,
+        )
+        .await
+        .unwrap();
+
+    assert!(store.comments(owner, post.id).await.unwrap().is_empty());
+    let comment = store
+        .comment(owner, post.id, "Keep going", &[])
+        .await
+        .unwrap();
+    let comments = store.comments(owner, post.id).await.unwrap();
+    assert_eq!(comments.len(), 1);
+    assert_eq!(comments[0].id, comment.id);
+    assert_eq!(comments[0].body, "Keep going");
+    assert!(store.comments(stranger, post.id).await.is_err());
+    assert!(
+        store
+            .comment(stranger, post.id, "I should not be here", &[])
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn agent_draft_stream_is_private_and_final_message_clears_it() {
+    let _guard = DATABASE_TEST_LOCK.lock().unwrap();
+    let Some((_pool, store)) = setup().await else {
+        return;
+    };
+    let owner_account = Uuid::new_v4();
+    let stranger_account = Uuid::new_v4();
+    let owner = Uuid::new_v4();
+    let agent = Uuid::new_v4();
+    let stranger = Uuid::new_v4();
+    for (account, profile, handle, kind) in [
+        (owner_account, owner, "draft-owner", IdentityKind::Human),
+        (owner_account, agent, "draft-agent", IdentityKind::Agent),
+        (
+            stranger_account,
+            stranger,
+            "draft-stranger",
+            IdentityKind::Human,
+        ),
+    ] {
+        store
+            .register_identity(account, profile, handle, kind, handle, "")
+            .await
+            .unwrap();
+    }
+    let conversation = store.create_conversation(owner, agent).await.unwrap();
+    let draft = store
+        .set_draft(
+            agent,
+            conversation.id,
+            "Streaming **now**",
+            "writing",
+            "",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(draft.sender_profile_id, agent);
+    assert_eq!(
+        store.drafts(owner, conversation.id).await.unwrap(),
+        vec![draft]
+    );
+    assert!(store.drafts(stranger, conversation.id).await.is_err());
+    assert!(
+        store
+            .set_draft(
+                owner,
+                conversation.id,
+                "humans cannot impersonate streams",
+                "writing",
+                "",
+                &[]
+            )
+            .await
+            .is_err()
+    );
+
+    store
+        .send_message(agent, conversation.id, "Streaming **now**", None, &[])
+        .await
+        .unwrap();
+    assert!(
+        store
+            .drafts(owner, conversation.id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[tokio::test]

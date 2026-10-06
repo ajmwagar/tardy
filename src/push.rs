@@ -60,6 +60,8 @@ pub struct AppNotification {
     pub post_id: Option<Uuid>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub conversation_id: Option<Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_link_request_id: Option<Uuid>,
     pub text: String,
     pub created_at_ms: i64,
     pub read: bool,
@@ -336,7 +338,8 @@ impl PgPushStore {
         let rows = sqlx::query(
             "SELECT id,category,body,created_at,read_at,
                     data->>'actor_id' AS actor_id,data->>'post_id' AS post_id,
-                    data->>'conversation_id' AS conversation_id
+                    data->>'conversation_id' AS conversation_id,
+                    data->>'agent_link_request_id' AS agent_link_request_id
              FROM push_notifications
              WHERE account_id=$1 AND data ? 'actor_id'
              ORDER BY created_at DESC,id DESC LIMIT $2",
@@ -369,6 +372,11 @@ impl PgPushStore {
                     actor_id,
                     post_id,
                     conversation_id,
+                    agent_link_request_id: row
+                        .try_get::<Option<String>, _>("agent_link_request_id")?
+                        .map(|id| id.parse())
+                        .transpose()
+                        .map_err(|_| sqlx::Error::Decode("invalid agent link request id".into()))?,
                     text: row.try_get("body")?,
                     created_at_ms: row
                         .try_get::<DateTime<Utc>, _>("created_at")?

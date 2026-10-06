@@ -48,6 +48,10 @@ async function signedInClient(...replies: Reply[]) {
 }
 
 describe('HttpTardyApi: routes', () => {
+  it('decodes a pending agent request without requiring a claim code', async () => {
+    const { api } = await signedInClient({ status: 200, body: [{ id: 'r1', agent_profile_id: 'agent-1', handle: 'codex_avery', display_name: 'Codex Avery', status: 'pending', expires_at_ms: 1000 }] });
+    await expect(api.agentLinkRequests()).resolves.toEqual([{ id: 'r1', agentProfileId: 'agent-1', handle: 'codex_avery', displayName: 'Codex Avery', status: 'pending', expiresAt: '1970-01-01T00:00:01.000Z' }]);
+  });
   // Rows: [name, call, method, path, request body (absent = no body)]. Wrapped in objects
   // below because jest passes `done` in place of a missing trailing row element.
   const rows: [string, (api: HttpTardyApi) => Promise<unknown>, string, string, unknown?][] = [
@@ -66,6 +70,9 @@ describe('HttpTardyApi: routes', () => {
     ['addComment', (api) => api.addComment('p1', 'hey @a2', ['a2']), 'POST', '/v1/social/posts/p1/comments', { body: 'hey @a2', mentioned_profile_ids: ['a2'] }],
     ['claimAgent', (api) => api.claimAgent(' TARDY-7Q4K '), 'POST', '/v1/onboarding/tardy-claims', { code: 'TARDY-7Q4K' }],
     ['createAgentPairing', (api) => api.createAgentPairing(), 'POST', '/v1/onboarding/tardies', {}],
+    ['agentLinkRequests', (api) => api.agentLinkRequests(), 'GET', '/v1/onboarding/agent-link-requests'],
+    ['accept agent link', (api) => api.decideAgentLinkRequest('request 1', true), 'PUT', '/v1/onboarding/agent-link-requests/request%201', { accept: true }],
+    ['decline agent link', (api) => api.decideAgentLinkRequest('request 1', false), 'PUT', '/v1/onboarding/agent-link-requests/request%201', { accept: false }],
     ['markNotificationsRead', (api) => api.markNotificationsRead('1970-01-01T00:00:01.000Z'), 'POST', '/v1/notifications/read', { through_at_ms: 1000 }],
     ['setSaved on', (api) => api.setSaved('p1', true), 'PUT', '/v1/saved-posts/p1'],
     ['setSaved off', (api) => api.setSaved('p1', false), 'DELETE', '/v1/saved-posts/p1'],

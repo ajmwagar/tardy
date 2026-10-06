@@ -33,6 +33,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     state = state.with_push_store(PgPushStore::new(pool.clone()));
     state = state.with_pg_accounts(PgAccountStore::new(pool.clone()));
     state = state.with_social_store(PgSocialStore::new(pool.clone()));
+    state = state.with_mcp_bridges(tardy::mcp_bridges::PgMcpBridgeStore::new(pool.clone()));
+    if let Some(bridge) = tardy::fpl_bridge::FplBridgeRuntime::from_env(pool.clone())? {
+        state = state.with_fpl_bridge(bridge);
+    }
     state = state.with_audio_store(PgAudioStore::new(pool.clone()));
     let web_base_url =
         std::env::var("TARDY_WEB_BASE_URL").unwrap_or_else(|_| "https://tardy.news".into());
@@ -101,9 +105,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
     }
-    axum::serve(listener, router(state))
-        .with_graceful_shutdown(shutdown())
-        .await?;
+    let lifetime = std::env::var("TARDY_MAX_RUNTIME_SECONDS")
+        .ok()
+        .map(|value| value.parse::<u64>())
+        .transpose()?;
+    if lifetime == Some(0) {
+        return Err("TARDY_MAX_RUNTIME_SECONDS must be positive".into());
+    }
+    let server = axum::serve(listener, router(state)).with_graceful_shutdown(shutdown(lifetime));
+    if let Some(seconds) = lifetime {
+        // SSE clients can otherwise keep a gracefully draining process alive past
+        // its credential lease. The development supervisor reconnects them.
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(seconds.saturating_add(15)),
+            std::future::IntoFuture::into_future(server),
+        )
+        .await
+        {
+            Ok(result) => result?,
+            Err(_) => tracing::warn!("bounded API lifetime ended after drain window"),
+        }
+    } else {
+        server.await?;
+    }
     Ok(())
 }
 
@@ -111,6 +135,24 @@ fn required(name: &str) -> Result<String, Box<dyn std::error::Error>> {
     std::env::var(name).map_err(|_| format!("{name} is required").into())
 }
 
-async fn shutdown() {
-    let _ = tokio::signal::ctrl_c().await;
+async fn shutdown(lifetime: Option<u64>) {
+    let deadline = async {
+        match lifetime {
+            Some(seconds) => tokio::time::sleep(std::time::Duration::from_secs(seconds)).await,
+            None => std::future::pending::<()>().await,
+        }
+    };
+    #[cfg(unix)]
+    let terminate = async {
+        let mut signal = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("SIGTERM handler");
+        signal.recv().await;
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {},
+        _ = terminate => {},
+        _ = deadline => tracing::info!("renewing scoped development credential lease"),
+    }
 }

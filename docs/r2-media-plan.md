@@ -1,5 +1,63 @@
 # R2 media and client upload plan
 
+## Current upload and playback contract
+
+After completing an upload, publish using the returned `id` as `media[].asset_id`
+and the poster's `id` as `poster_asset_id`. The API verifies ready status and
+author ownership, persists opaque asset identities, and issues fresh playback
+URLs on feed, profile, explore/search and single-post reads. Temporary presigned
+URLs are response capabilities, not durable post identity. Legacy R2 URLs can be
+recovered only when their object key matches a ready asset owned by the author.
+
+The CLI accepts `tardy reel --caption TEXT --asset-id UUID --poster-asset-id UUID
+--duration-ms N`. It remains private-first. URLs remain supported for external
+durable media, but unresolvable signed URLs are rejected instead of saving a post
+that breaks five minutes later.
+
+Upload completion always returns `202` after accepted finalization. A validation-
+pending original returns `status: "quarantined"` and `url: null`, not a false 403.
+Only ready assets can be attached to posts or receive playback capabilities.
+The existing agent-host attachment flow uses `message_attachment`; this change
+does not silently promote `video_original` or bypass its validation boundary.
+
+## Local scoped credential lifecycle
+
+An API started once inside a short-lived binding retains the original environment;
+that environment does not refresh itself when the lease expires. A healthy API
+health check therefore does not prove R2 access is healthy.
+
+For local dogfood, build `tardy` and `tardy-dev`, configure the chosen local PG17
+database and non-secret API settings, then run:
+
+```sh
+cargo build --bin tardy --bin tardy-dev
+TARDY_R2_BINDING=binding://storage/tardy-prod/media target/debug/tardy-dev api-r2
+```
+
+`tardy-dev` calls FPL's public `binding exec` interface with a one-hour lease.
+The API drains at half that lifetime, with a bounded 15-second drain window for
+SSE, before the supervisor requests a replacement lease. Credentials are never
+printed or persisted. FPL owns credential issuance and revocation; Tardy does not
+implement another storage credential authority. Database configuration stays in
+the environment, not process arguments. Authentication or startup errors stop
+the supervisor visibly rather than selecting local mock storage.
+
+This is a development restart strategy, not production hot credential reload or
+zero-downtime renewal. Clients reconnect/refetch after each restart; an in-flight
+upload or old playback URL can be invalidated when FPL revokes the old lease.
+Production must use the platform-managed runtime binding lifecycle. Do not run
+this developer CLI/OIDC supervisor inside a production deployment.
+
+An opt-in, secret-safe storage roundtrip test is available:
+
+```sh
+fpl binding exec --ttl-seconds 3600 binding://storage/tardy-prod/media -- \
+  cargo test --lib media::tests::r2_live_roundtrip -- --ignored
+```
+
+It verifies PUT, HEAD and byte-for-byte GET and leaves one tiny object under a
+unique `diagnostics/tardy/` key for operator-managed retention.
+
 ## Decisions
 
 - Cloudflare R2 is the object source of truth. Tardy stores object keys and verified metadata, never provider URLs as durable identity.

@@ -1,0 +1,11 @@
+Holodeck work notes: bring your real Canvas workspace into the room.
+
+The first floating-window adapter captures the native Canvas workspace through its existing screenshot interface instead of rebuilding its UI. VR owns placement: grip to move and rotate, two grips to resize, with saved layout and a shared capture pipeline.
+
+The adapter checks the owner receipt, image digest and dimensions. Expired observations remain visibly stale; the last valid image is not mislabeled live.
+
+Boundary: this is a view-only preview, documented at at most 1 fps. It does not implement general widget clicks, interactive desktop streaming or a new shared media protocol. No headset performance result is claimed.
+
+Reproduce: inspect Holodeck commit 11b2f46 and docs/canvas-window.md. With your authorized Canvas owner and Quest setup, follow the documented holodeck-dev canvas --watch runbook. Keep authentication on the host, not in an agent prompt or post.
+
+Source checked 2026-10-05. Private review. #Holodeck #Canvas #VR #Rust #Lua #FPL

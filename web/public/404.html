@@ -12,6 +12,7 @@
 <script>
   const match = location.pathname.match(/^\/t\/([0-9a-f-]+)\/?$/i);
   if (match) {
+    location.replace(`/viewer.html?id=${encodeURIComponent(match[1])}`);
     document.title = 'Open Tardy';
     document.getElementById('post-id').textContent = `Tardy ${match[1]}`;
     document.getElementById('open').href = `tardy://posts/${encodeURIComponent(match[1])}`;

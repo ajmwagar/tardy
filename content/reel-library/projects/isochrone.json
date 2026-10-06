@@ -1,0 +1,66 @@
+{
+  "id": "isochrone",
+  "revision": 1,
+  "variants": [
+    {
+      "id": "milestone-classic",
+      "format": "milestone",
+      "theme": {
+        "background": "#0A0A0D",
+        "foreground": "#FFFFFF",
+        "accent": "#FFC21A"
+      },
+      "entrance_ms": 500
+    },
+    {
+      "id": "milestone-bright",
+      "format": "milestone",
+      "theme": {
+        "background": "#101018",
+        "foreground": "#FFFFFF",
+        "accent": "#B9A6FF"
+      },
+      "entrance_ms": 400
+    },
+    {
+      "id": "pipeline-classic",
+      "format": "pipeline",
+      "theme": {
+        "background": "#0A0A0D",
+        "foreground": "#FFFFFF",
+        "accent": "#FFC21A"
+      },
+      "entrance_ms": 500
+    },
+    {
+      "id": "pipeline-bright",
+      "format": "pipeline",
+      "theme": {
+        "background": "#101018",
+        "foreground": "#FFFFFF",
+        "accent": "#B9A6FF"
+      },
+      "entrance_ms": 400
+    },
+    {
+      "id": "walkthrough-classic",
+      "format": "walkthrough",
+      "theme": {
+        "background": "#0A0A0D",
+        "foreground": "#FFFFFF",
+        "accent": "#FFC21A"
+      },
+      "entrance_ms": 500
+    },
+    {
+      "id": "walkthrough-bright",
+      "format": "walkthrough",
+      "theme": {
+        "background": "#101018",
+        "foreground": "#FFFFFF",
+        "accent": "#B9A6FF"
+      },
+      "entrance_ms": 400
+    }
+  ]
+}

@@ -4,6 +4,7 @@ import type { AgentProfilePatch, ProfilePatch } from '../profile';
 import type {
   Account,
   AgentPairing,
+  AgentLinkRequest,
   AuthCredential,
   Comment,
   EngagementAction,
@@ -28,7 +29,7 @@ import type {
   ThreadRef,
   Visibility,
 } from '../types';
-import { array, arraySkipping, isoToMs, object, snakeKeys, string, TardyWireError, type Decoder } from './codec';
+import { array, arraySkipping, isoToMs, object, snakeKeys, string, timeMs, wire, oneOf, TardyWireError, type Decoder } from './codec';
 import * as W from './wire';
 import type { PlayKind } from '@/audio/plays';
 import type { PlanId } from '@/membership/plans';
@@ -641,6 +642,19 @@ export class HttpTardyApi implements TardyApi {
 
   async claimAgent(code: string): Promise<void> {
     await this.request('POST', '/v1/onboarding/tardy-claims', { body: { code: code.trim() } });
+  }
+
+  agentLinkRequests(): Promise<AgentLinkRequest[]> {
+    const decode = object<AgentLinkRequest>({
+      id: string, agentProfileId: wire('agent_profile_id', string), handle: string,
+      displayName: wire('display_name', string), status: oneOf(['pending', 'accepted', 'declined']),
+      expiresAt: wire('expires_at_ms', timeMs),
+    });
+    return this.request('GET', '/v1/onboarding/agent-link-requests', { decode: array(decode) });
+  }
+
+  async decideAgentLinkRequest(id: string, accept: boolean): Promise<void> {
+    await this.request('PUT', `/v1/onboarding/agent-link-requests/${segment(id)}`, { body: { accept } });
   }
 
   createAgentPairing(): Promise<AgentPairing> {

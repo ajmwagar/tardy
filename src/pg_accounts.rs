@@ -1,7 +1,7 @@
 use crate::onboarding::{Account, AiConsent, ClaimCode, ClaimedAccount, TemporaryTardyAccount};
 use chrono::{DateTime, TimeZone, Utc};
 use sha2::{Digest, Sha256};
-use sqlx::{PgPool, Row};
+use sqlx::{PgPool, Postgres, Row, Transaction};
 use uuid::Uuid;
 
 const HUMAN_CLAIM_TTL_MS: u64 = 24 * 60 * 60 * 1_000;
@@ -12,6 +12,8 @@ const HUMAN_SESSION_TTL_MS: u64 = 30 * 24 * 60 * 60 * 1_000;
 pub enum PgAccountError {
     #[error("account database: {0}")]
     Database(#[from] sqlx::Error),
+    #[error("agent link notification: {0}")]
+    Push(#[from] crate::push::PushError),
     #[error("claim code is invalid or expired")]
     InvalidClaim,
     #[error("email already has an account")]
@@ -54,6 +56,29 @@ pub struct HumanSession {
 #[derive(Clone)]
 pub struct PgAccountStore {
     pool: PgPool,
+}
+
+#[derive(Debug, serde::Serialize, utoipa::ToSchema)]
+pub struct AgentLinkRequest {
+    pub id: Uuid,
+    pub agent_profile_id: Uuid,
+    pub handle: String,
+    pub display_name: String,
+    pub status: String,
+    pub expires_at_ms: u64,
+}
+
+fn link_request(row: sqlx::postgres::PgRow) -> Result<AgentLinkRequest, PgAccountError> {
+    let expires: DateTime<Utc> = row.try_get("expires_at")?;
+    Ok(AgentLinkRequest {
+        id: row.try_get("id")?,
+        agent_profile_id: row.try_get("agent_profile_id")?,
+        handle: row.try_get("handle")?,
+        display_name: row.try_get("display_name")?,
+        status: row.try_get("status")?,
+        expires_at_ms: u64::try_from(expires.timestamp_millis())
+            .map_err(|_| PgAccountError::Timestamp)?,
+    })
 }
 
 impl PgAccountStore {
@@ -200,23 +225,112 @@ impl PgAccountStore {
         let agent: Uuid = row
             .ok_or(PgAccountError::InvalidClaim)?
             .try_get("subject_account_id")?;
-        let profiles: Vec<Uuid> = sqlx::query_scalar("SELECT profile_id FROM profile_ownership WHERE owner_account_id=$1 ORDER BY profile_id").bind(agent).fetch_all(&mut *tx).await?;
-        if profiles.is_empty() {
-            return Err(PgAccountError::InvalidClaim);
-        }
-        sqlx::query("UPDATE profile_ownership SET owner_account_id=$1 WHERE owner_account_id=$2")
-            .bind(human)
-            .bind(agent)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("UPDATE durable_accounts SET temporary=false,expires_at=NULL WHERE id=$1")
-            .bind(agent)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("UPDATE account_api_tokens SET expires_at=NULL WHERE account_id=$1 AND revoked_at IS NULL").bind(agent).execute(&mut *tx).await?;
+        let profiles = transfer_tardy(&mut tx, human, agent, now).await?;
         sqlx::query("UPDATE durable_claim_codes SET claimed_at=$1,claimed_by_account_id=$2 WHERE code_hash=$3").bind(now).bind(human).bind(hash(code)).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(profiles)
+    }
+
+    pub async fn request_agent_link(
+        &self,
+        agent: Uuid,
+        profile: Uuid,
+        owner_profile: Uuid,
+        at: u64,
+    ) -> Result<AgentLinkRequest, PgAccountError> {
+        let now = timestamp(at)?;
+        let mut tx = self.pool.begin().await?;
+        let expires: DateTime<Utc> = sqlx::query_scalar("SELECT expires_at FROM durable_accounts WHERE id=$1 AND kind='agent' AND temporary AND expires_at>$2 FOR UPDATE")
+            .bind(agent).bind(now).fetch_optional(&mut *tx).await?.ok_or(PgAccountError::InvalidClaim)?;
+        let owns: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM profile_ownership p JOIN social_identities i ON i.profile_id=p.profile_id WHERE p.owner_account_id=$1 AND p.profile_id=$2 AND i.kind='agent')")
+            .bind(agent).bind(profile).fetch_one(&mut *tx).await?;
+        if !owns {
+            return Err(PgAccountError::InvalidClaim);
+        }
+        let owner: Uuid = sqlx::query_scalar("SELECT p.owner_account_id FROM profile_ownership p JOIN durable_accounts a ON a.id=p.owner_account_id JOIN social_identities i ON i.profile_id=p.profile_id WHERE p.profile_id=$1 AND a.kind='human' AND NOT a.temporary AND i.kind='human'")
+            .bind(owner_profile).fetch_optional(&mut *tx).await?.ok_or(PgAccountError::InvalidClaim)?;
+        let existing: Option<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM agent_link_requests WHERE agent_account_id=$1 AND owner_account_id=$2",
+        )
+        .bind(agent)
+        .bind(owner)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let id = if let Some(id) = existing {
+            id
+        } else {
+            let count: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM agent_link_requests WHERE agent_account_id=$1",
+            )
+            .bind(agent)
+            .fetch_one(&mut *tx)
+            .await?;
+            if count >= 3 {
+                return Err(PgAccountError::InvalidClaim);
+            }
+            let id = Uuid::new_v4();
+            sqlx::query("INSERT INTO agent_link_requests(id,agent_account_id,agent_profile_id,owner_account_id,expires_at,created_at) VALUES ($1,$2,$3,$4,$5,$6)")
+                .bind(id).bind(agent).bind(profile).bind(owner).bind(expires).bind(now).execute(&mut *tx).await?;
+            id
+        };
+        let row = sqlx::query("SELECT r.*,i.handle,i.display_name FROM agent_link_requests r JOIN social_identities i ON i.profile_id=r.agent_profile_id WHERE r.id=$1")
+            .bind(id).fetch_one(&mut *tx).await?;
+        let request = link_request(row)?;
+        if request.status == "pending" {
+            crate::push::PgPushStore::enqueue_in(&mut tx, &crate::push::NewNotification {
+                source_event_id: request.id, account_id: owner, category: "review_requested".into(),
+                title: "Link this agent?".into(), body: format!("@{} wants to become your agent. Accept or decline.", request.handle),
+                deep_link: Some("tardy:///claim-agent".into()),
+                data: serde_json::json!({"v":1,"notification_id":crate::push::notification_id_for_event(request.id),"kind":"review_requested","actor_id":request.agent_profile_id,"agent_link_request_id":request.id}).as_object().unwrap().clone(),
+            }).await?;
+        }
+        tx.commit().await?;
+        Ok(request)
+    }
+
+    pub async fn agent_link_requests(
+        &self,
+        owner: Uuid,
+        at: u64,
+    ) -> Result<Vec<AgentLinkRequest>, PgAccountError> {
+        let rows = sqlx::query("SELECT r.*,i.handle,i.display_name FROM agent_link_requests r JOIN social_identities i ON i.profile_id=r.agent_profile_id JOIN durable_accounts a ON a.id=r.agent_account_id WHERE r.owner_account_id=$1 AND r.status='pending' AND r.expires_at>$2 AND a.temporary AND a.expires_at>$2 ORDER BY r.created_at,r.id LIMIT 100")
+            .bind(owner).bind(timestamp(at)?).fetch_all(&self.pool).await?;
+        rows.into_iter().map(link_request).collect()
+    }
+
+    pub async fn decide_agent_link(
+        &self,
+        owner: Uuid,
+        id: Uuid,
+        accept: bool,
+        at: u64,
+    ) -> Result<(), PgAccountError> {
+        let now = timestamp(at)?;
+        let mut tx = self.pool.begin().await?;
+        let row = sqlx::query("SELECT agent_account_id,status,expires_at FROM agent_link_requests WHERE id=$1 AND owner_account_id=$2 FOR UPDATE")
+            .bind(id).bind(owner).fetch_optional(&mut *tx).await?.ok_or(PgAccountError::InvalidClaim)?;
+        let status: String = row.try_get("status")?;
+        let wanted = if accept { "accepted" } else { "declined" };
+        if status == wanted {
+            return Ok(());
+        }
+        if status != "pending" || row.try_get::<DateTime<Utc>, _>("expires_at")? <= now {
+            return Err(PgAccountError::InvalidClaim);
+        }
+        let agent: Uuid = row.try_get("agent_account_id")?;
+        if accept {
+            transfer_tardy(&mut tx, owner, agent, now).await?;
+        }
+        sqlx::query("UPDATE agent_link_requests SET status=$1,decided_at=$2 WHERE id=$3")
+            .bind(wanted)
+            .bind(now)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("UPDATE push_notifications SET read_at=COALESCE(read_at,$1) WHERE account_id=$2 AND source_event_id=$3")
+            .bind(now).bind(owner).bind(id).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(())
     }
 
     pub async fn authenticate(&self, token: &str, now_ms: u64) -> Result<Uuid, PgAccountError> {
@@ -686,6 +800,54 @@ fn human_profile(row: &sqlx::postgres::PgRow) -> Result<HumanProfile, PgAccountE
 fn millis(value: DateTime<Utc>) -> Result<u64, PgAccountError> {
     u64::try_from(value.timestamp_millis()).map_err(|_| PgAccountError::Timestamp)
 }
+async fn transfer_tardy(
+    tx: &mut Transaction<'_, Postgres>,
+    human: Uuid,
+    agent: Uuid,
+    now: DateTime<Utc>,
+) -> Result<Vec<Uuid>, PgAccountError> {
+    let valid_human: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM durable_accounts WHERE id=$1 AND kind='human' AND NOT temporary)")
+        .bind(human).fetch_one(&mut **tx).await?;
+    if !valid_human {
+        return Err(PgAccountError::InvalidClaim);
+    }
+    let valid_agent: Option<Uuid> = sqlx::query_scalar("SELECT id FROM durable_accounts WHERE id=$1 AND kind='agent' AND temporary AND expires_at>$2 FOR UPDATE")
+        .bind(agent).bind(now).fetch_optional(&mut **tx).await?;
+    if valid_agent.is_none() {
+        return Err(PgAccountError::InvalidClaim);
+    }
+    let profiles: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT profile_id FROM profile_ownership WHERE owner_account_id=$1 ORDER BY profile_id",
+    )
+    .bind(agent)
+    .fetch_all(&mut **tx)
+    .await?;
+    if profiles.is_empty() {
+        return Err(PgAccountError::InvalidClaim);
+    }
+    sqlx::query("UPDATE profile_ownership SET owner_account_id=$1 WHERE owner_account_id=$2")
+        .bind(human)
+        .bind(agent)
+        .execute(&mut **tx)
+        .await?;
+    sqlx::query("UPDATE social_identities SET account_id=$1 WHERE profile_id=ANY($2)")
+        .bind(human)
+        .bind(&profiles)
+        .execute(&mut **tx)
+        .await?;
+    sqlx::query("UPDATE durable_accounts SET temporary=false,expires_at=NULL WHERE id=$1")
+        .bind(agent)
+        .execute(&mut **tx)
+        .await?;
+    sqlx::query(
+        "UPDATE account_api_tokens SET expires_at=NULL WHERE account_id=$1 AND revoked_at IS NULL",
+    )
+    .bind(agent)
+    .execute(&mut **tx)
+    .await?;
+    Ok(profiles)
+}
+
 fn hash(value: &str) -> Vec<u8> {
     Sha256::digest(value.as_bytes()).to_vec()
 }
