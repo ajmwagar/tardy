@@ -14,8 +14,8 @@ test('onboarding block copies as shell commands rather than terminal output', ()
   assert.ok(!block.includes('✓'));
 });
 test('all public pages use the Tardy icon outside the hosting favicon route', () => {
-  const iconPath = '/brand/tardy-alarm-v1.svg';
-  const icon = readFileSync(`${__dirname}/public${iconPath}`, 'utf8');
+  const iconPath = '/brand/tardy-alarm-v1.svg?v=1';
+  const icon = readFileSync(`${__dirname}/public${iconPath.split('?')[0]}`, 'utf8');
   assert.match(icon, /<title>Tardy<\/title>/);
   assert.match(icon, /#FFC21A/);
   for (const file of readdirSync(`${__dirname}/public`).filter(file => file.endsWith('.html'))) {
