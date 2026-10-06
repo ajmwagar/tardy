@@ -26,8 +26,10 @@ resource "fpl_fab_project" "tardy" {
   default_environment = var.environment
 
   labels = {
-    application = "tardy"
-    managed_by  = "opentofu"
+    application     = "tardy"
+    managed_by      = "opentofu"
+    company_id      = var.company_id
+    auth_project_id = "${var.company_id}:${var.project}"
   }
 }
 

@@ -1,3 +1,13 @@
+variable "company_id" {
+  type        = string
+  default     = "fpl"
+  description = "Authoritative SSO company currently owning Tardy; distinct from the display owner."
+  validation {
+    condition     = length(trimspace(var.company_id)) > 0
+    error_message = "Use the owning SSO company ID."
+  }
+}
+
 variable "project" {
   type        = string
   default     = "tardy-prod"
