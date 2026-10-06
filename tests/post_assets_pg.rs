@@ -196,6 +196,38 @@ async fn posts_store_identity_refresh_urls_and_reject_foreign_assets() {
     )
     .await;
     assert!(status == 403 || status == 404);
+    let public_path = format!("/v1/public/posts/{post_id}");
+    for visibility in ["private", "followers"] {
+        sqlx::query("UPDATE tardy_posts SET visibility=$2 WHERE id=$1")
+            .bind(Uuid::parse_str(post_id).unwrap())
+            .bind(visibility)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (status, _) = request(&app, "GET", &public_path, Value::Null, None, None).await;
+        assert_eq!(status, 404);
+    }
+    sqlx::query("UPDATE tardy_posts SET visibility='public' WHERE id=$1")
+        .bind(Uuid::parse_str(post_id).unwrap())
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, public_post) = request(&app, "GET", &public_path, Value::Null, None, None).await;
+    assert_eq!(status, 200);
+    assert_eq!(public_post["id"], post_id);
+    assert!(
+        public_post["media"][0]["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("https://media.test/")
+    );
+    sqlx::query("UPDATE tardy_posts SET visibility='private' WHERE id=$1")
+        .bind(Uuid::parse_str(post_id).unwrap())
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, _) = request(&app, "GET", &public_path, Value::Null, None, None).await;
+    assert_eq!(status, 404);
     // Old presigned URL rows recover through author-owned object metadata only.
     let legacy_url =
         format!("https://account.r2.cloudflarestorage.com/media/{key}?X-Amz-Signature=expired");

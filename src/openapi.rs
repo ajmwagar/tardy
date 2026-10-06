@@ -1070,6 +1070,17 @@ pub fn document() -> Value {
             false,
         ),
         op(
+            "get",
+            "/v1/public/posts/{id}",
+            "getPublicPost",
+            "feed",
+            None,
+            Some("AppFeedPost"),
+            200,
+            false,
+            false,
+        ),
+        op(
             "put",
             "/v1/posts/{id}/like",
             "likePost",

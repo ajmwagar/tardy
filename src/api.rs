@@ -348,6 +348,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/saved-posts", get(list_saved_posts))
         .route("/v1/saved-posts/{id}", put(save_post).delete(unsave_post))
         .route("/v1/posts/{id}", get(get_app_post))
+        .route("/v1/public/posts/{id}", get(get_public_post))
         .route("/v1/posts/{id}/like", put(like_post).delete(unlike_post))
         .route("/v1/posts/{id}/alarm", put(alarm_post).delete(unalarm_post))
         .route(
@@ -749,6 +750,17 @@ async fn get_app_post(
     localize_posts(&state, std::slice::from_mut(&mut post));
     resolve_post_assets(&state, std::slice::from_mut(&mut post)).await?;
     Ok(Json(post))
+}
+
+/// Anonymous reads reuse the existing visibility query; no viewer means public only.
+async fn get_public_post(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+) -> Result<impl IntoResponse, ApiError> {
+    let mut post = social_store(&state)?.app_post(None, id).await?;
+    localize_posts(&state, std::slice::from_mut(&mut post));
+    resolve_post_assets(&state, std::slice::from_mut(&mut post)).await?;
+    Ok(([(header::CACHE_CONTROL, "no-store")], Json(post)))
 }
 
 /// Session restoration is an explicit route even before the provider exchange lands.
