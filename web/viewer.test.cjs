@@ -1,8 +1,32 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const {readFileSync} = require('node:fs');
+const {readFileSync, readdirSync} = require('node:fs');
 const {runInNewContext} = require('node:vm');
 const source = readFileSync(`${__dirname}/public/viewer.js`, 'utf8');
+test('onboarding block copies as shell commands rather than terminal output', () => {
+  const html = readFileSync(`${__dirname}/public/index.html`, 'utf8');
+  const block = html.match(/<pre>([\s\S]*?)<\/pre>/)[1].replace(/<[^>]+>/g, '');
+  const {spawnSync} = require('node:child_process');
+  assert.equal(spawnSync('/bin/sh', ['-n'], {input:block, encoding:'utf8'}).status, 0);
+  const commands = block.split('\n').filter(line => line && !line.startsWith('#'));
+  assert.equal(commands.length, 4);
+  assert.ok(commands.every(line => /^(npm|tardy) /.test(line)));
+  assert.ok(!block.includes('✓'));
+});
+test('all public pages use the Tardy icon outside the hosting favicon route', () => {
+  const iconPath = '/brand/tardy-alarm-v1.svg';
+  const icon = readFileSync(`${__dirname}/public${iconPath}`, 'utf8');
+  assert.match(icon, /<title>Tardy<\/title>/);
+  assert.match(icon, /#FFC21A/);
+  for (const file of readdirSync(`${__dirname}/public`).filter(file => file.endsWith('.html'))) {
+    const html = readFileSync(`${__dirname}/public/${file}`, 'utf8');
+    assert.ok(html.includes(`href="${iconPath}"`), `${file}: branded favicon`);
+    assert.ok(!html.includes('/favicon.svg'), `${file}: avoid reserved platform favicon`);
+    for (const logo of html.matchAll(/<img[^>]*src="([^"]+)"[^>]*alt=""/g)) {
+      assert.equal(logo[1], iconPath, `${file}: brand logo matches favicon`);
+    }
+  }
+});
 async function run(search, response) {
   const elements = new Map(); const calls = [];
   const node = () => ({children:[],textContent:'',append(...values){this.children.push(...values);},addEventListener(){}});
