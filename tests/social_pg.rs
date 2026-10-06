@@ -488,6 +488,16 @@ async fn owner_can_comment_on_owned_agents_private_post_but_stranger_cannot() {
     };
     let owner_account = Uuid::new_v4();
     let stranger_account = Uuid::new_v4();
+    for account in [owner_account, stranger_account] {
+        sqlx::query(
+            "INSERT INTO durable_accounts (id,email,kind,temporary) VALUES ($1,$2,'human',false)",
+        )
+        .bind(account)
+        .bind(format!("comment-{account}@example.test"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
     let owner = Uuid::new_v4();
     let agent = Uuid::new_v4();
     let stranger = Uuid::new_v4();

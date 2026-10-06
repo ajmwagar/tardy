@@ -14,16 +14,7 @@
     el('caption').textContent = post.caption || '';
     el('status').textContent = '';
     document.title = `${(post.caption || 'Tardy').slice(0, 60)} · Tardy`;
-    for (const media of post.media || []) {
-      const url = safeUrl(media.url);
-      if (!url || !['video', 'image'].includes(media.type)) continue;
-      const node = document.createElement(media.type === 'video' ? 'video' : 'img');
-      node.src = url;
-      if (media.type === 'video') { node.controls = true; node.playsInline = true; node.preload = 'metadata'; const poster = safeUrl(media.poster_url); if (media.poster_url && poster) node.poster = poster; }
-      else { node.alt = 'Tardy carousel image'; node.loading = 'lazy'; }
-      node.addEventListener('error', () => { el('status').textContent = 'Media could not load. Reload to refresh its playback link.'; });
-      el('player').append(node);
-    }
+    appendMedia(post, el('player'), el('status'));
     for (const link of post.links || []) {
       const url = safeUrl(typeof link === 'string' ? link : link.url);
       if (!url) continue;
@@ -35,6 +26,36 @@
       try { if (navigator.share) await navigator.share({ title: 'Tardy', url }); else { await navigator.clipboard.writeText(url); el('status').textContent = 'Link copied.'; } }
       catch (error) { if (error.name !== 'AbortError') el('status').textContent = 'Could not share. Copy the address from your browser.'; }
     };
+  }
+  function appendMedia(post, player, status) {
+    for (const media of post.media || []) {
+      const url = safeUrl(media.url);
+      if (!url || !['video', 'image'].includes(media.type)) continue;
+      const node = document.createElement(media.type === 'video' ? 'video' : 'img');
+      node.src = url;
+      if (media.type === 'video') { node.controls = true; node.playsInline = true; node.preload = 'metadata'; const poster = safeUrl(media.poster_url); if (media.poster_url && poster) node.poster = poster; }
+      else { node.alt = 'Tardy carousel image'; node.loading = 'lazy'; }
+      node.addEventListener('error', () => { status.textContent = 'Media could not load. Reload to refresh its playback link.'; });
+      if (media.type === 'video') node.addEventListener('play', () => document.querySelectorAll('video').forEach(other => { if (other !== node) other.pause(); }));
+      player.append(node);
+    }
+  }
+  async function browse() {
+    try {
+      const response = await fetch(`${api}/v1/feed?limit=20`, {credentials:'omit',cache:'no-store',signal:AbortSignal.timeout(10000)});
+      if (!response.ok) throw new Error('feed unavailable');
+      const feed = await response.json();
+      for (const post of feed.items || []) {
+        if (post.id === id) continue;
+        const card = document.createElement('section'); card.className = 'browse-card';
+        const player = document.createElement('div'); player.className = 'browse-media';
+        const article = document.createElement('article');
+        const caption = document.createElement('p'); caption.className = 'browse-caption'; caption.textContent = post.caption || '';
+        const link = document.createElement('a'); link.href = `/viewer.html?id=${encodeURIComponent(post.id)}`; link.textContent = 'Open / share this Tardy ↗'; link.className = 'button';
+        const status = document.createElement('p'); appendMedia(post, player, status);
+        article.append(caption, link, status); card.append(player, article); el('more').append(card);
+      }
+    } catch { el('more').textContent = 'More Tardies couldn’t load. You can still watch the shared post above.'; }
   }
   if (params.get('demo') === '1' && !id) {
     el('label').textContent = 'DEMO · SAMPLE REEL';
@@ -49,6 +70,7 @@
       if (response.status === 404 || response.status === 403) { el('title').textContent = 'This Tardy isn’t available publicly.'; el('status').textContent = 'It may be private or removed. Open it in the app with the account it was shared with.'; return; }
       if (!response.ok) throw new Error('server unavailable');
       const post = await response.json(); render(post);
+      void browse();
       const author = await fetch(`${api}/v1/profiles/by-id/${post.author_id}`, {credentials:'omit',signal:AbortSignal.timeout(8000)});
       if (author.ok) { const profile = await author.json(); el('title').textContent = `${profile.display_name} · @${profile.handle}`; }
     } catch { el('status').textContent = 'Tardy couldn’t connect right now. Reload to try again, or open in the app.'; if (!el('caption').textContent) el('title').textContent = 'Temporarily unavailable'; }

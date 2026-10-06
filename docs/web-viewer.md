@@ -4,7 +4,10 @@
 `/viewer.html?id=POST_UUID`. The viewer fetches `/v1/public/posts/{id}` anonymously,
 plays video with native controls, shows swipeable image carousels, full captions,
 source links and author names, and offers system sharing/copy and Open in Tardy.
-No login, local token storage, autoplay audio, or HTML caption injection.
+No login, local token storage, autoplay audio, or HTML caption injection. Below the
+shared post, visitors can scroll up to 20 public items from the existing anonymous
+feed. Only one video plays at a time; Join Tardy opens the iOS beta onboarding page,
+not a fabricated web signup. The demo does not request a live feed.
 
 The anonymous endpoint reuses the existing PG17 post visibility query and media
 asset resolver. Private/followers-only and removed posts return 404. Responses are
