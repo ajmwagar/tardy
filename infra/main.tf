@@ -34,15 +34,16 @@ resource "fpl_fab_project" "tardy" {
 }
 
 resource "fpl_fab_repository" "tardy" {
-  project           = fpl_fab_project.tardy.slug
-  name              = "tardy"
-  git_url           = "https://github.com/ajmwagar/tardy.git"
-  github_owner      = "ajmwagar"
-  github_repo       = "tardy"
-  default_branch    = "master"
-  pipeline_path     = ".fab/pipelines.json"
-  registration_mode = "existing"
-  environments      = [var.environment]
+  project                    = fpl_fab_project.tardy.slug
+  name                       = "tardy"
+  git_url                    = "https://github.com/ajmwagar/tardy.git"
+  github_owner               = "ajmwagar"
+  github_repo                = "tardy"
+  github_app_installation_id = "155787246"
+  default_branch             = "master"
+  pipeline_path              = ".fab/pipelines.json"
+  registration_mode          = "existing"
+  environments               = [var.environment]
 
   labels = {
     application = "tardy"
