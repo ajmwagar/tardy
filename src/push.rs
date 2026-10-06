@@ -372,8 +372,10 @@ impl PgPushStore {
                     actor_id,
                     post_id,
                     conversation_id,
-                    agent_link_request_id: row.try_get::<Option<String>, _>("agent_link_request_id")?
-                        .map(|id| id.parse()).transpose()
+                    agent_link_request_id: row
+                        .try_get::<Option<String>, _>("agent_link_request_id")?
+                        .map(|id| id.parse())
+                        .transpose()
                         .map_err(|_| sqlx::Error::Decode("invalid agent link request id".into()))?,
                     text: row.try_get("body")?,
                     created_at_ms: row

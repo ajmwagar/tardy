@@ -8,40 +8,83 @@ static DATABASE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 #[tokio::test]
 async fn agent_souls_are_versioned_and_installations_age_from_presence() {
     let _guard = DATABASE_TEST_LOCK.lock().unwrap();
-    let Some((pool, store)) = setup().await else { return; };
+    let Some((pool, store)) = setup().await else {
+        return;
+    };
     let owner = Uuid::new_v4();
     let human = Uuid::new_v4();
     let agent = Uuid::new_v4();
-    sqlx::query("INSERT INTO durable_accounts (id,email,kind,temporary) VALUES ($1,$2,'human',false)")
-        .bind(owner).bind(format!("soul-{owner}@example.test")).execute(&pool).await.unwrap();
-    store.register_identity(owner, human, "soul-owner", IdentityKind::Human, "Owner", "").await.unwrap();
-    store.register_identity(owner, agent, "soul-agent", IdentityKind::Agent, "Agent", "").await.unwrap();
+    sqlx::query(
+        "INSERT INTO durable_accounts (id,email,kind,temporary) VALUES ($1,$2,'human',false)",
+    )
+    .bind(owner)
+    .bind(format!("soul-{owner}@example.test"))
+    .execute(&pool)
+    .await
+    .unwrap();
+    store
+        .register_identity(owner, human, "soul-owner", IdentityKind::Human, "Owner", "")
+        .await
+        .unwrap();
+    store
+        .register_identity(owner, agent, "soul-agent", IdentityKind::Agent, "Agent", "")
+        .await
+        .unwrap();
     sqlx::query("INSERT INTO profile_ownership (owner_account_id,profile_id) VALUES ($1,$2)")
-        .bind(owner).bind(agent).execute(&pool).await.unwrap();
+        .bind(owner)
+        .bind(agent)
+        .execute(&pool)
+        .await
+        .unwrap();
 
     let empty = store.agent_soul(owner, agent).await.unwrap();
     assert_eq!(empty.revision, 0);
-    let first = store.update_agent_soul(
-        owner, agent, 0, "A patient systems tutor", "Prefer runnable examples.",
-        &["Rust".into(), "Mathematics".into()],
-    ).await.unwrap();
+    let first = store
+        .update_agent_soul(
+            owner,
+            agent,
+            0,
+            "A patient systems tutor",
+            "Prefer runnable examples.",
+            &["Rust".into(), "Mathematics".into()],
+        )
+        .await
+        .unwrap();
     assert_eq!(first.revision, 1);
     assert!(matches!(
-        store.update_agent_soul(owner, agent, 0, "stale", "stale", &[]).await,
+        store
+            .update_agent_soul(owner, agent, 0, "stale", "stale", &[])
+            .await,
         Err(SocialError::Conflict(_))
     ));
 
-    let installation = store.heartbeat_agent_installation(
-        agent, "mac-studio", "Mac Studio", "codex", &["chat".into(), "tools".into()], "available",
-    ).await.unwrap();
+    let installation = store
+        .heartbeat_agent_installation(
+            agent,
+            "mac-studio",
+            "Mac Studio",
+            "codex",
+            &["chat".into(), "tools".into()],
+            "available",
+        )
+        .await
+        .unwrap();
     assert_eq!(installation.status, "available");
     let installations = store.agent_installations(owner, agent).await.unwrap();
     assert_eq!(installations.len(), 1);
     assert_eq!(installations[0].installation_key, "mac-studio");
 
-    sqlx::query("UPDATE agent_installations SET last_seen_at=now()-interval '2 minutes' WHERE id=$1")
-        .bind(installation.id).execute(&pool).await.unwrap();
-    assert_eq!(store.agent_installations(owner, agent).await.unwrap()[0].status, "offline");
+    sqlx::query(
+        "UPDATE agent_installations SET last_seen_at=now()-interval '2 minutes' WHERE id=$1",
+    )
+    .bind(installation.id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        store.agent_installations(owner, agent).await.unwrap()[0].status,
+        "offline"
+    );
 }
 
 #[tokio::test]
@@ -526,7 +569,14 @@ async fn agent_draft_stream_is_private_and_final_message_clears_it() {
     }
     let conversation = store.create_conversation(owner, agent).await.unwrap();
     let draft = store
-        .set_draft(agent, conversation.id, "Streaming **now**", "writing", "", &[])
+        .set_draft(
+            agent,
+            conversation.id,
+            "Streaming **now**",
+            "writing",
+            "",
+            &[],
+        )
         .await
         .unwrap();
     assert_eq!(draft.sender_profile_id, agent);

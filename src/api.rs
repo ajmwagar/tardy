@@ -332,8 +332,14 @@ pub fn router(state: Arc<AppState>) -> Router {
             post(connect_tardy_account),
         )
         .route("/v1/onboarding/tardy-claims", post(claim_tardy_account))
-        .route("/v1/onboarding/agent-link-requests", post(create_agent_link_request).get(list_agent_link_requests))
-        .route("/v1/onboarding/agent-link-requests/{id}", put(decide_agent_link_request))
+        .route(
+            "/v1/onboarding/agent-link-requests",
+            post(create_agent_link_request).get(list_agent_link_requests),
+        )
+        .route(
+            "/v1/onboarding/agent-link-requests/{id}",
+            put(decide_agent_link_request),
+        )
         .route("/v1/onboarding/complete", post(complete_onboarding))
         .route("/v1/uploads", post(authorize_upload))
         .route("/v1/uploads/{id}/complete", post(complete_upload))
@@ -3928,28 +3934,62 @@ pub(crate) struct ClaimTardyAccount {
 }
 
 #[derive(Deserialize, ToSchema)]
-pub(crate) struct CreateAgentLinkRequest { owner_profile_id: Uuid }
-
-#[derive(Deserialize, ToSchema)]
-pub(crate) struct DecideAgentLinkRequest { accept: bool }
-
-async fn create_agent_link_request(State(state): State<Arc<AppState>>, headers: HeaderMap, Json(body): Json<CreateAgentLinkRequest>) -> Result<impl IntoResponse, ApiError> {
-    let account = authenticated_account(&state, &headers).await?;
-    let actor = authenticated_actor(&state, &headers).await?;
-    let store = state.pg_accounts.as_ref().ok_or_else(|| ApiError::internal("PostgreSQL accounts required"))?;
-    Ok((StatusCode::CREATED, Json(store.request_agent_link(account, actor, body.owner_profile_id, now_ms()?).await?)))
+pub(crate) struct CreateAgentLinkRequest {
+    owner_profile_id: Uuid,
 }
 
-async fn list_agent_link_requests(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Result<impl IntoResponse, ApiError> {
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct DecideAgentLinkRequest {
+    accept: bool,
+}
+
+async fn create_agent_link_request(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<CreateAgentLinkRequest>,
+) -> Result<impl IntoResponse, ApiError> {
     let account = authenticated_account(&state, &headers).await?;
-    let store = state.pg_accounts.as_ref().ok_or_else(|| ApiError::internal("PostgreSQL accounts required"))?;
+    let actor = authenticated_actor(&state, &headers).await?;
+    let store = state
+        .pg_accounts
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("PostgreSQL accounts required"))?;
+    Ok((
+        StatusCode::CREATED,
+        Json(
+            store
+                .request_agent_link(account, actor, body.owner_profile_id, now_ms()?)
+                .await?,
+        ),
+    ))
+}
+
+async fn list_agent_link_requests(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, ApiError> {
+    let account = authenticated_account(&state, &headers).await?;
+    let store = state
+        .pg_accounts
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("PostgreSQL accounts required"))?;
     Ok(Json(store.agent_link_requests(account, now_ms()?).await?))
 }
 
-async fn decide_agent_link_request(State(state): State<Arc<AppState>>, headers: HeaderMap, Path(id): Path<Uuid>, Json(body): Json<DecideAgentLinkRequest>) -> Result<StatusCode, ApiError> {
+async fn decide_agent_link_request(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(body): Json<DecideAgentLinkRequest>,
+) -> Result<StatusCode, ApiError> {
     let account = authenticated_account(&state, &headers).await?;
-    let store = state.pg_accounts.as_ref().ok_or_else(|| ApiError::internal("PostgreSQL accounts required"))?;
-    store.decide_agent_link(account, id, body.accept, now_ms()?).await?;
+    let store = state
+        .pg_accounts
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("PostgreSQL accounts required"))?;
+    store
+        .decide_agent_link(account, id, body.accept, now_ms()?)
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -3971,14 +4011,21 @@ async fn claim_tardy_account(
 
 fn canonical_claim_code(code: &str) -> String {
     let code = code.trim();
-    if code.len() == 32 && code.bytes().all(|b| b.is_ascii_hexdigit()) { code.to_ascii_lowercase() } else { code.to_owned() }
+    if code.len() == 32 && code.bytes().all(|b| b.is_ascii_hexdigit()) {
+        code.to_ascii_lowercase()
+    } else {
+        code.to_owned()
+    }
 }
 
 #[cfg(test)]
 mod claim_code_case_tests {
     #[test]
     fn uuid_codes_ignore_paste_case_without_changing_legacy_codes() {
-        assert_eq!(super::canonical_claim_code(" 31D29609BD5B46C6B10FB4D686324AB5 "), "31d29609bd5b46c6b10fb4d686324ab5");
+        assert_eq!(
+            super::canonical_claim_code(" 31D29609BD5B46C6B10FB4D686324AB5 "),
+            "31d29609bd5b46c6b10fb4d686324ab5"
+        );
         assert_eq!(super::canonical_claim_code(" TARDY-7Q4K "), "TARDY-7Q4K");
     }
 }
