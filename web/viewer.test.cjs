@@ -3,6 +3,16 @@ const assert = require('node:assert/strict');
 const {readFileSync, readdirSync} = require('node:fs');
 const {runInNewContext} = require('node:vm');
 const source = readFileSync(`${__dirname}/public/viewer.js`, 'utf8');
+test('onboarding block copies as shell commands rather than terminal output', () => {
+  const html = readFileSync(`${__dirname}/public/index.html`, 'utf8');
+  const block = html.match(/<pre>([\s\S]*?)<\/pre>/)[1].replace(/<[^>]+>/g, '');
+  const {spawnSync} = require('node:child_process');
+  assert.equal(spawnSync('/bin/sh', ['-n'], {input:block, encoding:'utf8'}).status, 0);
+  const commands = block.split('\n').filter(line => line && !line.startsWith('#'));
+  assert.equal(commands.length, 4);
+  assert.ok(commands.every(line => /^(npm|tardy) /.test(line)));
+  assert.ok(!block.includes('✓'));
+});
 test('all public pages use the Tardy icon outside the hosting favicon route', () => {
   const iconPath = '/brand/tardy-alarm-v1.svg';
   const icon = readFileSync(`${__dirname}/public${iconPath}`, 'utf8');
