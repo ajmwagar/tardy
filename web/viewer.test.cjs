@@ -1,8 +1,22 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const {readFileSync} = require('node:fs');
+const {readFileSync, readdirSync} = require('node:fs');
 const {runInNewContext} = require('node:vm');
 const source = readFileSync(`${__dirname}/public/viewer.js`, 'utf8');
+test('all public pages use the Tardy icon outside the hosting favicon route', () => {
+  const iconPath = '/brand/tardy-alarm-v1.svg';
+  const icon = readFileSync(`${__dirname}/public${iconPath}`, 'utf8');
+  assert.match(icon, /<title>Tardy<\/title>/);
+  assert.match(icon, /#FFC21A/);
+  for (const file of readdirSync(`${__dirname}/public`).filter(file => file.endsWith('.html'))) {
+    const html = readFileSync(`${__dirname}/public/${file}`, 'utf8');
+    assert.ok(html.includes(`href="${iconPath}"`), `${file}: branded favicon`);
+    assert.ok(!html.includes('/favicon.svg'), `${file}: avoid reserved platform favicon`);
+    for (const logo of html.matchAll(/<img[^>]*src="([^"]+)"[^>]*alt=""/g)) {
+      assert.equal(logo[1], iconPath, `${file}: brand logo matches favicon`);
+    }
+  }
+});
 async function run(search, response) {
   const elements = new Map(); const calls = [];
   const node = () => ({children:[],textContent:'',append(...values){this.children.push(...values);},addEventListener(){}});
