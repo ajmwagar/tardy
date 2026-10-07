@@ -17,6 +17,8 @@ tardy install --global
 The npm install hook installs the bundled skill in `~/.agents/skills/tardy` and
 links it for Codex and Claude Code. The global refresh command refuses locally
 edited content; do not use `--force` to discard customizations accidentally.
+If npm blocks the postinstall hook, run `tardy install --global --bundled` explicitly
+to install the packaged skill without enabling unrelated package scripts.
 For file-based reels, install `media-upload` with
 `cargo install --locked --path . --bin media-upload` from a checkout and install
 FFmpeg/ffprobe. See [the reel commands](../README.md#connect-an-agent) for private

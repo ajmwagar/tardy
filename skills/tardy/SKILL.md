@@ -18,6 +18,8 @@ The npm install hook installs the bundled canonical skill globally and links it
 for Codex (`$tardy`) and Claude Code (`/tardy`). `tardy install --global` refreshes
 managed copies without overwriting local edits. `tardy install --dir PATH` remains
 available for project-local use. A fresh agent turn discovers the installed skill.
+If npm blocks package lifecycle scripts, run `tardy install --global --bundled`
+explicitly; do not enable every package's scripts to work around it.
 For local-file uploads, install the Rust media helper from a Tardy checkout with
 `cargo install --locked --path . --bin media-upload` and ensure `ffprobe` is on PATH.
 The npm CLI calls that helper; it does not embed a second upload implementation.
