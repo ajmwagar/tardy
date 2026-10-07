@@ -65,6 +65,7 @@ pub struct AppState {
     pub social: Option<Arc<PgSocialStore>>,
     pub audio: Option<Arc<PgAudioStore>>,
     pub apple_auth: Option<Arc<AppleAuthenticator>>,
+    pub github_auth: Option<Arc<crate::github_auth::GithubAuthenticator>>,
     pub web_billing: Option<Arc<PgWebBillingStore>>,
     pub mcp_bridges: Option<Arc<PgMcpBridgeStore>>,
     pub fpl_bridge: Option<Arc<crate::fpl_bridge::FplBridgeRuntime>>,
@@ -96,6 +97,7 @@ impl AppState {
             social: None,
             audio: None,
             apple_auth: None,
+            github_auth: None,
             web_billing: None,
             mcp_bridges: None,
             fpl_bridge: None,
@@ -121,6 +123,7 @@ impl AppState {
             social: None,
             audio: None,
             apple_auth: None,
+            github_auth: None,
             web_billing: None,
             mcp_bridges: None,
             fpl_bridge: None,
@@ -146,6 +149,7 @@ impl AppState {
             social: None,
             audio: None,
             apple_auth: None,
+            github_auth: None,
             web_billing: None,
             mcp_bridges: None,
             fpl_bridge: None,
@@ -189,6 +193,11 @@ impl AppState {
 
     pub fn with_apple_auth(mut self, value: AppleAuthenticator) -> Self {
         self.apple_auth = Some(Arc::new(value));
+        self
+    }
+
+    pub fn with_github_auth(mut self, value: crate::github_auth::GithubAuthenticator) -> Self {
+        self.github_auth = Some(Arc::new(value));
         self
     }
 
@@ -249,6 +258,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/llms.txt", get(llms_txt))
         .route("/mcp", post(crate::mcp::endpoint))
         .route("/v1/sessions", post(create_session))
+        .route("/v1/auth/github/start", post(start_github_oauth))
+        .route("/v1/auth/github/complete", post(complete_github_oauth))
         .route("/v1/dev/session", post(development_session))
         .route("/v1/session", get(current_session).delete(delete_session))
         .route("/v1/profile", get(current_profile).patch(update_profile))
@@ -780,6 +791,8 @@ pub(crate) enum SessionCredential {
         authorization_code: String,
         nonce: String,
         full_name: Option<String>,
+        #[serde(default)]
+        link: bool,
     },
 }
 
@@ -820,6 +833,7 @@ pub(crate) struct SignedInView {
 
 async fn create_session(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(credential): Json<SessionCredential>,
 ) -> Result<(StatusCode, Json<SignedInView>), ApiError> {
     let accounts = state
@@ -832,6 +846,7 @@ async fn create_session(
             authorization_code,
             nonce,
             full_name,
+            link,
         } => {
             if authorization_code.trim().is_empty() {
                 return Err(ApiError::bad_request(
@@ -843,17 +858,148 @@ async fn create_session(
                 message: "Sign in with Apple is not configured".into(),
             })?;
             let identity = verifier.verify(&identity_token, &nonce).await?;
-            accounts
-                .sign_in_apple(
-                    &identity.subject,
-                    identity.email.as_deref(),
-                    full_name.as_deref(),
-                    &identity.assertion_digest,
-                    now_ms()?,
-                )
-                .await?
+            if let Some(account) = human_link_actor(&state, &headers, link).await? {
+                accounts
+                    .link_apple(
+                        account,
+                        &identity.subject,
+                        identity.email.as_deref(),
+                        full_name.as_deref(),
+                        &identity.assertion_digest,
+                        now_ms()?,
+                    )
+                    .await?
+            } else {
+                accounts
+                    .sign_in_apple(
+                        &identity.subject,
+                        identity.email.as_deref(),
+                        full_name.as_deref(),
+                        &identity.assertion_digest,
+                        now_ms()?,
+                    )
+                    .await?
+            }
         }
     };
+    Ok((
+        StatusCode::CREATED,
+        Json(signed_in_view(&state, session).await?),
+    ))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct GithubStartRequest {
+    code_challenge: String,
+    #[serde(default)]
+    link: bool,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct GithubStartView {
+    authorization_url: String,
+    state: String,
+    expires_at_ms: u64,
+}
+
+async fn human_link_actor(
+    state: &AppState,
+    headers: &HeaderMap,
+    linking: bool,
+) -> Result<Option<Uuid>, ApiError> {
+    if !linking {
+        return Ok(None);
+    }
+    let token = bearer_token(headers)?
+        .ok_or_else(|| ApiError::unauthorized("Sign in before linking a provider"))?;
+    // A human session, not an agent API key, is required to approve identity linking.
+    let session = state
+        .pg_accounts
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("PostgreSQL accounts are not configured"))?
+        .resume_human_session(token, now_ms()?)
+        .await
+        .map_err(|_| ApiError::unauthorized("invalid human session"))?;
+    Ok(Some(session.profile.account_id))
+}
+
+async fn start_github_oauth(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<GithubStartRequest>,
+) -> Result<Json<GithubStartView>, ApiError> {
+    let auth = state.github_auth.as_ref().ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        message: "GitHub sign-in is not configured".into(),
+    })?;
+    if !crate::github_auth::valid_challenge(&body.code_challenge) {
+        return Err(ApiError::bad_request("S256 code challenge is required"));
+    }
+    let actor = human_link_actor(&state, &headers, body.link).await?;
+    let now = now_ms()?;
+    let attempt = state
+        .pg_accounts
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("PostgreSQL accounts are not configured"))?
+        .begin_github_oauth(&body.code_challenge, actor, now)
+        .await?;
+    Ok(Json(GithubStartView {
+        authorization_url: auth.authorization_url(&attempt, &body.code_challenge),
+        state: attempt,
+        expires_at_ms: now + 600_000,
+    }))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct GithubCompleteRequest {
+    state: String,
+    code: String,
+    code_verifier: String,
+    #[serde(default)]
+    link: bool,
+}
+
+async fn complete_github_oauth(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<GithubCompleteRequest>,
+) -> Result<(StatusCode, Json<SignedInView>), ApiError> {
+    let auth = state.github_auth.as_ref().ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        message: "GitHub sign-in is not configured".into(),
+    })?;
+    let challenge = crate::github_auth::challenge(&body.code_verifier)
+        .ok_or_else(|| ApiError::bad_request("invalid code verifier"))?;
+    if body.code.is_empty() || body.code.len() > 1024 || body.state.len() > 256 {
+        return Err(ApiError::bad_request("invalid OAuth callback"));
+    }
+    let actor = human_link_actor(&state, &headers, body.link).await?;
+    let accounts = state
+        .pg_accounts
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("PostgreSQL accounts are not configured"))?;
+    // Burn the bound attempt before remote exchange. A failed exchange requires a fresh flow.
+    accounts
+        .consume_github_oauth(&body.state, &challenge, actor, now_ms()?)
+        .await?;
+    let identity = auth
+        .exchange(&body.code, &body.code_verifier)
+        .await
+        .map_err(|_| {
+            ApiError::unauthorized("GitHub authorization could not be verified; start again")
+        })?;
+    if identity.id == 0 {
+        return Err(ApiError::unauthorized("invalid GitHub identity"));
+    }
+    let session = accounts
+        .sign_in_github(
+            &identity.id.to_string(),
+            identity.name.as_deref().unwrap_or(&identity.login),
+            &body.state,
+            actor,
+            now_ms()?,
+        )
+        .await?;
     Ok((
         StatusCode::CREATED,
         Json(signed_in_view(&state, session).await?),
@@ -4581,6 +4727,10 @@ impl From<PgAccountError> for ApiError {
         match value {
             PgAccountError::InvalidClaim => Self::not_found(value.to_string()),
             PgAccountError::EmailConflict => Self {
+                status: StatusCode::CONFLICT,
+                message: value.to_string(),
+            },
+            PgAccountError::IdentityConflict => Self {
                 status: StatusCode::CONFLICT,
                 message: value.to_string(),
             },

@@ -79,6 +79,9 @@ export interface TardyApi {
    * throws `unauthenticated`. New provider accounts get a Tardy account on first sign-in.
    */
   signIn(credential: AuthCredential): Promise<SignedIn>;
+  /** Starts a server-bound, one-use identity-only OAuth attempt. */
+  beginGithubSignIn(codeChallenge: string, link?: boolean): Promise<{ authorizationUrl: string; state: string; expiresAt: string }>;
+  linkIdentity(credential: AuthCredential): Promise<SignedIn>;
   /** Local Expo Go only: asks a dev-enabled LAN server for a disposable preview session. */
   developmentSession(): Promise<SignedIn>;
   /**

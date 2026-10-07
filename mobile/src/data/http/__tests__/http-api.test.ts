@@ -139,15 +139,40 @@ describe('HttpTardyApi: auth', () => {
   it('signs in without credentials, snake-casing the provider credential', async () => {
     const { fetch, calls } = fakeFetch({ status: 201, body: wireSignedIn() });
     const api = new HttpTardyApi({ baseUrl: BASE, fetch });
-    const signedIn = await api.signIn({ provider: 'github', code: 'c', codeVerifier: 'v', redirectUri: 'tardy://cb' });
-    expect(calls[0]).toMatchObject({ method: 'POST', url: 'https://api.example.test/v1/sessions' });
-    expect(calls[0].body).toEqual({ provider: 'github', code: 'c', code_verifier: 'v', redirect_uri: 'tardy://cb' });
+    const signedIn = await api.signIn({ provider: 'github', code: 'c', codeVerifier: 'v', state: 'bound-state', redirectUri: 'tardy://cb' });
+    expect(calls[0]).toMatchObject({ method: 'POST', url: 'https://api.example.test/v1/auth/github/complete' });
+    expect(calls[0].body).toEqual({ code: 'c', code_verifier: 'v', state: 'bound-state' });
     expect(calls[0].headers.Authorization).toBeUndefined();
     expect(signedIn).toEqual({
       session: { token: 'tok-1', accountId: 'acct-1', provider: 'github', expiresAt: '1970-01-01T00:00:00.000Z' },
       account: { id: 'acct-1', kind: 'human', handle: 'ada', name: 'Ada', avatarUrl: 'https://a', bio: '', verified: false, followers: 1, following: 2, postCount: 3 },
       onboardedAt: null,
     });
+  });
+
+  it('starts identity-only GitHub auth without sending a current session', async () => {
+    const { fetch, calls } = fakeFetch({ status: 200, body: { authorization_url: 'https://github.com/login/oauth/authorize', state: 'state', expires_at_ms: 600000 } });
+    const api = new HttpTardyApi({ baseUrl: BASE, fetch });
+    await expect(api.beginGithubSignIn('challenge')).resolves.toEqual({ authorizationUrl: 'https://github.com/login/oauth/authorize', state: 'state', expiresAt: '1970-01-01T00:10:00.000Z' });
+    expect(calls[0].body).toEqual({ code_challenge: 'challenge' });
+    expect(calls[0].headers.Authorization).toBeUndefined();
+  });
+
+  it('rejects GitHub credentials without a bound state before contacting the server', async () => {
+    const { fetch, calls } = fakeFetch();
+    const api = new HttpTardyApi({ baseUrl: BASE, fetch });
+    await expect(api.signIn({ provider: 'github', code: 'code', codeVerifier: 'v', redirectUri: 'tardy://cb' })).rejects.toThrow('server-bound');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('links GitHub only with an explicit link flag and authenticated human session', async () => {
+    const { api, calls } = await signedInClient({ status: 200, body: { authorization_url: 'https://github.com/login/oauth/authorize', state: 'state', expires_at_ms: 600000 } }, { status: 201, body: wireSignedIn() });
+    await api.beginGithubSignIn('challenge', true);
+    await api.linkIdentity({ provider: 'github', state: 'state', code: 'code', codeVerifier: 'verifier', redirectUri: 'tardy://auth/github' });
+    expect(calls[0].body).toEqual({ code_challenge: 'challenge', link: true });
+    expect(calls[1].body).toEqual({ code: 'code', code_verifier: 'verifier', state: 'state', link: true });
+    expect(calls[0].headers.Authorization).toBe('Bearer tok-1');
+    expect(calls[1].headers.Authorization).toBe('Bearer tok-1');
   });
 
   it('sends the bearer token and selected profile on every call after sign-in', async () => {

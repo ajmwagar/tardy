@@ -211,9 +211,33 @@ export class HttpTardyApi implements TardyApi {
   // MARK: auth
 
   async signIn(credential: AuthCredential): Promise<SignedIn> {
+    if (credential.provider === 'github') {
+      if (!credential.state) throw new Error('GitHub sign-in must begin with a server-bound OAuth attempt');
+      return this.adopt(await this.request('POST', '/v1/auth/github/complete', {
+        body: { code: credential.code, code_verifier: credential.codeVerifier, state: credential.state },
+        decode: W.signedIn, auth: 'none', timeoutMs: AUTH_REQUEST_TIMEOUT_MS,
+      }));
+    }
     return this.adopt(await this.request('POST', '/v1/sessions', {
       body: snakeKeys(credential), decode: W.signedIn, auth: 'none', timeoutMs: AUTH_REQUEST_TIMEOUT_MS,
     }));
+  }
+
+  async beginGithubSignIn(codeChallenge: string, link = false) {
+    return this.request('POST', '/v1/auth/github/start', {
+      body: { code_challenge: codeChallenge, ...(link ? { link: true } : {}) }, auth: link ? 'session' : 'none',
+      decode: object({ authorizationUrl: string, state: string, expiresAt: timeMs }),
+    });
+  }
+
+  async linkIdentity(credential: AuthCredential): Promise<SignedIn> {
+    if (credential.provider !== 'github' && credential.provider !== 'apple') throw new Error('Provider linking is not supported');
+    if (credential.provider === 'github' && !credential.state) throw new Error('GitHub linking requires a server-bound attempt');
+    const route = credential.provider === 'github' ? '/v1/auth/github/complete' : '/v1/sessions';
+    const body = credential.provider === 'github'
+      ? { code: credential.code, code_verifier: credential.codeVerifier, state: credential.state, link: true }
+      : { ...snakeKeys(credential), link: true };
+    return this.adopt(await this.request('POST', route, { body, decode: W.signedIn, timeoutMs: AUTH_REQUEST_TIMEOUT_MS }));
   }
 
   async developmentSession(): Promise<SignedIn> {

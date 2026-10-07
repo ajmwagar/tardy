@@ -13,6 +13,7 @@ use crate::api::{
     SearchRequest, SendMessage, SendMessageMedia, SendSocialMessage, SessionCredential,
     SessionView, SetConversationDraft, SetHandle, SetPostVisibility, SignedInView, StartLive,
     SummonAgent, UpdateAgentProfile, UpdateAgentSoul, UpdateProfile, VerificationCheckout,
+    GithubCompleteRequest, GithubStartRequest, GithubStartView,
 };
 use crate::audio::{
     AttachPostAudio, AudioRelease, AudioTrack, AudioUsage, AudioUsageKind, NewAudioRelease,
@@ -62,7 +63,7 @@ use utoipa::OpenApi;
         NewOriginalTrack, ReleaseType, TrendingAudio, VerificationEntitlement, VerificationProduct, VerificationTier, BillingStatus, WebHandoff,
         AgentInstallation, crate::social::AgentSessionSummary, AgentSoul, ConnectAgentSession, ConnectedAgentSession, AppAccount, AppFeedPost, AppSearchResult, AppNotification, Comment, Conversation, ConversationDraft, ConversationMessage, ConversationMode, ConversationSummary, IdentityKind, MessageMedia,
         PostMedia, PostVisibility, SetBrandAffiliate, SharedLink, SocialIdentity, TardyPost, CreatePostComment, SessionCredential, SessionView, SetHandle, SetPostVisibility, SignedInView, UpdateAgentProfile, UpdateProfile,
-        AddConversationParticipant, AgentInstallationHeartbeat, CreateFplActivation, FplLinkStart, FplLinkStatus, FplBridgeActivation, CreateSharedLink, CreateSocialConversation, GrantMcpBridgeAgent, MarkConversationRead, MarkNotificationsRead, McpBridgeConnection, McpBridgeGrant, PublishSocialPost, RegisterMcpBridge, RenameSocialConversation, SendMessageMedia, SendSocialMessage, SetConversationDraft, SummonAgent, UpdateAgentSoul, CreateWebHandoff, ExchangeWebHandoff, VerificationCheckout
+        AddConversationParticipant, AgentInstallationHeartbeat, CreateFplActivation, FplLinkStart, FplLinkStatus, FplBridgeActivation, CreateSharedLink, CreateSocialConversation, GrantMcpBridgeAgent, MarkConversationRead, MarkNotificationsRead, McpBridgeConnection, McpBridgeGrant, PublishSocialPost, RegisterMcpBridge, RenameSocialConversation, SendMessageMedia, SendSocialMessage, SetConversationDraft, SummonAgent, UpdateAgentSoul, CreateWebHandoff, ExchangeWebHandoff, VerificationCheckout, GithubStartRequest, GithubStartView, GithubCompleteRequest
     )),
     tags(
         (name = "onboarding"), (name = "profiles"), (name = "messaging"),
@@ -423,6 +424,28 @@ pub fn document() -> Value {
             None,
             None,
             200,
+            false,
+            false,
+        ),
+        op(
+            "post",
+            "/v1/auth/github/start",
+            "startGithubSignIn",
+            "onboarding",
+            Some("GithubStartRequest"),
+            Some("GithubStartView"),
+            200,
+            false,
+            false,
+        ),
+        op(
+            "post",
+            "/v1/auth/github/complete",
+            "completeGithubSignIn",
+            "onboarding",
+            Some("GithubCompleteRequest"),
+            Some("SignedInView"),
+            201,
             false,
             false,
         ),

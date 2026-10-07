@@ -48,6 +48,20 @@ struct AppleClaims {
 }
 
 impl AppleAuthenticator {
+    /// The native audience is public app configuration, not a server secret.
+    /// Derive it from the shipped client rather than maintaining another default.
+    pub fn native_client_id() -> Result<String, AppleAuthError> {
+        let app: serde_json::Value = serde_json::from_str(include_str!("../mobile/app.json"))
+            .map_err(|_| {
+                AppleAuthError::Unavailable("native app configuration is invalid".into())
+            })?;
+        app.pointer("/expo/ios/bundleIdentifier")
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_owned)
+            .ok_or_else(|| AppleAuthError::Unavailable("native Apple audience is missing".into()))
+    }
+
     pub fn new(client_id: impl Into<String>) -> Result<Self, AppleAuthError> {
         let client_id = client_id.into();
         if client_id.trim().is_empty() {
@@ -162,6 +176,17 @@ fn hex_digest(value: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_audience_is_derived_from_the_shipped_client() {
+        let app: serde_json::Value =
+            serde_json::from_str(include_str!("../mobile/app.json")).unwrap();
+        assert_eq!(
+            AppleAuthenticator::native_client_id().unwrap(),
+            app["expo"]["ios"]["bundleIdentifier"].as_str().unwrap()
+        );
+        assert!(AppleAuthenticator::new("").is_err());
+    }
 
     #[test]
     fn nonce_digest_matches_lowercase_sha256() {

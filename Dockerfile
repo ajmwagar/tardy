@@ -12,6 +12,7 @@ COPY policies ./policies
 COPY migrations ./migrations
 COPY launch ./launch
 COPY vendor ./vendor
+COPY mobile/app.json ./mobile/app.json
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/build/target \

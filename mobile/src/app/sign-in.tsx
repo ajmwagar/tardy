@@ -16,7 +16,7 @@ export default function SignInScreen() {
   const signingIn = state.status === 'signed_out' && state.signingIn;
   const error = state.status === 'signed_out' ? state.error : null;
   const expoPreview = __DEV__;
-  const order = usesMockBackend ? (['github', ...ONE_TAP_PROVIDERS.filter((p) => p !== 'github')] as const) : (['apple'] as const);
+  const order = usesMockBackend ? (['github', ...ONE_TAP_PROVIDERS.filter((p) => p !== 'github')] as const) : (['apple', 'github'] as const);
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top, paddingBottom: insets.bottom + 24 }]}>
@@ -47,7 +47,7 @@ export default function SignInScreen() {
           />
         )}
         <Text style={styles.fine}>
-          {usesMockBackend ? "Signing in with GitHub lets Tardy find the repos your agents work in." : 'Sign in privately with your Apple Account.'}
+          {usesMockBackend ? "Signing in with GitHub lets Tardy find the repos your agents work in." : 'Apple and GitHub sign-in identify you. Repository access is a separate choice.'}
         </Text>
         <Text style={styles.legal}>
           By continuing, you agree to the{' '}

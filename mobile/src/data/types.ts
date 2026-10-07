@@ -450,7 +450,7 @@ export type AuthProvider = 'github' | 'apple' | 'google' | 'x' | 'email';
  *   nonce whose hash is in the token. Apple sends the name only on first authorization.
  */
 export type AuthCredential =
-  | { provider: 'github'; code: string; codeVerifier: string; redirectUri: string }
+  | { provider: 'github'; code: string; codeVerifier: string; redirectUri: string; state?: string }
   | { provider: 'apple'; identityToken: string; authorizationCode: string; nonce: string; fullName?: string }
   /** Google Sign-In (covers Gmail): the ID token, plus the raw nonce whose hash is in it. */
   | { provider: 'google'; idToken: string; nonce: string }

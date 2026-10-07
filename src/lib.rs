@@ -5,6 +5,7 @@ pub mod audio;
 pub mod audio_policy;
 pub mod domain;
 pub mod fpl_bridge;
+pub mod github_auth;
 pub mod ingest;
 pub mod mcp;
 pub mod mcp_bridges;

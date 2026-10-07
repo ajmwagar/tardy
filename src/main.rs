@@ -45,7 +45,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tracing::warn!("STRIPE_SECRET_KEY is unset; Stripe checkout is disabled");
     }
     state = state.with_web_billing(PgWebBillingStore::new(pool.clone(), web_base_url, stripe));
-    if let Ok(client_id) = std::env::var("APPLE_CLIENT_ID") {
+    {
+        let client_id = std::env::var("APPLE_CLIENT_ID")
+            .map(Ok)
+            .unwrap_or_else(|_| AppleAuthenticator::native_client_id())?;
         let apple_auth = AppleAuthenticator::new(client_id)?;
         let warmer = apple_auth.clone();
         tokio::spawn(async move {
@@ -54,8 +57,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
         state = state.with_apple_auth(apple_auth);
-    } else {
-        tracing::warn!("APPLE_CLIENT_ID is unset; Sign in with Apple is disabled");
+    }
+    let github_id = std::env::var("GITHUB_CLIENT_ID").ok();
+    let github_secret = std::env::var("GITHUB_CLIENT_SECRET").ok();
+    let github_callback = std::env::var("GITHUB_REDIRECT_URI").ok();
+    match (github_id, github_secret, github_callback) {
+        (None, None, None) => tracing::warn!("GitHub identity onboarding is disabled"),
+        (Some(id), Some(secret), Some(callback)) => {
+            state = state.with_github_auth(tardy::github_auth::GithubAuthenticator::new(
+                id, secret, callback,
+            )?);
+        }
+        _ => return Err("GitHub OAuth configuration is incomplete".into()),
     }
     let subscription_base_url = state.public_base_url.clone();
     state = state.with_subscriptions(PgSubscriptionStore::new(
