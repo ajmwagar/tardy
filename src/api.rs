@@ -4792,6 +4792,7 @@ impl From<PgAccountError> for ApiError {
             },
             PgAccountError::InvalidEmail => Self::bad_request(value.to_string()),
             PgAccountError::AssertionReplayed => Self::unauthorized(value.to_string()),
+            PgAccountError::AccountUnavailable => Self::unauthorized(value.to_string()),
             PgAccountError::InvalidHandle => Self::bad_request(value.to_string()),
             PgAccountError::HandleConflict => Self {
                 status: StatusCode::CONFLICT,

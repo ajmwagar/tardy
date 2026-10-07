@@ -16,13 +16,13 @@ pub async fn request_deletion(
     account: Uuid,
 ) -> Result<DeletionReceipt, sqlx::Error> {
     let mut tx = pool.begin().await?;
-    let human: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM durable_accounts WHERE id=$1 AND kind='human')",
+    let human: Option<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM durable_accounts WHERE id=$1 AND kind='human' FOR UPDATE",
     )
     .bind(account)
-    .fetch_one(&mut *tx)
+    .fetch_optional(&mut *tx)
     .await?;
-    if !human {
+    if human.is_none() {
         return Err(sqlx::Error::RowNotFound);
     }
     let row = sqlx::query("INSERT INTO account_deletion_requests(id,account_id) VALUES($1,$2) ON CONFLICT(account_id) DO UPDATE SET account_id=excluded.account_id RETURNING id,status")

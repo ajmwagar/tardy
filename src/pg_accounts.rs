@@ -26,6 +26,8 @@ pub enum PgAccountError {
     AssertionReplayed,
     #[error("provider identity is already linked to another account")]
     IdentityConflict,
+    #[error("account is unavailable")]
+    AccountUnavailable,
     #[error("handle must be 3 to 30 lowercase letters, numbers, dots, or underscores")]
     InvalidHandle,
     #[error("handle is already taken")]
@@ -506,6 +508,7 @@ impl PgAccountStore {
             account_id
         };
 
+        require_active_human(&mut tx, account_id).await?;
         let profile = ensure_human_profile(
             &mut tx,
             account_id,
@@ -535,7 +538,8 @@ impl PgAccountStore {
         let row = sqlx::query(
             "SELECT s.provider,s.expires_at,p.account_id,p.profile_id,p.handle,p.display_name,p.bio,p.avatar_url,p.onboarded_at
              FROM auth_sessions s JOIN human_profiles p ON p.account_id=s.account_id
-             WHERE s.token_hash=$1 AND s.revoked_at IS NULL AND s.expires_at>$2",
+             WHERE s.token_hash=$1 AND s.revoked_at IS NULL AND s.expires_at>$2
+               AND NOT EXISTS(SELECT 1 FROM account_deletion_requests d WHERE d.account_id=s.account_id)",
         )
         .bind(hash(token))
         .bind(now)
@@ -573,6 +577,7 @@ impl PgAccountStore {
         .fetch_optional(&mut *tx)
         .await?
         .ok_or(PgAccountError::InvalidClaim)?;
+        require_active_human(&mut tx, account_id).await?;
         let mut profile =
             ensure_human_profile(&mut tx, account_id, "dev-preview", "James", now).await?;
         sqlx::query(
@@ -832,6 +837,32 @@ impl PgAccountStore {
 
 fn new_token() -> String {
     format!("tardy_{}", Uuid::new_v4().simple())
+}
+
+async fn require_active_human(
+    tx: &mut Transaction<'_, Postgres>,
+    account: Uuid,
+) -> Result<(), PgAccountError> {
+    // Share the account lock with deletion intake: issuance cannot race revocation.
+    let human: Option<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM durable_accounts WHERE id=$1 AND kind='human' AND NOT temporary FOR UPDATE",
+    )
+    .bind(account)
+    .fetch_optional(&mut **tx)
+    .await?;
+    if human.is_none() {
+        return Err(PgAccountError::AccountUnavailable);
+    }
+    let deleting: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM account_deletion_requests WHERE account_id=$1)",
+    )
+    .bind(account)
+    .fetch_one(&mut **tx)
+    .await?;
+    if deleting {
+        return Err(PgAccountError::AccountUnavailable);
+    }
+    Ok(())
 }
 
 async fn ensure_human_profile(

@@ -175,6 +175,17 @@ describe('HttpTardyApi: auth', () => {
     expect(calls[1].headers.Authorization).toBe('Bearer tok-1');
   });
 
+  it('does not adopt a linked session belonging to another account', async () => {
+    const wrong = wireSignedIn();
+    wrong.session.account_id = 'other-account';
+    wrong.account.id = 'other-account';
+    const { api, calls } = await signedInClient({ status: 201, body: wrong }, { status: 200, body: [] });
+    await expect(api.linkIdentity({ provider: 'github', state: 'state', code: 'code', codeVerifier: 'verifier', redirectUri: 'tardy://auth/github' })).rejects.toThrow('preserve');
+    await api.followingIds();
+    expect(calls[1].headers.Authorization).toBe('Bearer tok-1');
+    expect(calls[1].headers['x-tardy-profile-id']).toBe('acct-1');
+  });
+
   it('sends the bearer token and selected profile on every call after sign-in', async () => {
     const { api, calls } = await signedInClient({ status: 200, body: [] });
     await api.followingIds();

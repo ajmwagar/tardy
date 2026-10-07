@@ -71,6 +71,11 @@ OAuth acceptance evidence. No new native dependency was added.
    mutable handle/name/email never selects an existing account.
 6. Resume/sign out use the same session contract as Apple.
 
+Apply launch-safety migration 0036 with the OAuth migration. Provider/dev session
+issuance and deletion intake share the durable-account lock; a deletion receipt
+blocks fresh credentials and session resume, including receipts already marked
+completed. Do not deploy a new auth issuer without this lifecycle gate.
+
 For linking, use Settings → Link Apple/GitHub and explicitly confirm. GitHub
 start and complete both carry `link:true` and the **same authenticated human
 account**, not an agent token. Apple `/v1/sessions` accepts `link:true` with an

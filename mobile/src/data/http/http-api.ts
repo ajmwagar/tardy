@@ -231,13 +231,19 @@ export class HttpTardyApi implements TardyApi {
   }
 
   async linkIdentity(credential: AuthCredential): Promise<SignedIn> {
+    const before = this.current;
+    if (!before) throw new Error('Sign in before linking a provider');
     if (credential.provider !== 'github' && credential.provider !== 'apple') throw new Error('Provider linking is not supported');
     if (credential.provider === 'github' && !credential.state) throw new Error('GitHub linking requires a server-bound attempt');
     const route = credential.provider === 'github' ? '/v1/auth/github/complete' : '/v1/sessions';
     const body = credential.provider === 'github'
       ? { code: credential.code, code_verifier: credential.codeVerifier, state: credential.state, link: true }
       : { ...snakeKeys(credential), link: true };
-    return this.adopt(await this.request('POST', route, { body, decode: W.signedIn, timeoutMs: AUTH_REQUEST_TIMEOUT_MS }));
+    const linked = await this.request('POST', route, { body, decode: W.signedIn, timeoutMs: AUTH_REQUEST_TIMEOUT_MS });
+    if (this.current !== before || linked.session.accountId !== before.accountId || linked.account.id !== before.accountId) {
+      throw new Error('Provider linking must preserve the current account and session');
+    }
+    return this.adopt(linked);
   }
 
   async developmentSession(): Promise<SignedIn> {
