@@ -86,6 +86,12 @@ impl PgAccountStore {
         Self { pool }
     }
 
+    /// Bounded by the caller; validates the shared runtime database connection.
+    pub async fn readiness(&self) -> Result<(), sqlx::Error> {
+        sqlx::query("SELECT 1").execute(&self.pool).await?;
+        Ok(())
+    }
+
     pub async fn issue_human_claim(&self, now_ms: u64) -> Result<ClaimCode, PgAccountError> {
         let code = Uuid::new_v4().simple().to_string();
         let expires_at_ms = now_ms

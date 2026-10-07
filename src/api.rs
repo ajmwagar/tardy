@@ -232,6 +232,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]);
     Router::new()
         .route("/healthz", get(|| async { StatusCode::NO_CONTENT }))
+        .route("/readyz", get(readiness_endpoint))
         .route("/metrics", get(metrics_endpoint))
         .route("/openapi.json", get(openapi_endpoint))
         .route("/v1/verification/products", get(verification_products))
@@ -2135,6 +2136,17 @@ fn push_store(state: &AppState) -> Result<&PgPushStore, ApiError> {
 
 async fn metrics_endpoint(State(state): State<Arc<AppState>>) -> Response {
     crate::metrics::response(&state.metrics)
+}
+
+/// Liveness stays cheap; readiness must not promote a disconnected PG runtime.
+async fn readiness_endpoint(State(state): State<Arc<AppState>>) -> StatusCode {
+    let Some(accounts) = &state.pg_accounts else {
+        return StatusCode::SERVICE_UNAVAILABLE;
+    };
+    match tokio::time::timeout(std::time::Duration::from_secs(2), accounts.readiness()).await {
+        Ok(Ok(())) => StatusCode::NO_CONTENT,
+        _ => StatusCode::SERVICE_UNAVAILABLE,
+    }
 }
 
 async fn openapi_endpoint() -> Json<serde_json::Value> {
@@ -4761,6 +4773,46 @@ impl From<AudioError> for ApiError {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn readiness_rejects_missing_and_closed_database() {
+        let state = AppState::in_memory("http://localhost").unwrap();
+        assert_eq!(
+            readiness_endpoint(State(Arc::new(state))).await,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://localhost/tardy_readiness_unused")
+            .unwrap();
+        pool.close().await;
+        let state = AppState::in_memory("http://localhost")
+            .unwrap()
+            .with_pg_accounts(PgAccountStore::new(pool));
+        assert_eq!(
+            readiness_endpoint(State(Arc::new(state))).await,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+    }
+
+    #[tokio::test]
+    async fn readiness_accepts_live_postgres() {
+        let Ok(url) = std::env::var("TEST_DATABASE_URL") else {
+            return;
+        };
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&url)
+            .await
+            .unwrap();
+        let state = AppState::in_memory("http://localhost")
+            .unwrap()
+            .with_pg_accounts(PgAccountStore::new(pool.clone()));
+        assert_eq!(
+            readiness_endpoint(State(Arc::new(state))).await,
+            StatusCode::NO_CONTENT
+        );
+        pool.close().await;
+    }
+
     #[test]
     fn profile_avatar_defaults_are_kind_specific_and_never_reel_media() {
         let human = super::dicebear_avatar_url(IdentityKind::Human, "avery fpl");

@@ -25,6 +25,7 @@
         "Cargo.lock",
         "Dockerfile",
         "src/",
+        "crates/",
         "ingest/",
         "migrations/",
         "policies/",
