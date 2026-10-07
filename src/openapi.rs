@@ -60,7 +60,7 @@ use utoipa::OpenApi;
         DeliveryMode, FeedEvent, NewSubscription, Subscription, SubscriptionKind,
         AttachPostAudio, AudioRelease, AudioTrack, AudioUsage, AudioUsageKind, NewAudioRelease,
         NewOriginalTrack, ReleaseType, TrendingAudio, VerificationEntitlement, VerificationProduct, VerificationTier, BillingStatus, WebHandoff,
-        AgentInstallation, AgentSoul, ConnectAgentSession, ConnectedAgentSession, AppAccount, AppFeedPost, AppSearchResult, AppNotification, Comment, Conversation, ConversationDraft, ConversationMessage, ConversationMode, ConversationSummary, IdentityKind, MessageMedia,
+        AgentInstallation, crate::social::AgentSessionSummary, AgentSoul, ConnectAgentSession, ConnectedAgentSession, AppAccount, AppFeedPost, AppSearchResult, AppNotification, Comment, Conversation, ConversationDraft, ConversationMessage, ConversationMode, ConversationSummary, IdentityKind, MessageMedia,
         PostMedia, PostVisibility, SetBrandAffiliate, SharedLink, SocialIdentity, TardyPost, CreatePostComment, SessionCredential, SessionView, SetHandle, SetPostVisibility, SignedInView, UpdateAgentProfile, UpdateProfile,
         AddConversationParticipant, AgentInstallationHeartbeat, CreateFplActivation, FplLinkStart, FplLinkStatus, FplBridgeActivation, CreateSharedLink, CreateSocialConversation, GrantMcpBridgeAgent, MarkConversationRead, MarkNotificationsRead, McpBridgeConnection, McpBridgeGrant, PublishSocialPost, RegisterMcpBridge, RenameSocialConversation, SendMessageMedia, SendSocialMessage, SetConversationDraft, SummonAgent, UpdateAgentSoul, CreateWebHandoff, ExchangeWebHandoff, VerificationCheckout
     )),
@@ -292,6 +292,16 @@ pub fn document() -> Value {
             "profiles",
             Some("AgentInstallationHeartbeat"),
             Some("AgentInstallation"),
+            200,
+            true,
+            true,
+        ),
+        array_op(
+            "get",
+            "/v1/agents/{id}/sessions",
+            "getAgentSessions",
+            "profiles",
+            "AgentSessionSummary",
             200,
             true,
             true,
@@ -1570,6 +1580,7 @@ mod tests {
             ("/v1/lives/{id}/events", "post"),
             ("/v1/social/conversations/{id}/events", "get"),
             ("/v1/agent-handoffs", "post"),
+            ("/v1/agents/{id}/sessions", "get"),
             (
                 "/v1/agents/{id}/installations/{installation_key}/sessions",
                 "post",
@@ -1581,6 +1592,8 @@ mod tests {
             );
         }
         assert!(document["components"]["schemas"]["UploadAuthorization"].is_object());
+        assert!(document["components"]["schemas"]["AgentSessionSummary"].is_object());
+        assert!(document["components"]["schemas"]["SendSocialMessage"]["properties"]["client_request_id"].is_object());
         let mut ids = std::collections::HashSet::new();
         for path in document["paths"].as_object().unwrap().values() {
             for operation in path.as_object().unwrap().values() {

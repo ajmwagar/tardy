@@ -60,6 +60,56 @@ async fn connected_codex_sessions_are_distinct_idempotent_and_owner_only() {
         .await
         .unwrap();
     assert_ne!(one, two);
+    let sessions = store.agent_sessions(owner, agent).await.unwrap();
+    assert_eq!(sessions.len(), 2);
+    assert!(
+        sessions
+            .iter()
+            .all(|session| session.status == "disconnected")
+    );
+    assert!(matches!(
+        store.agent_sessions(Uuid::new_v4(), agent).await,
+        Err(SocialError::Forbidden)
+    ));
+    store
+        .heartbeat_agent_installation(agent, "studio", "Studio", "codex", &[], "available")
+        .await
+        .unwrap();
+    assert!(
+        store
+            .agent_sessions(owner, agent)
+            .await
+            .unwrap()
+            .iter()
+            .all(|session| session.status == "available")
+    );
+    store
+        .set_draft(agent, one, "", "writing", "", &[])
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .agent_sessions(owner, agent)
+            .await
+            .unwrap()
+            .iter()
+            .find(|s| s.conversation_id == one)
+            .unwrap()
+            .status,
+        "working"
+    );
+    let encoded =
+        serde_json::to_string(&store.agent_sessions(owner, agent).await.unwrap()).unwrap();
+    assert!(!encoded.contains("thread-one"));
+    sqlx::query("UPDATE agent_installations SET last_seen_at=now()-interval '2 minutes' WHERE agent_profile_id=$1").bind(agent).execute(&pool).await.unwrap();
+    assert!(
+        store
+            .agent_sessions(owner, agent)
+            .await
+            .unwrap()
+            .iter()
+            .all(|session| session.status == "disconnected")
+    );
     assert_eq!(
         one,
         store
@@ -89,6 +139,36 @@ async fn connected_codex_sessions_are_distinct_idempotent_and_owner_only() {
         .bind(agent).bind(one.to_string()).fetch_one(&pool).await.unwrap();
     assert_eq!(event["target_installation"], "studio");
     assert_eq!(event["codex_thread_id"], "thread-one");
+    let request = Uuid::new_v4();
+    let reply = store
+        .send_message_idempotent(agent, one, "Done", None, &[], Some(request))
+        .await
+        .unwrap();
+    let retry = store
+        .send_message_idempotent(agent, one, "Done", None, &[], Some(request))
+        .await
+        .unwrap();
+    assert_eq!(reply.id, retry.id);
+    assert_eq!(reply.sequence, retry.sequence);
+    assert!(matches!(
+        store
+            .send_message_idempotent(agent, one, "Changed", None, &[], Some(request))
+            .await,
+        Err(SocialError::Conflict(_))
+    ));
+    assert!(matches!(
+        store
+            .send_message_idempotent(stranger, one, "Done", None, &[], Some(request))
+            .await,
+        Err(SocialError::Forbidden)
+    ));
+    let notification_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM push_notifications WHERE data->>'message_id'=$1")
+            .bind(reply.id.to_string())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(notification_count, 1);
     assert!(matches!(
         store.add_participant(human, one, stranger).await,
         Err(SocialError::Invalid(_))
@@ -656,7 +736,7 @@ async fn owner_can_comment_on_owned_agents_private_post_but_stranger_cannot() {
 #[tokio::test]
 async fn agent_draft_stream_is_private_and_final_message_clears_it() {
     let _guard = DATABASE_TEST_LOCK.lock().unwrap();
-    let Some((_pool, store)) = setup().await else {
+    let Some((pool, store)) = setup().await else {
         return;
     };
     let owner_account = Uuid::new_v4();
@@ -697,6 +777,105 @@ async fn agent_draft_stream_is_private_and_final_message_clears_it() {
         vec![draft]
     );
     assert!(store.drafts(stranger, conversation.id).await.is_err());
+    let approval = tardy::social::ConversationDraftActivity {
+        id: "approval:stable-one".into(),
+        kind: "approval".into(),
+        title: "Private tool detail should not appear in push".into(),
+        phase: "running".into(),
+    };
+    let push = PgPushStore::new(pool.clone());
+    push.register_device(
+        owner_account,
+        RegisterPushDevice {
+            token: "ab".repeat(32),
+            environment: ApnsEnvironment::Sandbox,
+            topic: "dev.fpl.tardy".into(),
+        },
+    )
+    .await
+    .unwrap();
+    push.set_preference(
+        owner_account,
+        tardy::push::NotificationPreference {
+            category: "review_requested".into(),
+            enabled: false,
+        },
+    )
+    .await
+    .unwrap();
+    for _ in 0..2 {
+        store
+            .set_draft(
+                agent,
+                conversation.id,
+                "private streamed text",
+                "tool",
+                "",
+                &[approval.clone()],
+            )
+            .await
+            .unwrap();
+    }
+    store.clear_draft(agent, conversation.id).await.unwrap();
+    store
+        .set_draft(agent, conversation.id, "", "tool", "", &[approval.clone()])
+        .await
+        .unwrap();
+    let rows: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT category,body,deep_link FROM push_notifications WHERE category='review_requested'",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].0, "review_requested");
+    assert_eq!(
+        rows[0].1,
+        "Open the original Codex session to review its request."
+    );
+    assert_eq!(rows[0].2, format!("tardy://messages/{}", conversation.id));
+    let mut next = approval;
+    next.id = "approval:stable-two".into();
+    store
+        .set_draft(agent, conversation.id, "", "tool", "", &[next])
+        .await
+        .unwrap();
+    let count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM push_notifications WHERE category='review_requested'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(count, 2);
+    let deliveries: i64 = sqlx::query_scalar("SELECT count(*) FROM push_deliveries d JOIN push_notifications n ON n.id=d.notification_id WHERE n.category='review_requested'").fetch_one(&pool).await.unwrap();
+    assert_eq!(deliveries, 0);
+    push.set_preference(
+        owner_account,
+        tardy::push::NotificationPreference {
+            category: "review_requested".into(),
+            enabled: true,
+        },
+    )
+    .await
+    .unwrap();
+    store
+        .set_draft(
+            agent,
+            conversation.id,
+            "",
+            "tool",
+            "",
+            &[tardy::social::ConversationDraftActivity {
+                id: "approval:enabled".into(),
+                kind: "approval".into(),
+                title: "Waiting".into(),
+                phase: "running".into(),
+            }],
+        )
+        .await
+        .unwrap();
+    let deliveries: i64 = sqlx::query_scalar("SELECT count(*) FROM push_deliveries d JOIN push_notifications n ON n.id=d.notification_id WHERE n.category='review_requested'").fetch_one(&pool).await.unwrap();
+    assert_eq!(deliveries, 1);
     assert!(
         store
             .set_draft(

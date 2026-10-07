@@ -53,6 +53,18 @@ pub struct AgentInstallation {
     pub last_seen_at: DateTime<Utc>,
 }
 
+/// Owner-facing picker metadata. Native thread IDs and filesystem paths stay private.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct AgentSessionSummary {
+    pub conversation_id: Uuid,
+    pub title: String,
+    pub installation_key: String,
+    /// Observed host/draft status, not a claim that a native turn is idle.
+    pub status: String,
+    #[schema(value_type = String, format = DateTime)]
+    pub last_activity_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum IdentityKind {
@@ -1068,6 +1080,39 @@ impl PgSocialStore {
             .collect()
     }
 
+    pub async fn agent_sessions(
+        &self,
+        owner: Uuid,
+        agent: Uuid,
+    ) -> Result<Vec<AgentSessionSummary>, SocialError> {
+        self.require_agent_owner(owner, agent).await?;
+        let rows = sqlx::query(
+            "SELECT s.conversation_id,c.title,s.installation_key,
+             CASE WHEN i.last_seen_at IS NULL OR i.last_seen_at < now()-interval '90 seconds' THEN 'disconnected'
+                  WHEN i.status='paused' THEN 'paused'
+                  WHEN d.expires_at > now() THEN 'working' ELSE 'available' END AS status,
+             greatest(c.created_at,coalesce(d.updated_at,c.created_at),
+               coalesce((SELECT max(created_at) FROM conversation_messages WHERE conversation_id=c.id),c.created_at)) AS last_activity_at
+             FROM agent_session_chats s JOIN conversations c ON c.id=s.conversation_id
+             LEFT JOIN agent_installations i ON i.agent_profile_id=s.agent_profile_id AND i.installation_key=s.installation_key
+             LEFT JOIN conversation_drafts d ON d.conversation_id=c.id AND d.sender_profile_id=s.agent_profile_id
+             WHERE s.agent_profile_id=$1 AND EXISTS(SELECT 1 FROM conversation_participants p
+                JOIN social_identities h ON h.profile_id=p.profile_id WHERE p.conversation_id=c.id AND h.account_id=$2 AND h.kind='human')
+             ORDER BY last_activity_at DESC,s.conversation_id LIMIT 200",
+        ).bind(agent).bind(owner).fetch_all(&self.pool).await?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(AgentSessionSummary {
+                    conversation_id: row.try_get("conversation_id")?,
+                    title: row.try_get("title")?,
+                    installation_key: row.try_get("installation_key")?,
+                    status: row.try_get("status")?,
+                    last_activity_at: row.try_get("last_activity_at")?,
+                })
+            })
+            .collect()
+    }
+
     /// Create a separate, owner-only work chat for a locally discovered session.
     /// Never deduplicate by membership: two Codex threads are two distinct chats.
     pub async fn connect_agent_session(
@@ -1766,6 +1811,33 @@ impl PgSocialStore {
         .bind(serde_json::to_value(activities).map_err(|_| SocialError::Invalid("invalid draft activities"))?)
         .fetch_one(&mut *tx)
         .await?;
+        for activity in activities
+            .iter()
+            .filter(|a| a.kind == "approval" && a.phase == "running")
+        {
+            if activity.id.is_empty() {
+                return Err(SocialError::Invalid("approval activity needs a stable id"));
+            }
+            let inserted = sqlx::query("INSERT INTO agent_attention_events(conversation_id,agent_profile_id,activity_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING")
+                .bind(conversation_id).bind(actor).bind(&activity.id).execute(&mut *tx).await?;
+            if inserted.rows_affected() == 1 {
+                let recipients: Vec<Uuid> = sqlx::query_scalar("SELECT p.profile_id FROM conversation_participants p JOIN social_identities h ON h.profile_id=p.profile_id AND h.kind='human' WHERE p.conversation_id=$1")
+                    .bind(conversation_id).fetch_all(&mut *tx).await?;
+                for recipient in recipients {
+                    notify_human(
+                        &mut tx,
+                        recipient,
+                        actor,
+                        "review_requested",
+                        "Agent needs approval",
+                        "Open the original Codex session to review its request.",
+                        None,
+                        Some(conversation_id),
+                    )
+                    .await?;
+                }
+            }
+        }
         tx.commit().await?;
         Ok(ConversationDraft {
             conversation_id: row.try_get("conversation_id")?,
@@ -2043,6 +2115,19 @@ impl PgSocialStore {
         shared_link_id: Option<Uuid>,
         media: &[MessageMedia],
     ) -> Result<ConversationMessage, SocialError> {
+        self.send_message_idempotent(actor, conversation_id, body, shared_link_id, media, None)
+            .await
+    }
+
+    pub async fn send_message_idempotent(
+        &self,
+        actor: Uuid,
+        conversation_id: Uuid,
+        body: &str,
+        shared_link_id: Option<Uuid>,
+        media: &[MessageMedia],
+        request_id: Option<Uuid>,
+    ) -> Result<ConversationMessage, SocialError> {
         let body = body.trim();
         if body.len() > 10_000 || (body.is_empty() && shared_link_id.is_none() && media.is_empty())
         {
@@ -2076,10 +2161,35 @@ impl PgSocialStore {
             .bind(conversation_id)
             .fetch_one(&mut *tx)
             .await?;
+        use sha2::Digest;
+        let digest = sha2::Sha256::digest(
+            serde_json::to_vec(&(
+                body,
+                shared_link_id,
+                media
+                    .iter()
+                    .map(|m| (m.asset_id, m.width, m.height, &m.alt_text, &m.file_name))
+                    .collect::<Vec<_>>(),
+            ))
+            .map_err(|_| SocialError::Invalid("invalid message payload"))?,
+        )
+        .to_vec();
+        if let Some(request_id) = request_id {
+            if let Some(existing) = sqlx::query("SELECT sequence,request_digest FROM conversation_messages WHERE conversation_id=$1 AND sender_profile_id=$2 AND client_request_id=$3")
+                .bind(conversation_id).bind(actor).bind(request_id).fetch_optional(&mut *tx).await? {
+                if existing.try_get::<Vec<u8>, _>("request_digest")? != digest {
+                    return Err(SocialError::Conflict("message request id reused with different content"));
+                }
+                let sequence: i64 = existing.try_get("sequence")?;
+                tx.commit().await?;
+                return self.messages(actor, conversation_id, sequence-1, 1).await?
+                    .into_iter().next().ok_or(SocialError::NotFound);
+            }
+        }
         let sequence: i64 = sqlx::query_scalar("SELECT COALESCE(max(sequence),0)+1 FROM conversation_messages WHERE conversation_id=$1").bind(conversation_id).fetch_one(&mut *tx).await?;
         let id = Uuid::new_v4();
-        let row = sqlx::query("INSERT INTO conversation_messages (id,conversation_id,sequence,sender_profile_id,body,shared_link_id) VALUES ($1,$2,$3,$4,$5,$6) RETURNING created_at")
-            .bind(id).bind(conversation_id).bind(sequence).bind(actor).bind(body).bind(shared_link_id).fetch_one(&mut *tx).await?;
+        let row = sqlx::query("INSERT INTO conversation_messages (id,conversation_id,sequence,sender_profile_id,body,shared_link_id,client_request_id,request_digest) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING created_at")
+            .bind(id).bind(conversation_id).bind(sequence).bind(actor).bind(body).bind(shared_link_id).bind(request_id).bind(digest).fetch_one(&mut *tx).await?;
         for (position, item) in media.iter().enumerate() {
             sqlx::query("INSERT INTO conversation_message_media (message_id,position,asset_id,width,height,alt_text,file_name) VALUES ($1,$2,$3,$4,$5,$6,$7)")
                 .bind(id).bind(position as i16).bind(item.asset_id).bind(item.width.map(|value| value as i32)).bind(item.height.map(|value| value as i32)).bind(&item.alt_text).bind(&item.file_name).execute(&mut *tx).await?;

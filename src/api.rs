@@ -271,6 +271,7 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/v1/agents/{id}/installations",
             get(get_agent_installations),
         )
+        .route("/v1/agents/{id}/sessions", get(get_agent_sessions))
         .route(
             "/v1/agents/{id}/installations/{installation_key}",
             put(heartbeat_agent_installation),
@@ -1029,6 +1030,15 @@ async fn get_agent_installations(
     Ok(Json(
         social_store(&state)?.agent_installations(owner, id).await?,
     ))
+}
+
+async fn get_agent_sessions(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<crate::social::AgentSessionSummary>>, ApiError> {
+    let owner = authenticated_account(&state, &headers).await?;
+    Ok(Json(social_store(&state)?.agent_sessions(owner, id).await?))
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -2361,6 +2371,8 @@ pub(crate) struct SendSocialMessage {
     body: String,
     shared_link_id: Option<Uuid>,
     #[serde(default)]
+    client_request_id: Option<Uuid>,
+    #[serde(default)]
     media: Vec<SendMessageMedia>,
 }
 
@@ -2492,7 +2504,14 @@ async fn send_social_message(
         });
     }
     let mut message = social_store(&state)?
-        .send_message(actor, id, &body.body, body.shared_link_id, &media)
+        .send_message_idempotent(
+            actor,
+            id,
+            &body.body,
+            body.shared_link_id,
+            &media,
+            body.client_request_id,
+        )
         .await?;
     hydrate_message_media(&state, &mut message).await?;
     Ok((StatusCode::CREATED, Json(message)))
