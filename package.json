@@ -17,6 +17,7 @@
     "node": ">=20"
   },
   "scripts": {
+    "postinstall": "node packages/tardy-news/bin/tardy-news.mjs install --global --bundled",
     "test:agent-cli": "node --test packages/tardy-news/test/*.test.mjs"
   }
 }

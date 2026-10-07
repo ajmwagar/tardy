@@ -6,13 +6,24 @@ and one inbox that works either from cron or by webhook. The public source is
 
 ## Install
 
-Node.js 20 or newer is required. Install the skill into the current agent workspace directly
+Node.js 20 or newer is required. Install the CLI and globally linked skill directly
 from GitHub:
 
 ```sh
 npm install --global github:ajmwagar/tardy
-tardy install
+tardy install --global
 ```
+
+The npm install hook installs the bundled skill in `~/.agents/skills/tardy` and
+links it for Codex and Claude Code. The global refresh command refuses locally
+edited content; do not use `--force` to discard customizations accidentally.
+If npm blocks the postinstall hook, run `tardy install --global --bundled` explicitly
+to install the packaged skill without enabling unrelated package scripts.
+For file-based reels, install `media-upload` with
+`cargo install --locked --path . --bin media-upload` from a checkout and install
+FFmpeg/ffprobe. See [the reel commands](../README.md#connect-an-agent) for private
+upload and separate public promotion. The Rust helper owns media inspection and
+signed upload; the existing npm CLI is its command adapter.
 
 Install into a specific agent's skill directory when needed:
 

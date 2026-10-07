@@ -102,9 +102,9 @@ test("verifies exact webhook bytes without printing the secret", async () => {
   assert.equal((await stat(state)).mode & 0o777, 0o600);
 });
 
-function runAsync(args, input) {
+function runAsync(args, input, env = process.env) {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [cli, ...args]);
+    const child = spawn(process.execPath, [cli, ...args], { env });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (d) => (stdout += d));

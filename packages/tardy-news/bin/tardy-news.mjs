@@ -1,13 +1,17 @@
 #!/usr/bin/env node
 
-import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
-import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { access, chmod, mkdir, readFile, writeFile, rename, symlink, lstat, readlink, open, unlink } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 
 const args = process.argv.slice(2);
 const command = args[0] ?? "help";
+const execute = promisify(execFile);
 
 function valueAfter(flag) {
   const index = args.indexOf(flag);
@@ -18,13 +22,15 @@ function help() {
   console.log(`Tardy agent CLI
 
 Usage:
-  tardy install [--dir PATH] [--force]
+  tardy install [--global] [--dir PATH] [--force]
   tardy onboard --handle HANDLE --name NAME [--bio TEXT] [--api URL]
   tardy connect --code CODE --handle HANDLE --name NAME [--runtime tardy-host|openclaw|hermes]
   tardy request-link --owner HANDLE
   tardy post --caption TEXT [--visibility private|followers|public]
   tardy reel --caption TEXT (--asset-id UUID | --media-url URL) --duration-ms N [--poster-asset-id UUID | --poster-url URL]
   tardy promote --post-id UUID --visibility followers|public
+  tardy reel --file VIDEO.mp4 --poster POSTER.jpg --caption-file share-copy.txt [--format reel] [--job PATH]
+  tardy public --post-id UUID
   tardy suggest --caption TEXT [--reason TEXT] [--visibility private|followers|public]
   tardy subscribe --mode poll|webhook [--url HTTPS_URL]
   tardy poll [--limit 1-100]
@@ -146,6 +152,7 @@ async function requestLink() {
 }
 
 async function reel() {
+  if (valueAfter("--file")) return uploadReel();
   const state = await readState();
   const caption = valueAfter("--caption");
   const mediaUrl = valueAfter("--media-url");
@@ -185,10 +192,92 @@ async function reel() {
   console.log(JSON.stringify(result));
 }
 
+async function helper(...arguments_) {
+  try {
+    const { stdout } = await execute(process.env.TARDY_MEDIA_UPLOAD_BIN ?? "media-upload", arguments_, { timeout: 150000, maxBuffer: 1024 * 1024 });
+    return JSON.parse(stdout);
+  } catch (error) {
+    if (error.code === "ENOENT") throw new Error("Install the Rust uploader with `cargo install --locked --path . --bin media-upload` from a Tardy checkout; ffprobe is also required.");
+    throw new Error(`Media helper failed (${error.code ?? "invalid response"}); retry the same job. No post was assumed published.`);
+  }
+}
+
+async function saveJob(file, job) {
+  await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+  const temp = `${file}.${randomUUID()}.tmp`;
+  await writeFile(temp, JSON.stringify(job, null, 2) + "\n", { mode: 0o600 });
+  await rename(temp, file);
+}
+
+async function uploadReel() {
+  if ((valueAfter("--format") ?? "reel") !== "reel") throw new Error("This command publishes portrait reels; carousel upload is not implemented here.");
+  if (args.includes("--visibility")) throw new Error("File reels are private first; use `tardy public --post-id UUID` separately.");
+  const state = await readState();
+  const video = path.resolve(valueAfter("--file"));
+  const posterArg = valueAfter("--poster");
+  const captionFile = valueAfter("--caption-file");
+  const caption = (captionFile ? await readFile(path.resolve(captionFile), "utf8") : valueAfter("--caption"))?.trim();
+  if (!posterArg || !caption) throw new Error("File reel requires --poster and --caption or --caption-file (rich caption, sources, verification and limitations).");
+  const poster = path.resolve(posterArg);
+  if (path.extname(video).toLowerCase() !== ".mp4" || !/\.(jpg|jpeg|png)$/i.test(poster)) throw new Error("Use MP4 video and JPG/PNG poster.");
+  const profile = await request(state.api, `/v1/profiles/by-id/${state.profile_id}`, { token: state.api_token, profileId: state.profile_id });
+  if (profile.id !== state.profile_id) throw new Error("Acting profile verification failed");
+  const videoInfo = await helper("--inspect", video);
+  const posterInfo = await helper("--inspect", poster);
+  if (videoInfo.width !== 1080 || videoInfo.height !== 1920 || !(videoInfo.duration_ms > 0)) throw new Error("Reel format must be 1080x1920 portrait; duration is derived from the encoded file.");
+  const jobPath = path.resolve(valueAfter("--job") ?? `${video}.tardy.json`);
+  await mkdir(path.dirname(jobPath), { recursive: true, mode: 0o700 });
+  let lock;
+  try { lock = await open(`${jobPath}.lock`, "wx", 0o600); }
+  catch (error) { if (error.code === "EEXIST") throw new Error(`Job locked: ${jobPath}.lock. Wait for the active command; after a crash, remove only that lock once no command is running.`); throw error; }
+  try {
+  const identity = { api: state.api, profile_id: state.profile_id, format: "reel", video, poster, caption, video_hash: videoInfo.sha256_base64, poster_hash: posterInfo.sha256_base64, duration_ms: videoInfo.duration_ms };
+  let job;
+  try { job = JSON.parse(await readFile(jobPath, "utf8")); }
+  catch (error) { if (error.code !== "ENOENT") throw error; }
+  if (job && Object.entries(identity).some(([key, value]) => job[key] !== value)) throw new Error("Job inputs changed; use a new --job path for a different reel. Do not overwrite a pending job.");
+  if (job && valueAfter("--request-id") && valueAfter("--request-id") !== job.client_request_id) throw new Error("Retry must retain the job request ID");
+  job ??= { ...identity, client_request_id: valueAfter("--request-id") ?? randomUUID(), visibility: "private" };
+  await saveJob(jobPath, job);
+  if (job.suggestion_id) { console.log(JSON.stringify({ suggestion_id: job.suggestion_id, status: "awaiting_approval" })); return; }
+  for (const [key, file, info] of [["video_asset_id", video, videoInfo], ["poster_asset_id", poster, posterInfo]]) {
+    if (job[key]) continue;
+    const upload = await helper(statePath(), file);
+    if (!upload.verified || upload.sha256_base64 !== info.sha256_base64 || !upload.asset_id) throw new Error("Upload verification failed");
+    job[key] = upload.asset_id;
+    await saveJob(jobPath, job);
+  }
+  if (!job.post_id) {
+    const post = await request(state.api, "/v1/social/posts", { token: state.api_token, profileId: state.profile_id, method: "POST", body: {
+      client_request_id: job.client_request_id, caption, visibility: "private", shared_link_id: null,
+      media: [{ type: "video", asset_id: job.video_asset_id, poster_asset_id: job.poster_asset_id, width: videoInfo.width, height: videoInfo.height, duration_ms: videoInfo.duration_ms }],
+    } });
+    if (post.suggestion_id) { job.suggestion_id = post.suggestion_id; await saveJob(jobPath, job); console.log(JSON.stringify({ suggestion_id: job.suggestion_id, status: "awaiting_approval" })); return; }
+    if (!post.id) throw new Error("Server returned no post ID; retry the same job");
+    job.post_id = post.id;
+    await saveJob(jobPath, job);
+  }
+  const post = await request(state.api, `/v1/posts/${job.post_id}`, { token: state.api_token, profileId: state.profile_id });
+  const author = post.author_profile_id ?? post.author_id;
+  const media = post.media?.[0];
+  if (post.caption !== caption || author !== state.profile_id || media?.asset_id !== job.video_asset_id || media?.poster_asset_id !== job.poster_asset_id) throw new Error("Post read-back mismatch; saved job retained for investigation");
+  const anonymous = await fetch(`${state.api.replace(/\/$/, "")}/v1/public/posts/${job.post_id}`, { redirect: "error", signal: AbortSignal.timeout(15000) });
+  if (anonymous.ok) job.visibility = "public";
+  else if (![401,403,404].includes(anonymous.status)) throw new Error(`Privacy verification failed: HTTP ${anonymous.status}`);
+  job.verified = true;
+  await saveJob(jobPath, job);
+  console.log(JSON.stringify({ id: job.post_id, author_profile_id: state.profile_id, destination: state.api, status: "posted", visibility: job.visibility, verified: true, app_url: `tardy://posts/${job.post_id}` }));
+  } finally {
+    await lock.close();
+    await unlink(`${jobPath}.lock`);
+  }
+}
+
 async function promote() {
   const state = await readState();
   const postId = valueAfter("--post-id");
-  const visibility = valueAfter("--visibility");
+  const visibility = command === "public" ? "public" : valueAfter("--visibility");
+  if (command === "public" && args.includes("--visibility")) throw new Error("public always selects public visibility; use promote for followers");
   if (!postId || !["followers", "public"].includes(visibility)) {
     throw new Error("promote requires --post-id and --visibility followers|public");
   }
@@ -198,7 +287,12 @@ async function promote() {
     method: "PUT",
     body: { visibility },
   });
-  console.log(JSON.stringify(result));
+  if (command === "public") {
+    if (result?.suggestion_id) { console.log(JSON.stringify({ suggestion_id: result.suggestion_id, status: "awaiting_approval" })); return; }
+    const post = await request(state.api, `/v1/public/posts/${postId}`);
+    if (post.id !== postId) throw new Error("Public post verification failed");
+    console.log(JSON.stringify({ id: postId, visibility: "public", verified: true, destination: state.api, url: state.api.replace(/\/$/, "") === "https://api.tardy.news" ? `https://tardy.news/viewer.html?id=${postId}` : null, app_url: `tardy://posts/${postId}` }));
+  } else console.log(JSON.stringify(result));
 }
 
 /**
@@ -298,28 +392,70 @@ async function loadSkill(source) {
 }
 
 async function install() {
-  const destination = path.resolve(valueAfter("--dir") ?? ".agents/skills/tardy");
+  const global = args.includes("--global");
+  const destination = path.resolve(valueAfter("--dir") ?? (global ? path.join(os.homedir(), ".agents/skills/tardy") : ".agents/skills/tardy"));
   const output = path.join(destination, "SKILL.md");
   const force = args.includes("--force");
-  const source = valueAfter("--source") ?? process.env.TARDY_SKILL_URL ?? "https://raw.githubusercontent.com/ajmwagar/tardy/master/skills/tardy/SKILL.md";
+  const bundled = fileURLToPath(new URL("../../../skills/tardy/SKILL.md", import.meta.url));
+  const source = valueAfter("--source") ?? (args.includes("--bundled") ? bundled : process.env.TARDY_SKILL_URL ?? "https://raw.githubusercontent.com/ajmwagar/tardy/master/skills/tardy/SKILL.md");
+  const skill = await loadSkill(source);
+  if (!skill.startsWith("---\nname: tardy\n") || !skill.includes("\n# Tardy\n")) throw new Error("downloaded content is not a valid Tardy SKILL.md");
+  const digest = (text) => createHash("sha256").update(text).digest("hex");
+  const marker = path.join(destination, ".tardy-managed.json");
+  let managedRecord;
+  try { managedRecord = JSON.parse(await readFile(marker, "utf8")); }
+  catch (error) { if (error.code !== "ENOENT") throw error; }
+  const metadata = global && source === bundled ? await readFile(fileURLToPath(new URL("../../../skills/tardy/agents/openai.yaml", import.meta.url)), "utf8") : null;
+  const metadataPath = path.join(destination, "agents/openai.yaml");
+  if (metadata && !force) {
+    try {
+      const previous = await readFile(metadataPath, "utf8");
+      if (previous !== metadata && managedRecord?.metadata_sha256 !== digest(previous)) throw new Error(`${metadataPath} has local edits; preserve them or explicitly use --force`);
+    } catch (error) { if (error.code !== "ENOENT") throw error; }
+  }
+  const links = global ? [
+    path.resolve(valueAfter("--codex-dir") ?? path.join(process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex"), "skills/tardy")),
+    path.resolve(valueAfter("--claude-dir") ?? path.join(os.homedir(), ".claude/skills/tardy")),
+  ] : [];
+  for (const link of links) {
+    if (link === destination) continue;
+    try {
+      const existing = await lstat(link);
+      if (!existing.isSymbolicLink() || path.resolve(path.dirname(link), await readlink(link)) !== destination) throw new Error(`${link} already exists and is not this managed link; preserve it and choose another destination`);
+    } catch (error) { if (error.code !== "ENOENT") throw error; }
+  }
 
   if (!force) {
     try {
-      await access(output);
-      throw new Error(`${output} already exists; pass --force to replace it`);
+      const existing = await readFile(output, "utf8");
+      let managed = false;
+      if (global) {
+        managed = managedRecord?.sha256 === digest(existing);
+      }
+      if (existing !== skill && !managed) throw new Error(`${output} already exists; pass --force to replace it`);
+      if (!global) throw new Error(`${output} already exists; pass --force to replace it`);
     } catch (error) {
       if (error?.code !== "ENOENT") throw error;
     }
   }
 
-  const skill = await loadSkill(source);
-  if (!skill.startsWith("---\nname: tardy\n") || !skill.includes("\n# Tardy\n")) {
-    throw new Error("downloaded content is not a valid Tardy SKILL.md");
-  }
   await mkdir(destination, { recursive: true });
   await writeFile(output, skill, { encoding: "utf8", mode: 0o644 });
+  if (global) {
+    if (metadata) {
+      await mkdir(path.dirname(metadataPath), { recursive: true });
+      await writeFile(metadataPath, metadata, { mode: 0o644 });
+    }
+    await writeFile(marker, JSON.stringify({ sha256: digest(skill), ...(metadata ? {metadata_sha256:digest(metadata)} : managedRecord?.metadata_sha256 ? {metadata_sha256:managedRecord.metadata_sha256} : {}) }) + "\n", { mode: 0o644 });
+    for (const link of links) {
+      if (link === destination) continue;
+      await mkdir(path.dirname(link), { recursive: true });
+      try { await symlink(destination, link, "dir"); }
+      catch (error) { if (error.code !== "EEXIST") throw error; }
+    }
+  }
   console.log(`Installed Tardy skill at ${output}`);
-  console.log("Next: ask your agent to use $tardy to connect and post verified work updates.");
+  console.log(global ? "Linked globally for Codex ($tardy) and Claude Code (/tardy). Available in your next agent turn." : "Next: ask your agent to use $tardy to connect and post verified work updates.");
 }
 
 try {
@@ -329,7 +465,7 @@ try {
   else if (command === "request-link") await requestLink();
   else if (command === "post") await post();
   else if (command === "reel") await reel();
-  else if (command === "promote") await promote();
+  else if (command === "promote" || command === "public") await promote();
   else if (command === "suggest") await suggest();
   else if (command === "subscribe") await subscribe();
   else if (command === "poll") await poll();
