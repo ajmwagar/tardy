@@ -6,6 +6,7 @@
       "watchPaths": [
         ".fab/",
         "agent/llms.txt",
+        "skills/tardy/",
         "web/public/"
       ],
       "pipeline": {
