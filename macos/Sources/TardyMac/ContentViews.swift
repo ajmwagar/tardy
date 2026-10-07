@@ -568,6 +568,10 @@ private struct AgentSettingsSheet: View {
     @State private var privateInstructions = ""
     @State private var specialties = ""
     @State private var saving = false
+    @State private var sessions: [AgentSessionSummary] = []
+    @State private var sessionsLoading = false
+    @State private var sessionsError: String?
+    @State private var openingSession = false
 
     init(agent: Account) {
         self.agent = agent
@@ -595,6 +599,42 @@ private struct AgentSettingsSheet: View {
                     Text("Private operating guidance. It is supplied to this agent’s activations and is never shown on its public profile.")
                         .font(.caption).foregroundStyle(Brand.muted)
                     TextField("Specialties, comma separated", text: $specialties)
+                }
+                Section("Session chats") {
+                    Text("Open the original coding session as a chat. Same identity and permissions; no new session is created.")
+                        .font(.caption).foregroundStyle(Brand.muted)
+                    if let sessionsError {
+                        Text(sessionsError).foregroundStyle(.red).textSelection(.enabled)
+                    } else if sessions.isEmpty && !sessionsLoading {
+                        Text("No connected sessions yet. Start your Tardy host on the machine running Codex.")
+                            .foregroundStyle(Brand.muted)
+                    }
+                    ForEach(sessions) { session in
+                        Button {
+                            openingSession = true
+                            Task {
+                                if await model.openAgentSession(session) { dismiss() }
+                                openingSession = false
+                            }
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(session.title).fontWeight(.semibold)
+                                    Text("\(session.installationKey) · \(session.statusLabel)")
+                                        .font(.caption).foregroundStyle(Brand.muted)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right").foregroundStyle(Brand.muted)
+                            }
+                        }.buttonStyle(.plain).disabled(openingSession)
+                    }
+                    HStack {
+                        Button("Refresh sessions") { Task { await loadSessions() } }
+                            .disabled(sessionsLoading)
+                        if sessionsLoading || openingSession { ProgressView().controlSize(.small) }
+                    }
+                    Text("In the chat: /status, /stop, /resume. Approvals stay in the original coding app.")
+                        .font(.caption).foregroundStyle(Brand.muted)
                 }
                 Section("Installations") {
                     if model.editingAgentInstallations.isEmpty {
@@ -626,7 +666,9 @@ private struct AgentSettingsSheet: View {
             }
             .overlay { if model.isLoadingAgentSettings { ProgressView("Loading agent…") } }
             .task {
+                async let sessionLoad: Void = loadSessions()
                 await model.loadAgentSettings(agent)
+                await sessionLoad
                 guard let soul = model.editingAgentSoul else { return }
                 publicSummary = soul.publicSummary
                 privateInstructions = soul.privateInstructions
@@ -645,6 +687,20 @@ private struct AgentSettingsSheet: View {
             specialties: values
         ) { dismiss() }
         saving = false
+    }
+
+    private func loadSessions() async {
+        sessionsLoading = true
+        defer { sessionsLoading = false }
+        do {
+            let rows = try await model.api.agentSessions(agent: agent.id)
+            guard !Task.isCancelled else { return }
+            sessions = rows
+            sessionsError = nil
+        } catch {
+            guard !Task.isCancelled else { return }
+            sessionsError = "Couldn’t load sessions: \(error.localizedDescription)"
+        }
     }
 }
 

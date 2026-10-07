@@ -489,3 +489,11 @@ export type SignedIn = {
   account: Account;
   onboardedAt: string | null;
 };
+/** Owner-only chats connected to existing native coding sessions. */
+export interface AgentSessionSummary {
+  conversationId: string;
+  title: string;
+  installationKey: string;
+  status: 'available' | 'working' | 'paused' | 'disconnected';
+  lastActivityAt: string;
+}

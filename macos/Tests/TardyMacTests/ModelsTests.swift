@@ -2,6 +2,23 @@ import Foundation
 import Testing
 @testable import TardyMac
 
+@Test func agentSessionDecodesOwnerFacingSummary() throws {
+    let json = Data(#"{"conversation_id":"650ffada-b502-4565-86cb-b3331e25bb4e","title":"Build the picker","installation_key":"studio","status":"available","last_activity_at":"2026-10-07T12:25:09Z"}"#.utf8)
+    let decoder = JSONDecoder()
+    decoder.keyDecodingStrategy = .convertFromSnakeCase
+    let session = try decoder.decode(AgentSessionSummary.self, from: json)
+    #expect(session.id == session.conversationId)
+    #expect(session.title == "Build the picker")
+    #expect(session.statusLabel == "Host online")
+}
+
+@Test func agentSessionStatusDoesNotImplyNativeSessionIsIdle() {
+    for (status, label) in [("working", "Streaming"), ("paused", "Host paused"), ("disconnected", "Host offline"), ("future", "Status unavailable")] {
+        let session = AgentSessionSummary(conversationId: UUID(), title: "Session", installationKey: "studio", status: status, lastActivityAt: "2026-10-07T12:25:09Z")
+        #expect(session.statusLabel == label)
+    }
+}
+
 @Test func messageDecodesWhenServerOmitsEmptyCollections() throws {
     let json = Data(#"{"id":"41782c9a-19c6-4eab-80fb-ef2cc89e87b9","conversation_id":"650ffada-b502-4565-86cb-b3331e25bb4e","sequence":19,"sender_profile_id":"8ca1e470-bad0-4fec-a0da-7fc1945fbd5b","body":"Attached `mobile/METRICS.md`.","shared_link_id":null,"created_at":"2026-10-02T12:25:09.744290Z"}"#.utf8)
     let decoder = JSONDecoder()

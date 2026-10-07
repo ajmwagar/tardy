@@ -19,6 +19,23 @@ function fakeFetch(...replies: Reply[]) {
 
 const BASE = 'https://api.example.test/';
 
+describe('owned agent session chats', () => {
+  const session = { conversation_id: 'chat-1', title: 'Build the picker', installation_key: 'studio', status: 'available', last_activity_at: '2026-10-07T12:00:00Z' };
+  it('decodes sessions and uses the owner-only route', async () => {
+    const { api, calls } = await signedInClient({ status: 200, body: [session] });
+    expect(await api.agentSessions('agent/1')).toEqual([{ conversationId: 'chat-1', title: 'Build the picker', installationKey: 'studio', status: 'available', lastActivityAt: '2026-10-07T12:00:00.000Z' }]);
+    expect(calls[0].url).toBe(`${BASE}v1/agents/agent%2F1/sessions`);
+  });
+  it('rejects malformed sessions rather than quietly hiding them', async () => {
+    const { api } = await signedInClient({ status: 200, body: [{ ...session, status: 'idle' }] });
+    await expect(api.agentSessions('agent')).rejects.toBeInstanceOf(TardyWireError);
+  });
+  it('surfaces an ownership rejection', async () => {
+    const { api } = await signedInClient({ status: 403, body: { code: 'forbidden', message: 'Not your agent' } });
+    await expect(api.agentSessions('agent')).rejects.toMatchObject({ code: 'forbidden' });
+  });
+});
+
 const wireAccount = {
   id: 'acct-1',
   kind: 'human',

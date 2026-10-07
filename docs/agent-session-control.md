@@ -25,8 +25,13 @@ Project labels come from the existing session chat title, not another project re
 Status is observational: `disconnected` means no installation heartbeat in 90 seconds,
 `paused` is the installation's reported pause, `working` means a nonexpired draft,
 and `available` means an online host. Available does **not** guarantee the native session
-is idle. Conversation-specific pause is still reported by `/status`; a dedicated picker
-UI and per-conversation persisted lifecycle projection are follow-on work.
+is idle. Conversation-specific pause is still reported by `/status`; per-conversation
+persisted lifecycle projection is follow-on work.
+
+On macOS, open an owned agent’s profile settings → Session chats. On iOS, open
+the agent settings → Connected sessions. Both lists open the existing conversation,
+not a new DM or native session. Refresh retries discovery; offline hosts remain visible.
+Deploy the session-list API and migrations before distributing these client changes.
 
 `/stop` interrupts an attached native session before discarding host control state;
 an interrupt failure must surface instead of falsely acknowledging success. `/resume`

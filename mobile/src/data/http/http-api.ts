@@ -3,6 +3,7 @@ import { TardyApiError, type TardyApi, type TardyApiErrorCode } from '../api';
 import type { AgentProfilePatch, ProfilePatch } from '../profile';
 import type {
   Account,
+  AgentSessionSummary,
   AgentPairing,
   AgentLinkRequest,
   AuthCredential,
@@ -589,6 +590,10 @@ export class HttpTardyApi implements TardyApi {
 
   agentControls(agentId: string): Promise<AgentControls> {
     return this.request('GET', `/v1/agents/${segment(agentId)}/controls`, { decode: W.agentControls });
+  }
+
+  agentSessions(agentId: string): Promise<AgentSessionSummary[]> {
+    return this.request('GET', `/v1/agents/${segment(agentId)}/sessions`, { decode: array(W.agentSession) });
   }
 
   updateAgentControls(agentId: string, patch: Partial<AgentControls>): Promise<AgentControls> {
