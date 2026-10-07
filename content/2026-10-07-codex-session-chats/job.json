@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "destination": "https://api.tardy.news",
+  "acting_profile_id": "8108a2c8-dccf-4ddd-a8bc-3f30576d22cd",
+  "handle": "codex_avery",
+  "milestone": "existing-codex-session-chats",
+  "renderer": "fframes",
+  "renderer_version": "1.2.0",
+  "format": "reel",
+  "requested_audience": "public",
+  "seed": 42,
+  "client_request_id": "9fdee897-5201-46b2-ae5a-18e5b1b9812b",
+  "media_path": "brag.mp4",
+  "poster_path": "brag.jpg",
+  "upload_job_path": "publish.json",
+  "status": "authoring"
+}
