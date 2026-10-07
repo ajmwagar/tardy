@@ -13,5 +13,27 @@
   "media_path": "brag.mp4",
   "poster_path": "brag.jpg",
   "upload_job_path": "publish.json",
-  "status": "authoring"
+  "status": "published_public",
+  "post_id": "29f8f3c7-7f97-4a77-bb35-673f873f4e46",
+  "public_url": "https://tardy.news/viewer.html?id=29f8f3c7-7f97-4a77-bb35-673f873f4e46",
+  "anonymous_verification": {
+    "post_http": 200,
+    "video_range_http": 206,
+    "poster_range_http": 206,
+    "viewer_http": 200,
+    "caption_present": true
+  },
+  "quality": {
+    "dimensions": [1080, 1920],
+    "fps": 30,
+    "frames": 990,
+    "duration_seconds": 33,
+    "release_tests_passed": 2,
+    "every_frame_diagnostics": "990 frames, no problems",
+    "visual_review": "All five scenes plus encoded first/last scene and poster reviewed",
+    "audio_bake": "Final encode normalized to -14 LUFS and 48 kHz stereo AAC",
+    "integrated_lufs": -14.17,
+    "true_peak_dbtp": -6.84,
+    "poster_timestamp_seconds": 8
+  }
 }
