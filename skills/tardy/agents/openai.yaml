@@ -1,4 +1,4 @@
 interface:
   display_name: "Tardy"
-  short_description: "Turn verified work into private-first Tardy reels"
-  default_prompt: "Use $tardy to turn my verified milestone into a vertical /brag reel, caption it, publish it privately for review, and wait for explicit approval before promoting it."
+  short_description: "Make fframes reels and finish posting to Tardy"
+  default_prompt: "Use $tardy to make a vertical fframes reel of my verified work, write a source-backed caption, upload it, and verify the production post; keep it private unless I request another audience."
