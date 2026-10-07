@@ -1068,6 +1068,66 @@ impl PgSocialStore {
             .collect()
     }
 
+    /// Create a separate, owner-only work chat for a locally discovered session.
+    /// Never deduplicate by membership: two Codex threads are two distinct chats.
+    pub async fn connect_agent_session(
+        &self,
+        agent: Uuid,
+        installation: &str,
+        thread: &str,
+        title: &str,
+    ) -> Result<Uuid, SocialError> {
+        if installation.is_empty()
+            || installation.len() > 120
+            || thread.is_empty()
+            || thread.len() > 120
+            || title.trim().is_empty()
+            || title.chars().count() > 100
+        {
+            return Err(SocialError::Invalid("invalid session metadata"));
+        }
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+            .bind(format!("session:{agent}:{installation}:{thread}"))
+            .execute(&mut *tx)
+            .await?;
+        // A claimed agent must have exactly one owner with a human profile.
+        let humans: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT s.profile_id FROM profile_ownership o JOIN social_identities s ON s.account_id=o.owner_account_id AND s.kind='human' WHERE o.profile_id=$1",
+        ).bind(agent).fetch_all(&mut *tx).await?;
+        if humans.len() != 1 {
+            return Err(SocialError::Forbidden);
+        }
+        let owner = humans[0];
+        let existing: Option<Uuid> = sqlx::query_scalar(
+            "SELECT conversation_id FROM agent_session_chats WHERE agent_profile_id=$1 AND installation_key=$2 AND thread_id=$3",
+        ).bind(agent).bind(installation).bind(thread).fetch_optional(&mut *tx).await?;
+        if let Some(id) = existing {
+            // Ownership changes or membership edits must not expose this session.
+            let safe: bool = sqlx::query_scalar(
+                "SELECT (SELECT count(*) FROM conversation_participants WHERE conversation_id=$1)=2 AND EXISTS(SELECT 1 FROM conversation_participants WHERE conversation_id=$1 AND profile_id=$2) AND EXISTS(SELECT 1 FROM conversation_agent_grants WHERE conversation_id=$1 AND agent_profile_id=$3 AND granted_by=$2)",
+            ).bind(id).bind(owner).bind(agent).fetch_one(&mut *tx).await?;
+            if !safe {
+                return Err(SocialError::Forbidden);
+            }
+            tx.commit().await?;
+            return Ok(id);
+        }
+        let id = Uuid::new_v4();
+        sqlx::query("INSERT INTO conversations(id,mode,scope,title,created_by,promoted_by,promoted_at) VALUES ($1,'work','group',$2,$3,$3,now())")
+            .bind(id).bind(title.trim()).bind(owner).execute(&mut *tx).await?;
+        for participant in [owner, agent] {
+            sqlx::query("INSERT INTO conversation_participants(conversation_id,profile_id,invited_by) VALUES ($1,$2,$3)")
+                .bind(id).bind(participant).bind(owner).execute(&mut *tx).await?;
+        }
+        sqlx::query("INSERT INTO conversation_agent_grants(conversation_id,agent_profile_id,granted_by,context_from_sequence) VALUES ($1,$2,$3,1)")
+            .bind(id).bind(agent).bind(owner).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO agent_session_chats(agent_profile_id,installation_key,thread_id,conversation_id) VALUES ($1,$2,$3,$4)")
+            .bind(agent).bind(installation).bind(thread).bind(id).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(id)
+    }
+
     pub async fn heartbeat_agent_installation(
         &self,
         agent_profile_id: Uuid,
@@ -1743,6 +1803,7 @@ impl PgSocialStore {
     ) -> Result<Conversation, SocialError> {
         let mut tx = self.pool.begin().await?;
         require_participant(&mut tx, conversation_id, actor).await?;
+        reject_session_membership_change(&mut tx, conversation_id).await?;
         if require_identity(&mut tx, agent).await? != IdentityKind::Agent {
             return Err(SocialError::Invalid("summoned profile is not an agent"));
         }
@@ -1813,6 +1874,7 @@ impl PgSocialStore {
     ) -> Result<Conversation, SocialError> {
         let mut tx = self.pool.begin().await?;
         require_participant(&mut tx, conversation_id, actor).await?;
+        reject_session_membership_change(&mut tx, conversation_id).await?;
         if require_identity(&mut tx, profile_id).await? == IdentityKind::Agent {
             return Err(SocialError::Invalid(
                 "add agents through the summon endpoint",
@@ -2465,13 +2527,45 @@ async fn emit_agent_event(
     kind: &str,
     _subject: Uuid,
     recipient: Uuid,
-    payload: serde_json::Value,
+    mut payload: serde_json::Value,
 ) -> Result<(), SocialError> {
+    if let Some(conversation) = payload
+        .get("conversation_id")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|id| Uuid::parse_str(id).ok())
+    {
+        let binding = sqlx::query("SELECT installation_key,thread_id FROM agent_session_chats WHERE conversation_id=$1 AND agent_profile_id=$2")
+            .bind(conversation).bind(recipient).fetch_optional(&mut **tx).await?;
+        if let Some(binding) = binding {
+            payload["target_installation"] =
+                serde_json::json!(binding.try_get::<String, _>("installation_key")?);
+            payload["codex_thread_id"] =
+                serde_json::json!(binding.try_get::<String, _>("thread_id")?);
+        }
+    }
     let event_id: Option<i64> = sqlx::query_scalar("INSERT INTO feed_events (kind,subject_id,recipient_profile_id,hashtags,payload) VALUES ($1,$2,$3,'{}',$4) ON CONFLICT (kind,subject_id) DO NOTHING RETURNING id")
         .bind(kind).bind(Uuid::new_v4()).bind(recipient).bind(payload).fetch_optional(&mut **tx).await?;
     if let Some(event_id) = event_id {
         sqlx::query("INSERT INTO webhook_deliveries (id,subscription_id,event_id) SELECT gen_random_uuid(),id,$1 FROM feed_subscriptions WHERE active AND delivery='webhook' AND kind='agent_inbox' AND profile_id=$2 ON CONFLICT DO NOTHING")
             .bind(event_id).bind(recipient).execute(&mut **tx).await?;
+    }
+    Ok(())
+}
+
+async fn reject_session_membership_change(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    conversation: Uuid,
+) -> Result<(), SocialError> {
+    let bound: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM agent_session_chats WHERE conversation_id=$1)",
+    )
+    .bind(conversation)
+    .fetch_one(&mut **tx)
+    .await?;
+    if bound {
+        return Err(SocialError::Invalid(
+            "connected Codex sessions are owner-only; use a separate group chat",
+        ));
     }
     Ok(())
 }

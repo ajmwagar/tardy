@@ -6,6 +6,108 @@ use uuid::Uuid;
 static DATABASE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[tokio::test]
+async fn connected_codex_sessions_are_distinct_idempotent_and_owner_only() {
+    let _guard = DATABASE_TEST_LOCK.lock().unwrap();
+    let Some((pool, store)) = setup().await else {
+        return;
+    };
+    let owner = Uuid::new_v4();
+    let human = Uuid::new_v4();
+    let agent = Uuid::new_v4();
+    let stranger = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO durable_accounts(id,email,kind,temporary) VALUES ($1,$2,'human',false)",
+    )
+    .bind(owner)
+    .bind(format!("sessions-{owner}@example.test"))
+    .execute(&pool)
+    .await
+    .unwrap();
+    store
+        .register_identity(
+            owner,
+            human,
+            "sessions-owner",
+            IdentityKind::Human,
+            "Owner",
+            "",
+        )
+        .await
+        .unwrap();
+    store
+        .register_identity(
+            owner,
+            agent,
+            "sessions-agent",
+            IdentityKind::Agent,
+            "Agent",
+            "",
+        )
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO profile_ownership(owner_account_id,profile_id) VALUES ($1,$2)")
+        .bind(owner)
+        .bind(agent)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let one = store
+        .connect_agent_session(agent, "studio", "thread-one", "Project one")
+        .await
+        .unwrap();
+    let two = store
+        .connect_agent_session(agent, "studio", "thread-two", "Project two")
+        .await
+        .unwrap();
+    assert_ne!(one, two);
+    assert_eq!(
+        one,
+        store
+            .connect_agent_session(agent, "studio", "thread-one", "Renamed")
+            .await
+            .unwrap()
+    );
+    let chat = store
+        .conversations(human)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|chat| chat.id == one)
+        .unwrap();
+    assert_eq!(chat.title.as_deref(), Some("Project one"));
+    assert_eq!(chat.participants.len(), 2);
+    assert!(store.conversations(stranger).await.unwrap().is_empty());
+    assert!(matches!(
+        store.messages(stranger, one, 0, 20).await,
+        Err(SocialError::Forbidden)
+    ));
+    store
+        .send_message(human, one, "Please continue", None, &[])
+        .await
+        .unwrap();
+    let event: serde_json::Value = sqlx::query_scalar("SELECT payload FROM feed_events WHERE recipient_profile_id=$1 AND payload->>'conversation_id'=$2 ORDER BY id DESC LIMIT 1")
+        .bind(agent).bind(one.to_string()).fetch_one(&pool).await.unwrap();
+    assert_eq!(event["target_installation"], "studio");
+    assert_eq!(event["codex_thread_id"], "thread-one");
+    assert!(matches!(
+        store.add_participant(human, one, stranger).await,
+        Err(SocialError::Invalid(_))
+    ));
+    assert!(matches!(
+        store
+            .connect_agent_session(stranger, "studio", "thread-one", "Bad")
+            .await,
+        Err(SocialError::Forbidden)
+    ));
+    assert!(matches!(
+        store
+            .connect_agent_session(agent, "studio", "", "Bad")
+            .await,
+        Err(SocialError::Invalid(_))
+    ));
+}
+
+#[tokio::test]
 async fn agent_souls_are_versioned_and_installations_age_from_presence() {
     let _guard = DATABASE_TEST_LOCK.lock().unwrap();
     let Some((pool, store)) = setup().await else {

@@ -276,6 +276,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             put(heartbeat_agent_installation),
         )
         .route(
+            "/v1/agents/{id}/installations/{installation_key}/sessions",
+            post(connect_agent_session),
+        )
+        .route(
             "/v1/mcp-bridges",
             get(list_mcp_bridges).post(register_mcp_bridge),
         )
@@ -1025,6 +1029,36 @@ async fn get_agent_installations(
     Ok(Json(
         social_store(&state)?.agent_installations(owner, id).await?,
     ))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct ConnectAgentSession {
+    thread_id: String,
+    title: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct ConnectedAgentSession {
+    conversation_id: Uuid,
+}
+
+async fn connect_agent_session(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((id, installation)): Path<(Uuid, String)>,
+    Json(body): Json<ConnectAgentSession>,
+) -> Result<Json<ConnectedAgentSession>, ApiError> {
+    if authenticated_actor(&state, &headers).await? != id {
+        return Err(ApiError::forbidden(
+            "sessions may connect only their own agent",
+        ));
+    }
+    let conversation = social_store(&state)?
+        .connect_agent_session(id, &installation, &body.thread_id, &body.title)
+        .await?;
+    Ok(Json(ConnectedAgentSession {
+        conversation_id: conversation,
+    }))
 }
 
 async fn heartbeat_agent_installation(
