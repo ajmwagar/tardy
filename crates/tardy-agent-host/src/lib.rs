@@ -57,6 +57,12 @@ pub struct HostData {
     pub queue: VecDeque<QueuedEvent>,
     #[serde(default)]
     pub pending_replies: BTreeMap<String, PendingReply>,
+    /// Persisted before touching the runtime. Unknown outcomes must never be replayed.
+    #[serde(default)]
+    pub dispatched_deliveries: BTreeSet<String>,
+    /// Persisted immediately on runtime completion, before upload/stream finalization.
+    #[serde(default)]
+    pub completed_runs: BTreeMap<String, RuntimeResult>,
     #[serde(default)]
     pub paused_conversations: BTreeSet<String>,
     #[serde(default)]
@@ -69,6 +75,8 @@ pub struct HostData {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct PendingReply {
+    #[serde(default)]
+    pub request_id: Option<String>,
     pub conversation_id: String,
     pub body: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -81,6 +89,22 @@ pub struct PendingReply {
     /// host, not the model, performs the deterministic private publish after replying.
     #[serde(default)]
     pub publish_tardy: bool,
+}
+
+pub fn delivery_request_id(delivery: &str) -> String {
+    use sha2::Digest;
+    let digest = Sha256::digest(delivery.as_bytes());
+    let mut bytes = [0; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    uuid::Uuid::from_bytes(bytes).to_string()
+}
+
+impl HostData {
+    pub fn needs_dispatch_recovery(&self, delivery: &str) -> bool {
+        self.dispatched_deliveries.contains(delivery)
+            && !self.completed_runs.contains_key(delivery)
+            && !self.pending_replies.contains_key(delivery)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -500,10 +524,18 @@ impl RuntimeKind {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RuntimeResult {
     /// Runtime-qualified durable session reference. Legacy unqualified values are Codex.
     pub session: String,
     pub reply: String,
+}
+
+/// Opaque stable identity across stream retries, unique across threads/turns/requests.
+fn approval_activity_id(thread: &str, turn: &str, request: &Value) -> String {
+    use sha2::Digest;
+    let bytes = serde_json::to_vec(&(thread, turn, request)).expect("JSON tuple");
+    format!("approval:{}", hex::encode(Sha256::digest(bytes)))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -1116,7 +1148,11 @@ impl CodexRunner {
                     if let Some(progress) = &progress {
                         let _ = progress
                             .send(RuntimeEvent::Activity(RuntimeActivity {
-                                id: "runtime-approval".into(),
+                                id: approval_activity_id(
+                                    active_thread.as_deref().unwrap_or_default(),
+                                    expected_turn.as_deref().unwrap_or_default(),
+                                    message.get("id").unwrap_or(&Value::Null),
+                                ),
                                 kind: "approval".into(),
                                 title: "Waiting for approval in Codex".into(),
                                 phase: "running".into(),
@@ -1342,6 +1378,49 @@ pub fn activation_prompt(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ambiguous_dispatch_is_not_reexecuted_but_completed_work_is_retryable() {
+        let mut state = HostData::default();
+        assert!(!state.needs_dispatch_recovery("delivery"));
+        state.dispatched_deliveries.insert("delivery".into());
+        assert!(state.needs_dispatch_recovery("delivery"));
+        let recovered: HostData =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        assert!(recovered.needs_dispatch_recovery("delivery"));
+        state.completed_runs.insert(
+            "delivery".into(),
+            RuntimeResult {
+                session: "codex:original".into(),
+                reply: "Finished".into(),
+            },
+        );
+        assert!(!state.needs_dispatch_recovery("delivery"));
+        let recovered: HostData =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        assert_eq!(recovered.completed_runs["delivery"].reply, "Finished");
+    }
+
+    #[test]
+    fn approval_ids_are_stable_opaque_and_scoped_to_turn() {
+        let id = approval_activity_id("private-thread", "turn-one", &serde_json::json!(42));
+        assert_eq!(
+            id,
+            approval_activity_id("private-thread", "turn-one", &serde_json::json!(42))
+        );
+        assert_ne!(
+            id,
+            approval_activity_id("private-thread", "turn-two", &serde_json::json!(42))
+        );
+        assert_ne!(
+            id,
+            approval_activity_id("other-thread", "turn-one", &serde_json::json!(42))
+        );
+        assert!(!id.contains("private-thread"));
+        assert!(id.len() < 200);
+        assert_eq!(delivery_request_id("one"), delivery_request_id("one"));
+        assert_ne!(delivery_request_id("one"), delivery_request_id("two"));
+        assert!(uuid::Uuid::parse_str(&delivery_request_id("one")).is_ok());
+    }
     use super::*;
     use ooda::ScriptedClient;
 

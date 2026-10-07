@@ -16,9 +16,9 @@ use tardy_agent_host::{
     AgentCommand, AgentCredential, BoxError, CodexRunner, ConversationMessage, HostData,
     InboxEvent, OpenCodeRunner, PendingMedia, PendingReply, QueuedEvent, RuntimeActivity,
     RuntimeEvent, RuntimeKind, RuntimeRunner, Tapback, TapbackDecider, WorkActivation,
-    activation_prompt, dispatchable_deliveries, extract_image_directives, extract_manim_directives,
-    extract_mermaid_directives, extract_tardy_caption, load_json, obvious_presence_reply,
-    obvious_tapback, should_publish_tardy, store_json, verify_signature,
+    activation_prompt, delivery_request_id, dispatchable_deliveries, extract_image_directives,
+    extract_manim_directives, extract_mermaid_directives, extract_tardy_caption, load_json,
+    obvious_presence_reply, obvious_tapback, should_publish_tardy, store_json, verify_signature,
 };
 use tokio::sync::{Mutex, Notify};
 
@@ -496,6 +496,7 @@ async fn work_loop(app: App) {
                     }
                     let delivered = if let Some(body) = body {
                         let reply = PendingReply {
+                            request_id: Some(delivery_request_id(&queued.delivery_id)),
                             conversation_id: activation.conversation_id,
                             body,
                             media: Vec::new(),
@@ -518,12 +519,27 @@ async fn work_loop(app: App) {
             continue;
         }
 
-        let paused = { app.data.lock().await.paused_conversations.clone() };
+        let durable_queue = {
+            let data = app.data.lock().await;
+            // Outbox delivery is not execution; paused chats must still receive saved replies.
+            queued
+                .iter()
+                .filter(|queued| {
+                    data.pending_replies.contains_key(&queued.delivery_id)
+                        || WorkActivation::from_event(&queued.event).is_none_or(|activation| {
+                            !data
+                                .paused_conversations
+                                .contains(&activation.conversation_id)
+                        })
+                })
+                .cloned()
+                .collect()
+        };
         let active_keys = active.keys().cloned().collect();
-        let durable_queue = queued.iter().cloned().collect();
-        let selected = dispatchable_deliveries(&durable_queue, &active_keys, &paused, 4)
-            .into_iter()
-            .collect::<std::collections::BTreeSet<_>>();
+        let selected =
+            dispatchable_deliveries(&durable_queue, &active_keys, &Default::default(), 4)
+                .into_iter()
+                .collect::<std::collections::BTreeSet<_>>();
         for queued in queued {
             if !selected.contains(&queued.delivery_id) {
                 continue;
@@ -576,6 +592,8 @@ async fn finish_delivery(app: &App, queued: &QueuedEvent) -> Result<(), BoxError
     data.queue
         .retain(|candidate| candidate.delivery_id != queued.delivery_id);
     data.pending_replies.remove(&queued.delivery_id);
+    data.dispatched_deliveries.remove(&queued.delivery_id);
+    data.completed_runs.remove(&queued.delivery_id);
     data.processed_deliveries.insert(queued.delivery_id.clone());
     while data.processed_deliveries.len() > 2_000 {
         if let Some(first) = data.processed_deliveries.first().cloned() {
@@ -616,20 +634,24 @@ async fn run_agent_command(
             )))
         }
         AgentCommand::Stop => {
-            if let Some(work) = active.remove(key) {
-                work.abort.abort();
-                finish_delivery(app, &work.queued).await?;
-            }
             let shared = app.data.lock().await.sessions.get(key)
                 .and_then(|id| id.strip_prefix("codex:shared:")).map(str::to_owned);
             if let Some(thread) = shared {
                 tardy_agent_host::codex_sessions::interrupt(&thread).await?;
+            }
+            // Do not discard active control state before native interruption succeeds.
+            if let Some(work) = active.remove(key) {
+                work.abort.abort();
+                finish_delivery(app, &work.queued).await?;
             }
             let mut data = app.data.lock().await;
             data.paused_conversations.insert(conversation.clone());
             store_json(&app.data_path, &*data).await?;
             drop(data);
             let _ = set_typing(app, conversation, false).await;
+            if let Err(error) = clear_draft(app, conversation).await {
+                tracing::warn!(%error, "native work stopped but stream cleanup failed");
+            }
             Ok(Some("Stopped and paused this conversation. Send /resume when you want me to continue.".into()))
         }
         AgentCommand::Resume => {
@@ -826,10 +848,28 @@ async fn process_one(app: &App, queued: &QueuedEvent) -> Result<(), BoxError> {
     if !activation.legacy_dm && !activation.message_id.is_empty() {
         acknowledge(app, &activation).await?;
     }
+    {
+        let mut data = app.data.lock().await;
+        if data.needs_dispatch_recovery(&queued.delivery_id) {
+            // A crash or runtime transport error can happen after turn/start was accepted.
+            // At-least-once inbox delivery must not turn into at-least-once execution.
+            data.paused_conversations
+                .insert(activation.conversation_id.clone());
+            data.pending_replies.insert(queued.delivery_id.clone(), PendingReply {
+                request_id: Some(delivery_request_id(&queued.delivery_id)),
+                conversation_id: activation.conversation_id.clone(),
+                body: "I lost confirmation from the coding session. Work may still be running; I have paused this chat rather than repeat your request. Check the original session, then use /resume and send a new instruction.".into(),
+                media: Vec::new(), legacy_dm: activation.legacy_dm,
+                context_cursor: None, publish_tardy: false,
+            });
+            store_json(&app.data_path, &*data).await?;
+        }
+    }
     if let Some(body) = obvious_presence_reply(&activation.body) {
         return send_reply(
             app,
             &PendingReply {
+                request_id: Some(delivery_request_id(&queued.delivery_id)),
                 conversation_id: activation.conversation_id,
                 body: body.to_owned(),
                 media: Vec::new(),
@@ -898,7 +938,8 @@ async fn process_one(app: &App, queued: &QueuedEvent) -> Result<(), BoxError> {
                 .last()
                 .map(|message| message.sequence)
                 .or(activation.sequence);
-            let (progress, forwarder) = if activation.legacy_dm {
+            let cached_run = { app.data.lock().await.completed_runs.get(&queued.delivery_id).cloned() };
+            let (progress, forwarder) = if activation.legacy_dm || cached_run.is_some() {
                 (None, None)
             } else {
                 let (sender, receiver) = tokio::sync::mpsc::channel(64);
@@ -921,14 +962,22 @@ async fn process_one(app: &App, queued: &QueuedEvent) -> Result<(), BoxError> {
                     app.credential.handle, private_soul
                 )
             };
-            let dispatch_result = app
-                .runner
-                .dispatch(
-                    thread_id.as_deref(),
-                    &prompt,
-                    progress,
-                )
-                .await;
+            let dispatch_result = if let Some(result) = cached_run {
+                Ok(result)
+            } else {
+                {
+                    let mut data = app.data.lock().await;
+                    data.dispatched_deliveries.insert(queued.delivery_id.clone());
+                    store_json(&app.data_path, &*data).await?;
+                }
+                let result = app.runner.dispatch(thread_id.as_deref(), &prompt, progress).await;
+                if let Ok(completed) = &result {
+                    let mut data = app.data.lock().await;
+                    data.completed_runs.insert(queued.delivery_id.clone(), completed.clone());
+                    store_json(&app.data_path, &*data).await?;
+                }
+                result
+            };
             if let Some(forwarder) = forwarder {
                 forwarder.await??;
             }
@@ -944,6 +993,7 @@ async fn process_one(app: &App, queued: &QueuedEvent) -> Result<(), BoxError> {
             let media = upload_images(app, &directives).await?;
             let publish_tardy = should_publish_tardy(tardy_caption.as_deref(), &media);
             let pending = PendingReply {
+                request_id: Some(delivery_request_id(&queued.delivery_id)),
                 conversation_id: activation.conversation_id.clone(),
                 body,
                 media,
@@ -1265,7 +1315,7 @@ async fn send_reply(app: &App, reply: &PendingReply) -> Result<(), BoxError> {
             .post(route)
             .bearer_auth(&app.credential.api_token)
             .header("x-tardy-profile-id", &app.credential.profile_id)
-            .json(&json!({"body": reply.body, "media": reply.media})),
+            .json(&json!({"body": reply.body, "media": reply.media, "client_request_id":reply.request_id})),
     )
     .await
 }
