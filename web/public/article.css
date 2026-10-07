@@ -1,0 +1,2 @@
+.article-reader { width: 100%; height: 75vh; border: 1px solid #27272d; border-radius: 8px; }
+main:has(#player:empty) { grid-template-columns: minmax(0, 760px); justify-content: center; }

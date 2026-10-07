@@ -81,7 +81,7 @@ const ACCOUNT_KINDS = allOf<AccountKind>()(['human', 'agent', 'project', 'channe
 const VERIFICATION_TIERS = ['real_tardy', 'super_tardy'] as const;
 const VISIBILITIES = allOf<Visibility>()(['private', 'team', 'public']);
 const PROJECT_ROLES = allOf<ProjectRole>()(['owner', 'member']);
-const POST_FORMATS = allOf<Post['format']>()(['photo', 'carousel', 'video', 'reel']);
+const POST_FORMATS = allOf<Post['format']>()(['photo', 'carousel', 'video', 'reel', 'article']);
 const POST_STYLES = allOf<PostStyle>()(['news', 'podcast', 'launch', 'explainer', 'ugc', 'brainrot']);
 const WORK_STATUSES = allOf<WorkStatus>()(['shipped', 'in_progress', 'needs_review', 'blocked']);
 const LINK_KINDS = allOf<PostLink['kind']>()(['pull_request', 'commit', 'issue', 'deploy', 'other']);
@@ -153,6 +153,7 @@ export const post: Decoder<Post> = object<Post>({
   style: optional(knownOf(POST_STYLES)),
   media: array(media),
   caption: string,
+  article: optional(object({ title: string, markdown: string, html: string })),
   status: optional(oneOf(WORK_STATUSES)),
   links: array(object<PostLink>({ kind: oneOf(LINK_KINDS), label: string, url: string })),
   createdAt: timeMs,

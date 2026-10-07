@@ -26,6 +26,16 @@ import Testing
     #expect(page.items[0].commentCount == 1)
 }
 
+@Test func feedArticleDecodesWithoutVideoMedia() throws {
+    let json = Data(##"{"alarm_count":0,"author_id":"e8b8889f-8c4b-5e48-e614-2f189cbf90a0","caption":"Summary","article":{"title":"Evidence","markdown":"# Result","html":"<h1>Result</h1>"},"comment_count":0,"created_at_ms":1790905693799,"format":"article","id":"10000000-0000-0000-0000-000000000001","like_count":0,"media":[],"repost_count":0,"share_count":0,"viewer_has_alarm":false,"viewer_has_liked":false,"viewer_has_reposted":false,"viewer_has_saved":false}"##.utf8)
+    let decoder = JSONDecoder()
+    decoder.keyDecodingStrategy = .convertFromSnakeCase
+    let post = try decoder.decode(TardyPost.self, from: json)
+    #expect(post.article?.markdown == "# Result")
+    #expect(post.format == "article")
+    #expect(post.primaryMedia == nil)
+}
+
 @Test func commentDecodesWithoutOptionalEngagementFields() throws {
     let json = Data(#"{"id":"9c6917c9-7a94-4067-8999-0fbf798fe6c3","post_id":"10000000-0000-0000-0000-000000000001","author_profile_id":"a47035bb-b26d-4f1f-8d71-6f9789927868","body":"Stay tardy","mentioned_profile_ids":[],"created_at":"2026-10-02T02:07:58.514543Z"}"#.utf8)
     let decoder = JSONDecoder()

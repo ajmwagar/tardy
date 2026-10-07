@@ -203,6 +203,10 @@ private struct ReelThumbnail: View {
             .frame(width: 62, height: 84).clipped().clipShape(RoundedRectangle(cornerRadius: 8))
             VStack(alignment: .leading, spacing: 5) {
                 Text(model.accounts[post.authorId]?.displayName ?? "Tardy").font(.caption.bold()).lineLimit(1)
+                if let article = post.article {
+                    Label("ARTICLE", systemImage: "doc.text").font(.caption.bold()).foregroundStyle(Brand.yellow)
+                    Text(article.title).font(.headline)
+                }
                 Text(post.caption).font(.caption).foregroundStyle(Brand.muted).lineLimit(3)
                 Label("\(post.commentCount)", systemImage: "bubble.left").font(.caption2).foregroundStyle(Brand.muted)
             }
@@ -454,6 +458,10 @@ private struct PostInspector: View {
                         Button { model.openProfile(author.id) } label: {
                             HStack { Avatar(account: author, size: 38); VStack(alignment: .leading) { Text(author.displayName).bold(); Text("@\(author.handle)").font(.caption).foregroundStyle(Brand.muted) }; Spacer(); Image(systemName: "chevron.right") }
                         }.buttonStyle(.plain)
+                    }
+                    if let article = post.article {
+                        Text(article.title).font(.title.bold()).textSelection(.enabled)
+                        RichMarkdownView(source: article.markdown)
                     }
                     Text("CAPTION").font(.caption.bold()).foregroundStyle(Brand.yellow)
                     Text(.init(post.caption))

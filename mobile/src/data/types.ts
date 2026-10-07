@@ -129,7 +129,8 @@ export type Post = {
    */
   sound?: PostSound;
   /** `reel` posts are vertical video and also appear in the Reels tab. */
-  format: 'photo' | 'carousel' | 'video' | 'reel';
+  format: 'photo' | 'carousel' | 'video' | 'reel' | 'article';
+  article?: { title: string; markdown: string; html: string };
   /**
    * The content format the server's renderer used to make this post's video, which a
    * client may label ("News", "Podcast"). Absent for plain status posts. Independent of

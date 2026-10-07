@@ -16,6 +16,13 @@ import {
 import * as W from '../wire';
 
 describe('case conversion', () => {
+  it('decodes a feed article without requiring video media', () => {
+    const article = { title: 'Evidence', markdown: '# Result', html: '<h1>Result</h1>' };
+    const post = W.post({id:'article-1', author_id:'author-1', format:'article', article, media:[], caption:'Summary',links:[],created_at_ms:0,like_count:0,comment_count:0,share_count:0,alarm_count:0,repost_count:0,viewer_has_liked:false,viewer_has_alarm:false,viewer_has_reposted:false,viewer_has_saved:false}, 'post');
+    expect(post.format).toBe('article');
+    expect(post.article).toEqual(article);
+    expect(post.media).toEqual([]);
+  });
   it('snake-cases keys and drops undefined values', () => {
     expect(toSnake('viewerHasLiked')).toBe('viewer_has_liked');
     expect(snakeKeys({ codeVerifier: 'v', redirectUri: 'u', fullName: undefined })).toEqual({ code_verifier: 'v', redirect_uri: 'u' });
@@ -110,7 +117,7 @@ describe('wire types', () => {
   });
 
   it('rejects an unknown closed-set value', () => {
-    expect(() => W.post({ ...wirePost, format: 'hologram' }, 'r')).toThrow('r.format: expected one of photo | carousel | video | reel, got "hologram"');
+    expect(() => W.post({ ...wirePost, format: 'hologram' }, 'r')).toThrow('r.format: expected one of photo | carousel | video | reel | article, got "hologram"');
   });
 
   it('maps the social ConversationMessage names onto Message', () => {

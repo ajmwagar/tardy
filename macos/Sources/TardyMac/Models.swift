@@ -82,12 +82,19 @@ struct PostPage: Codable, Sendable {
     let nextCursor: String?
 }
 
+struct TardyArticle: Codable, Hashable, Sendable {
+    let title: String
+    let markdown: String
+    let html: String
+}
+
 struct TardyPost: Codable, Identifiable, Hashable, Sendable {
     let id: UUID
     let authorId: UUID
     let format: String
     let media: [PostMedia]
     let caption: String
+    var article: TardyArticle? = nil
     let createdAtMs: UInt64
     var likeCount: Int
     var commentCount: Int

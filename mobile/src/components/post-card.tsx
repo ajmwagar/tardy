@@ -4,6 +4,7 @@ import { memo, useState } from 'react';
 import { ActionSheetIOS, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type { Post } from '@/data/types';
+import { markdownBlocks } from '@/messages/attachment-format';
 import {
   logEngagement,
   toggleAlarm,
@@ -24,6 +25,17 @@ import { Avatar, Icon, IconButton, NameLine, PressableScale, Reaction, StatusPil
 
 /** Cards float with a gutter so the feed reads as a stack of updates, not a photo wall. */
 export const CARD_GUTTER = layout.cardGutter;
+
+function ArticleBody({ article }: { article: NonNullable<Post['article']> }) {
+  const [expanded, setExpanded] = useState(false);
+  const source = expanded ? article.markdown : article.markdown.slice(0, 500);
+  return <View style={{ padding: 16, gap: 10 }}>
+    <Text style={{ color: colors.primary, fontSize: 12, fontWeight: '700' }}>ARTICLE</Text>
+    <Text selectable style={{ color: colors.text, fontSize: 24, fontWeight: '700' }}>{article.title}</Text>
+    {markdownBlocks(source).map((block, index) => <Text key={index} selectable style={{ color: colors.text, fontSize: block.kind === 'heading' ? 20 : 15, lineHeight: 24, fontWeight: block.kind === 'heading' ? '700' : '400', fontFamily: block.kind === 'code' ? 'monospace' : undefined }}>{block.kind === 'bullet' ? '• ' : ''}{block.text}</Text>)}
+    <Pressable onPress={() => setExpanded(!expanded)} accessibilityRole="button" accessibilityLabel={expanded ? 'Collapse article' : 'Read full article'}><Text style={{ color: colors.primary, fontWeight: '700' }}>{expanded ? 'Show less' : 'Read full article →'}</Text></Pressable>
+  </View>;
+}
 
 const LINK_ICONS = {
   pull_request: 'arrow.triangle.pull',
@@ -127,7 +139,8 @@ export const PostCard = memo(function PostCard({
         <IconButton icon="ellipsis" size={18} label="More options" onPress={more} style={styles.moreButton} />
       </View>
 
-      <View style={styles.media}>
+      {post.article ? <ArticleBody article={post.article} /> : null}
+      {post.media.length ? <View style={styles.media}>
         <MediaCarousel
           postId={post.id}
           media={post.media}
@@ -136,7 +149,7 @@ export const PostCard = memo(function PostCard({
           onIndexChange={setIndex}
           onSingleTap={post.format === 'reel' ? openReel : undefined}
         />
-      </View>
+      </View> : null}
       <CarouselDots count={post.media.length} index={index} />
 
       <View style={styles.actions}>

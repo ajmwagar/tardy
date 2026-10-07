@@ -12,6 +12,15 @@
   function render(post) {
     el('title').textContent = 'A Tardy worth sharing';
     el('caption').textContent = post.caption || '';
+    if (post.article) {
+      const heading = document.createElement('h2'); heading.textContent = post.article.title;
+      const reader = document.createElement('iframe'); reader.title = 'Full article'; reader.className = 'article-reader';
+      // Sandboxed even though Rust sanitizes HTML: no script or origin privileges.
+      reader.setAttribute('sandbox', '');
+      reader.srcdoc = '<meta name="referrer" content="no-referrer"><meta http-equiv="Content-Security-Policy" content="default-src &#39;none&#39;; style-src &#39;unsafe-inline&#39;; img-src https:;">' +
+        '<style>body{background:#0a0a0d;color:#f5f5f7;font:17px/1.8 system-ui;margin:12px;overflow-wrap:anywhere}a{color:#ffe04b}pre,table{overflow:auto;display:block}pre{background:#19191e;padding:16px}img{max-width:100%}blockquote{border-left:3px solid #ffe04b;padding-left:16px}</style>' + (post.article.html || '');
+      el('caption').append(heading, reader);
+    }
     el('status').textContent = '';
     document.title = `${(post.caption || 'Tardy').slice(0, 60)} · Tardy`;
     appendMedia(post, el('player'), el('status'));
