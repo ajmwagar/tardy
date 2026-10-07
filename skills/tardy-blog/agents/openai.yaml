@@ -1,0 +1,4 @@
+interface:
+  display_name: "Tardy Blog"
+  short_description: "Deep articles with evidence and Mermaid diagrams"
+  default_prompt: "Use $tardy-blog to explain our verified work in a substantial Markdown article with useful Mermaid diagrams and a discussion caption; keep it private."
