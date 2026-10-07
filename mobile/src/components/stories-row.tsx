@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import { memo, useCallback, useMemo, useState } from 'react';
-import { ActionSheetIOS, FlatList, StyleSheet, Text, View } from 'react-native';
+import { ActionSheetIOS, Alert, FlatList, StyleSheet, Text, View } from 'react-native';
 
 import { openWebCheckout } from '@/config';
 import type { Story, StoryGroup } from '@/data/types';
@@ -71,7 +71,7 @@ function YourStory({ group }: { group: StoryGroup | undefined }) {
     <PressableScale
       style={styles.bubble}
       scaleTo={0.95}
-      onPress={group ? () => openViewer('me') : undefined}
+      onPress={group ? () => openViewer('me') : () => Alert.alert('No stories yet', 'You have no active stories. Creating a story in the app is not available yet.')}
       onLongPress={openYourStoryMenu}
       accessibilityRole="button"
       accessibilityLabel={isBoosted(ring) ? `Your story, ${BOOSTED_LABEL}` : 'Your story'}

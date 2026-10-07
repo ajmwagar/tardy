@@ -1,4 +1,5 @@
 import { Image } from 'expo-image';
+import * as Clipboard from 'expo-clipboard';
 import { router, Stack, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActionSheetIOS, Alert, Animated, AppState, Easing, FlatList, KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -22,6 +23,8 @@ import { isWork, promotionNotice } from '@/share/sections';
 import { useSharedLink } from '@/share/use-shared-link';
 import { isGroup, othersIn, threadLabel } from '@/share/thread-label';
 import { parseTardyUrl } from '@/share/links';
+import { completeMention } from '@/share/mentions';
+import { chatMentionSuggestions } from '@/messages/mentions';
 import { api, cacheAccounts, ensureAccounts, refreshUnread, reportError, useAccount, useStore } from '@/state/store';
 import { colors, IMAGE_TRANSITION_MS, radius, timeAgo } from '@/theme';
 
@@ -278,12 +281,17 @@ export default function ThreadScreen() {
   const attachments = useMemo(() => conversationAttachments(rows ?? []), [rows]);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
+  const composerRef = useRef<TextInput>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const [typingIds, setTypingIds] = useState<string[]>([]);
   const group = thread !== null && isGroup(thread);
   const otherAccount = useAccount(thread ? othersIn(thread, meId)[0] : undefined);
   const accounts = useStore((s) => s.accounts);
   const hasAgent = thread?.participantIds.some((id) => accounts.get(id)?.kind === 'agent') ?? false;
   const commands = useMemo(() => hasAgent ? commandSuggestions(draft) : [], [draft, hasAgent]);
+  // Mentions target existing chat members; autocomplete must not silently grant a
+  // stranger or agent access to a private conversation.
+  const mentions = chatMentionSuggestions(draft, thread?.participantIds ?? [], meId, accounts);
   const groupLabel = thread && group ? threadLabel(thread, meId, (id) => accounts.get(id)?.handle) : null;
   const lastReadId = useRef<string | null>(null);
 
@@ -574,6 +582,10 @@ export default function ThreadScreen() {
             anchor={picker?.anchor ?? null}
             current={picker && meId ? reactionOf(picker.row.reactions, meId) : null}
             onClose={() => setPicker(null)}
+            actions={picker ? [
+              { label: 'Copy', onPress: () => { const text = picker.row.text; setPicker(null); haptic.selection(); void Clipboard.setStringAsync(text).catch((e: unknown) => reportError(`Couldn't copy: ${String(e)}`)); } },
+              { label: 'Quote reply', onPress: () => { const row = picker.row; setPicker(null); setDraft(`> @${accounts.get(row.senderId)?.handle ?? 'someone'}: ${row.text.replace(/\n/g, '\n> ')}\n\n`); composerRef.current?.focus(); haptic.selection(); } },
+            ] : []}
             onPick={(kind) => {
               if (picker) toggleReaction(picker.row, kind);
               setPicker(null);
@@ -601,12 +613,17 @@ export default function ThreadScreen() {
               }
             }}
             inverted
+            refreshing={refreshing}
+            onRefresh={() => { setRefreshing(true); cursor.current = 0; void sync().finally(() => setRefreshing(false)); }}
             keyExtractor={rowKey}
             renderItem={renderItem}
             contentContainerStyle={styles.list}
             keyboardDismissMode="interactive"
           />
           {typingIds.map((id) => <TypingRow key={id} profileId={id} />)}
+          {mentions.length > 0 ? <View style={styles.commandMenu} accessibilityRole="menu" accessibilityLabel="Mention chat members">
+            {mentions.map((account) => <Pressable key={account.id} style={styles.commandRow} accessibilityRole="menuitem" onPress={() => { setDraft(completeMention(draft, account.handle)); haptic.selection(); }}><Avatar account={account} size={28} /><Text style={styles.commandTitle}>@{account.handle}</Text></Pressable>)}
+          </View> : null}
           {commands.length > 0 ? (
             <View style={styles.commandMenu} accessibilityRole="menu" accessibilityLabel="Agent commands">
               {commands.map((item, index) => (
@@ -628,14 +645,16 @@ export default function ThreadScreen() {
           ) : null}
           <View style={[styles.composer, { paddingBottom: Math.max(insets.bottom, 10) }]}> 
             <TextInput
+              ref={composerRef}
               value={draft}
               onChangeText={setDraft}
               placeholder={groupLabel ? `Message ${groupLabel}…` : otherAccount ? `Message ${otherAccount.handle}…` : 'Message…'}
               placeholderTextColor={colors.textTertiary}
               style={styles.input}
               multiline
-              submitBehavior={commands.length > 0 ? 'submit' : 'newline'}
+              submitBehavior={commands.length > 0 || mentions.length > 0 ? 'submit' : 'newline'}
               onSubmitEditing={() => {
+                if (mentions[0]) { setDraft(completeMention(draft, mentions[0].handle)); return; }
                 const first = commands[0];
                 if (first) setDraft(acceptCommand(first.command));
               }}
