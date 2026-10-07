@@ -1,7 +1,8 @@
 # Lightweight web viewer
 
-`/t/POST_UUID` falls through the static host's `404.html`, which redirects to
-`/viewer.html?id=POST_UUID`. The viewer fetches `/v1/public/posts/{id}` anonymously,
+Use `/viewer.html?id=POST_UUID` for public share links. This is a real immutable
+site asset and does not depend on an undocumented static-host rewrite.
+The viewer fetches `/v1/public/posts/{id}` anonymously,
 plays video with native controls, shows swipeable image carousels, full captions,
 source links and author names, and offers system sharing/copy and Open in Tardy.
 No login, local token storage, autoplay audio, or HTML caption injection. Below the
@@ -25,6 +26,25 @@ viewer uses loopback API only on localhost/127.0.0.1; production uses
 Fab's existing `web/public` watch path publishes these assets through the normal
 site pipeline; the new API route needs its own deployment. No deployment was
 performed as part of this implementation.
+
+## Legacy short links and rollout
+
+`/t/POST_UUID` is still accepted by the app link parser. The bundled `404.html`
+can redirect it only on hosts that explicitly serve that fallback. Production
+Fab Sites' R2 object serving currently returns a plain 404 for a missing key;
+root `404.html` does not intercept nested paths. Neither the installed customer
+CLI nor the inspected site provider exposes a rewrite contract. Do not add raw
+Palisade routes, generate one HTML file per post, or assume `_redirects` works.
+Platform-owned managed rewrite support is needed to repair already-shared short
+links. Until then, newly generated mobile, host and website links use the viewer
+asset URL; the CLI already does so.
+
+Deploy the API private-chat access query before updating the agent host/mobile:
+it recognizes exact viewer and legacy URLs only for conversation participants.
+This does not make a private post anonymously readable. Roll the website through
+the existing Fab static pipeline, then verify a known public viewer URL (200),
+its anonymous API response, and the copied share URL. Explicitly record legacy
+`/t/` as unavailable until the platform rewrite is deployed and tested.
 
 Verification: `node --test web/viewer.test.cjs` and the PG17-backed
 `cargo test --test post_assets_pg` cover private/followers denial, public playback,

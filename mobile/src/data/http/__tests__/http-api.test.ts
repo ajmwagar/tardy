@@ -366,14 +366,14 @@ describe('HttpTardyApi: decoding', () => {
   });
 
   it('shares a tardy as a link to its URL, and reads it back as a tardy card', async () => {
-    const link = { id: 'l1', canonical_url: 'https://tardy.news/t/p9', provider: 'web', status: 'queued' };
-    const sent = wireMessage(3, 'https://tardy.news/t/p9', { sender_profile_id: 'acct-1', shared_link_id: 'l1' });
+    const link = { id: 'l1', canonical_url: 'https://tardy.news/viewer.html?id=p9', provider: 'web', status: 'queued' };
+    const sent = wireMessage(3, 'https://tardy.news/viewer.html?id=p9', { sender_profile_id: 'acct-1', shared_link_id: 'l1' });
     const { api, calls } = await signedInClient({ status: 201, body: link }, { status: 201, body: sent }, { status: 201, body: wireMessage(4, 'look') });
     const message = await api.sendMessage('t1', 'look', { sharedPostId: 'p9' });
     expect(message).toMatchObject({ text: '', sharedPost: { status: 'available', postId: 'p9' }, sharedLinkId: 'l1' });
     expect(calls.map((c) => [c.url.replace(BASE, '/'), c.body])).toEqual([
-      ['/v1/social/shared-links', { url: 'https://tardy.news/t/p9' }],
-      ['/v1/social/conversations/t1/messages', { body: 'https://tardy.news/t/p9', shared_link_id: 'l1' }],
+      ['/v1/social/shared-links', { url: 'https://tardy.news/viewer.html?id=p9' }],
+      ['/v1/social/conversations/t1/messages', { body: 'https://tardy.news/viewer.html?id=p9', shared_link_id: 'l1' }],
       ['/v1/social/conversations/t1/messages', { body: 'look' }],
     ]);
   });

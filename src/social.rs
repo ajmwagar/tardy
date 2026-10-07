@@ -729,7 +729,9 @@ impl PgSocialStore {
                           ON participant.conversation_id=m.conversation_id
                         JOIN shared_links shared ON shared.id=m.shared_link_id
                         WHERE participant.profile_id=$1
-                          AND shared.canonical_url=('https://tardy.news/t/' || p.id::text)
+                          AND shared.canonical_url IN (
+                              'https://tardy.news/t/' || p.id::text,
+                              'https://tardy.news/viewer.html?id=' || p.id::text)
                     ))",
         )
         .bind(viewer)

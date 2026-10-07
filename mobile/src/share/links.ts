@@ -7,12 +7,22 @@
 /** Where a tardy lives on the web. One source of truth for building and parsing it. */
 export const TARDY_WEB = 'https://tardy.news';
 
-export const tardyUrl = (postId: string) => `${TARDY_WEB}/t/${encodeURIComponent(postId)}`;
+export const tardyUrl = (postId: string) => `${TARDY_WEB}/viewer.html?id=${encodeURIComponent(postId)}`;
 
 /** The tardy a URL points at, or null. Accepts the canonical form (no `www.`, any query). */
 export function parseTardyUrl(url: string): string | null {
-  const match = /^https:\/\/tardy\.news\/t\/([^/?#]+)\/?(?:[?#].*)?$/.exec(url.trim());
-  return match ? decodeURIComponent(match[1]) : null;
+  try {
+    const parsed = new URL(url.trim());
+    if (parsed.origin !== TARDY_WEB || parsed.username || parsed.password) return null;
+    if (parsed.pathname === '/viewer.html') {
+      const ids = parsed.searchParams.getAll('id');
+      return ids.length === 1 && ids[0] ? ids[0] : null;
+    }
+    const match = /^\/t\/([^/]+)\/?$/.exec(parsed.pathname);
+    return match ? decodeURIComponent(match[1]) : null;
+  } catch {
+    return null;
+  }
 }
 
 const TRACKING = new Set(['fbclid', 'gclid', 'si']);

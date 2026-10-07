@@ -55,7 +55,8 @@ Known public post `29f8f3c7-7f97-4a77-bb35-673f873f4e46`:
 - `https://tardy.news/viewer.html?id={id}` responds 200;
 - `https://tardy.news/t/{id}` responds 404.
 
-Inspected owning Fab source (`crates/fab-sites/src/main.rs`): signed and HTTP-prefix
+Inspected owning Fab checkout at `46d8fc98b9fb06bb5092a9bb971cd2b2ec0238ef`
+(`crates/fab-sites/src/main.rs`, unchanged in that dirty checkout): signed and HTTP-prefix
 R2 object serving forwards missing keys as 404 without reading root `404.html`.
 Local-artifact fallback checks only the requested file's parent, also insufficient
 for the root fallback on `/t/{id}`. Installed customer CLI offers site reads only;
@@ -64,6 +65,13 @@ found. The repository fix therefore generates the deployed viewer asset URL for
 new mobile, host and web shares. Existing CLI output already uses this URL.
 Legacy short links still need a platform-managed rewrite/fallback capability;
 do not hand-edit Palisade or proliferate per-post site artifacts.
+
+Verification of the repository fix: eight web viewer tests and 70 mobile
+share/HTTP tests passed, mobile typecheck and lint passed, and Rust API/host
+`cargo check --locked` passed. A focused PostgreSQL17 test passed in the isolated
+`tardy_delivery_20261007` database, proving viewer and legacy private shares allow
+existing chat recipients while denying strangers and anonymous reads. No tests
+ran against production, and these local fixes are not deployed evidence.
 
 ## Authorized launch runbook boundary
 

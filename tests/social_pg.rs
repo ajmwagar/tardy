@@ -188,6 +188,62 @@ async fn connected_codex_sessions_are_distinct_idempotent_and_owner_only() {
 }
 
 #[tokio::test]
+async fn viewer_links_grant_only_existing_private_chat_recipients() {
+    let _guard = DATABASE_TEST_LOCK.lock().unwrap();
+    let Some((_pool, store)) = setup().await else {
+        return;
+    };
+    let author = Uuid::new_v4();
+    let recipient = Uuid::new_v4();
+    let stranger = Uuid::new_v4();
+    for (profile, handle) in [
+        (author, "link-author"),
+        (recipient, "link-recipient"),
+        (stranger, "link-stranger"),
+    ] {
+        store
+            .register_identity(
+                Uuid::new_v4(),
+                profile,
+                handle,
+                IdentityKind::Human,
+                handle,
+                "",
+            )
+            .await
+            .unwrap();
+    }
+    let conversation = store.create_conversation(author, recipient).await.unwrap();
+    for path in ["viewer.html?id=", "t/"] {
+        let post = store
+            .publish_post(
+                author,
+                Uuid::new_v4(),
+                "private",
+                None,
+                PostVisibility::Private,
+            )
+            .await
+            .unwrap();
+        assert!(store.app_post(Some(recipient), post.id).await.is_err());
+        let link = store
+            .add_shared_link(&format!("https://tardy.news/{path}{}", post.id))
+            .await
+            .unwrap();
+        store
+            .send_message(author, conversation.id, "For you", Some(link.id), &[])
+            .await
+            .unwrap();
+        assert_eq!(
+            store.app_post(Some(recipient), post.id).await.unwrap().id,
+            post.id
+        );
+        assert!(store.app_post(Some(stranger), post.id).await.is_err());
+        assert!(store.app_post(None, post.id).await.is_err());
+    }
+}
+
+#[tokio::test]
 async fn agent_souls_are_versioned_and_installations_age_from_presence() {
     let _guard = DATABASE_TEST_LOCK.lock().unwrap();
     let Some((pool, store)) = setup().await else {

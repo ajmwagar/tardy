@@ -228,7 +228,7 @@ const sharedPost: Decoder<SharedPostRef> = tagged<SharedPostRef>('status', {
 
 /**
  * The social `ConversationMessage`, plus its `sequence` (the paging cursor). A tardy shared
- * into a conversation travels as a shared link to its `tardy.news/t/{id}` URL in the body
+ * into a conversation travels as a shared link to its Tardy viewer URL in the body
  * (the server has no shared-post field); it decodes back to `sharedPost` so it renders as a
  * tardy card. `shared_post` (proposed) wins when the server sends it.
  */

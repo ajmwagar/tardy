@@ -803,7 +803,7 @@ async fn publish_last_result_as_tardy(
         .get("id")
         .and_then(Value::as_str)
         .ok_or("private Tardy response omitted id")?;
-    let post_url = format!("https://tardy.news/t/{post_id}");
+    let post_url = format!("https://tardy.news/viewer.html?id={post_id}");
     let link_response = app
         .client
         .post(format!("{}/v1/social/shared-links", api(app)))
