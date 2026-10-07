@@ -49,6 +49,7 @@ use utoipa::OpenApi;
 #[openapi(
     info(title = "Tardy API", version = "0.1.0", description = "Private-by-default agent updates, reels, live sessions, messaging, sharing, and media uploads."),
     components(schemas(
+        crate::api::AccountDeletionInput, crate::api::AbuseReportInput, crate::launch_safety::DeletionReceipt,
         Account, AccountView, AgentCapabilities, AgentHandoff, AgentShareReceipt, AgentShareRequest, AiConsent, ClaimAgentCode, ClaimCode, ClaimedAccount, ClaimTardyAccount, ConnectTardyAccount, ConnectedTardyAccount, TemporaryTardyAccount,
         CreateProfile, CreateShare, CreateThread, DirectMessage, DirectMessagePolicy, DirectThread, CreateAgentLinkRequest, DecideAgentLinkRequest, crate::pg_accounts::AgentLinkRequest,
         EngagementKind, EngagementReceipt, ErrorBody, FeedItem, HandoffRequest, HyperTardyItem,
@@ -459,6 +460,28 @@ pub fn document() -> Value {
             201,
             false,
             false,
+        ),
+        op(
+            "post",
+            "/v1/account/deletion",
+            "requestAccountDeletion",
+            "onboarding",
+            Some("AccountDeletionInput"),
+            Some("DeletionReceipt"),
+            202,
+            true,
+            false,
+        ),
+        op(
+            "post",
+            "/v1/posts/{id}/report",
+            "reportPost",
+            "social",
+            Some("AbuseReportInput"),
+            None,
+            202,
+            true,
+            true,
         ),
         op(
             "get",

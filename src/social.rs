@@ -373,6 +373,22 @@ impl PgSocialStore {
         Self { pool }
     }
 
+    pub async fn report_post(
+        &self,
+        actor: Uuid,
+        post: Uuid,
+        reason: &str,
+        details: &str,
+    ) -> Result<(), SocialError> {
+        if !crate::launch_safety::valid_report(reason, details) {
+            return Err(SocialError::Invalid("report reason or details"));
+        }
+        self.app_post(Some(actor), post).await?;
+        sqlx::query("INSERT INTO abuse_reports(id,reporter_profile_id,post_id,reason,details) VALUES($1,$2,$3,$4,$5) ON CONFLICT(reporter_profile_id,post_id) DO NOTHING")
+            .bind(Uuid::new_v4()).bind(actor).bind(post).bind(reason).bind(details).execute(&self.pool).await?;
+        Ok(())
+    }
+
     pub async fn record_engagements(
         &self,
         viewer: Uuid,

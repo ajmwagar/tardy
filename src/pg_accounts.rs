@@ -94,6 +94,13 @@ impl PgAccountStore {
         Ok(())
     }
 
+    pub async fn request_deletion(
+        &self,
+        account: Uuid,
+    ) -> Result<crate::launch_safety::DeletionReceipt, PgAccountError> {
+        Ok(crate::launch_safety::request_deletion(&self.pool, account).await?)
+    }
+
     pub async fn issue_human_claim(&self, now_ms: u64) -> Result<ClaimCode, PgAccountError> {
         let code = Uuid::new_v4().simple().to_string();
         let expires_at_ms = now_ms
@@ -344,12 +351,12 @@ impl PgAccountStore {
     pub async fn authenticate(&self, token: &str, now_ms: u64) -> Result<Uuid, PgAccountError> {
         let token_hash = hash(token);
         let now = timestamp(now_ms)?;
-        if let Some(account) = sqlx::query_scalar("SELECT account_id FROM auth_sessions WHERE token_hash=$1 AND revoked_at IS NULL AND expires_at>$2")
+        if let Some(account) = sqlx::query_scalar("SELECT account_id FROM auth_sessions s WHERE token_hash=$1 AND revoked_at IS NULL AND expires_at>$2 AND NOT EXISTS(SELECT 1 FROM account_deletion_requests d WHERE d.account_id=s.account_id)")
             .bind(&token_hash).bind(now).fetch_optional(&self.pool).await?
         {
             return Ok(account);
         }
-        sqlx::query_scalar("SELECT account_id FROM account_api_tokens WHERE token_hash=$1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>$2)")
+        sqlx::query_scalar("SELECT account_id FROM account_api_tokens s WHERE token_hash=$1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>$2) AND NOT EXISTS(SELECT 1 FROM account_deletion_requests d WHERE d.account_id=s.account_id)")
             .bind(token_hash).bind(now).fetch_optional(&self.pool).await?.ok_or(PgAccountError::InvalidClaim)
     }
 

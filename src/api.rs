@@ -262,6 +262,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/auth/github/complete", post(complete_github_oauth))
         .route("/v1/dev/session", post(development_session))
         .route("/v1/session", get(current_session).delete(delete_session))
+        .route("/v1/account/deletion", post(request_account_deletion))
+        .route("/v1/posts/{id}/report", post(report_post))
         .route("/v1/profile", get(current_profile).patch(update_profile))
         .route("/v1/profile/avatar/generate", post(generate_profile_avatar))
         .route("/v1/avatars/{seed}", get(generated_avatar))
@@ -1053,6 +1055,60 @@ async fn current_session(
         .await
         .map_err(|_| ApiError::unauthorized("invalid bearer token"))?;
     Ok(Json(signed_in_view(&state, session).await?))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct AccountDeletionInput {
+    confirmation: String,
+}
+
+async fn request_account_deletion(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(input): Json<AccountDeletionInput>,
+) -> Result<(StatusCode, Json<crate::launch_safety::DeletionReceipt>), ApiError> {
+    // Do not accept an irreversible user request before the completion worker is deployed.
+    if std::env::var("TARDY_ACCOUNT_DELETION_INTAKE_ENABLED").as_deref() != Ok("true") {
+        return Err(ApiError {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            message: "Account deletion rollout is not enabled".into(),
+        });
+    }
+    if input.confirmation != "DELETE" {
+        return Err(ApiError::bad_request("confirm deletion with DELETE"));
+    }
+    let account = authenticated_account(&state, &headers).await?;
+    let accounts = state
+        .pg_accounts
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("PostgreSQL account service unavailable"))?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(accounts.request_deletion(account).await?),
+    ))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct AbuseReportInput {
+    reason: String,
+    #[serde(default)]
+    details: String,
+}
+
+async fn report_post(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(input): Json<AbuseReportInput>,
+) -> Result<StatusCode, ApiError> {
+    if !crate::launch_safety::valid_report(&input.reason, &input.details) {
+        return Err(ApiError::bad_request("invalid report reason or details"));
+    }
+    let actor = authenticated_actor(&state, &headers).await?;
+    social_store(&state)?
+        .report_post(actor, id, &input.reason, &input.details)
+        .await?;
+    Ok(StatusCode::ACCEPTED)
 }
 
 async fn delete_session(
