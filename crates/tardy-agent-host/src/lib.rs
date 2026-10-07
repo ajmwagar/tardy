@@ -1039,6 +1039,14 @@ impl CodexRunner {
                 active_thread = Some(id.clone());
                 if shared.is_some() {
                     expected_turn = message.get("result").and_then(codex_sessions::active_turn);
+                    if expected_turn.is_none()
+                        && message
+                            .pointer("/result/thread/status/type")
+                            .and_then(Value::as_str)
+                            == Some("active")
+                    {
+                        return Err("Codex reports an active session without a turn id; refusing to start another turn".into());
+                    }
                 }
                 if let Some(progress) = &progress {
                     let _ = progress

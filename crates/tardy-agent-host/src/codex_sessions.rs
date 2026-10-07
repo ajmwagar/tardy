@@ -176,6 +176,14 @@ pub async fn interrupt(thread: &str) -> Result<(), BoxError> {
         connection
             .call("turn/interrupt", json!({"threadId":thread,"turnId":turn}))
             .await?;
+    } else if result
+        .pointer("/thread/status/type")
+        .and_then(Value::as_str)
+        == Some("active")
+    {
+        return Err(
+            "Codex reports an active session without a turn id; cannot safely interrupt".into(),
+        );
     }
     Ok(())
 }
