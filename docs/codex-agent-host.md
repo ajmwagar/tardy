@@ -31,6 +31,9 @@ Only matching thread/turn events are forwarded. Existing workspace, approval pol
 and sandbox settings are preserved; control does not grant extra filesystem permissions.
 Approval requests show a waiting activity; this slice does not add approval buttons or
 automatically approve requests. Existing Codex approvals still need their native workflow.
+Artifact upload/render directives still use the host's configured workspace boundary.
+Attaching a session in another project does not automatically grant that project file-upload
+access; text/tool control works there, but cross-project artifact resolution is a follow-up.
 `/stop` interrupts the shared turn and pauses the Tardy conversation. `/reset-session`
 does not silently replace an attached session. Desktop-only turns are not passively mirrored
 when there is no Tardy activation listening.
