@@ -66,6 +66,13 @@ async fn main() -> Result<(), BoxError> {
     if command == "doctor" {
         return doctor().await;
     }
+    if command == "sessions" {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&tardy_agent_host::codex_sessions::discover().await?)?
+        );
+        return Ok(());
+    }
     if command == "render-manim" {
         let path = std::env::args()
             .nth(2)
@@ -82,7 +89,7 @@ async fn main() -> Result<(), BoxError> {
     }
     if command != "run" {
         return Err(format!(
-            "unknown command {command}; expected run, doctor, render-manim, or help"
+            "unknown command {command}; expected run, doctor, sessions, tapback, render-manim, or help"
         )
         .into());
     }
@@ -164,6 +171,12 @@ async fn main() -> Result<(), BoxError> {
     };
     let worker = tokio::spawn(work_loop(app.clone()));
     let presence = tokio::spawn(installation_presence_loop(app.clone(), runtime.as_str()));
+    let sessions =
+        if runtime == RuntimeKind::Codex && env_or("TARDY_CODEX_AUTO_CONNECT", "yes") == "yes" {
+            Some(tokio::spawn(session_discovery_loop(app.clone())))
+        } else {
+            None
+        };
     let mode = env_or("TARDY_AGENT_DELIVERY", "poll");
     if mode == "webhook" {
         serve_webhook(app.clone()).await?;
@@ -174,6 +187,55 @@ async fn main() -> Result<(), BoxError> {
     }
     worker.abort();
     presence.abort();
+    if let Some(sessions) = sessions {
+        sessions.abort();
+    }
+    Ok(())
+}
+
+async fn session_discovery_loop(app: App) {
+    loop {
+        if let Err(error) = sync_codex_sessions(&app).await {
+            tracing::warn!(%error, "Codex auto-connect unavailable; existing host chats remain available");
+        }
+        tokio::time::sleep(Duration::from_secs(30)).await;
+    }
+}
+
+async fn sync_codex_sessions(app: &App) -> Result<(), BoxError> {
+    let installation = env_or("TARDY_AGENT_INSTALLATION_KEY", "local");
+    for session in tardy_agent_host::codex_sessions::discover().await? {
+        let response = app
+            .client
+            .post(format!(
+                "{}/v1/agents/{}/installations/{installation}/sessions",
+                api(app),
+                app.credential.profile_id
+            ))
+            .bearer_auth(&app.credential.api_token)
+            .header("x-tardy-profile-id", &app.credential.profile_id)
+            .json(&json!({"thread_id":session.id,"title":session.title}))
+            .send()
+            .await?
+            .error_for_status()?;
+        let body: Value = response.json().await?;
+        let conversation = body
+            .get("conversation_id")
+            .and_then(Value::as_str)
+            .ok_or("session registration omitted conversation_id")?;
+        let mut data = app.data.lock().await;
+        let key = format!("conversation:{conversation}");
+        let binding = format!("codex:shared:{}", session.id);
+        if data
+            .sessions
+            .get(&key)
+            .is_some_and(|existing| existing != &binding)
+        {
+            return Err("session chat already bound to another runtime".into());
+        }
+        data.sessions.insert(key, binding);
+        store_json(&app.data_path, &*data).await?;
+    }
     Ok(())
 }
 
@@ -349,6 +411,32 @@ async fn enqueue(app: &App, delivery_id: String, event: InboxEvent) -> Result<()
     let mut data = app.data.lock().await;
     if data.processed_deliveries.contains(&delivery_id) {
         return Ok(());
+    }
+    if let Some(target) = event
+        .payload
+        .get("target_installation")
+        .and_then(Value::as_str)
+    {
+        if target != env_or("TARDY_AGENT_INSTALLATION_KEY", "local") {
+            if delivery_id.starts_with("poll:") {
+                data.cursor = data.cursor.max(event.id);
+            }
+            data.processed_deliveries.insert(delivery_id);
+            store_json(&app.data_path, &*data).await?;
+            return Ok(());
+        }
+        let thread = event
+            .payload
+            .get("codex_thread_id")
+            .and_then(Value::as_str)
+            .ok_or("targeted session omitted thread id")?;
+        if app.runner.kind() != RuntimeKind::Codex {
+            return Err("a Codex session activation cannot run on another runtime".into());
+        }
+        if let Some(activation) = &activation {
+            data.sessions
+                .insert(activation.key.clone(), format!("codex:shared:{thread}"));
+        }
     }
     let already_queued = data
         .queue
@@ -532,6 +620,11 @@ async fn run_agent_command(
                 work.abort.abort();
                 finish_delivery(app, &work.queued).await?;
             }
+            let shared = app.data.lock().await.sessions.get(key)
+                .and_then(|id| id.strip_prefix("codex:shared:")).map(str::to_owned);
+            if let Some(thread) = shared {
+                tardy_agent_host::codex_sessions::interrupt(&thread).await?;
+            }
             let mut data = app.data.lock().await;
             data.paused_conversations.insert(conversation.clone());
             store_json(&app.data_path, &*data).await?;
@@ -548,6 +641,9 @@ async fn run_agent_command(
             Ok(Some("Resumed this conversation. Queued messages can run again.".into()))
         }
         AgentCommand::ResetSession => {
+            if app.data.lock().await.sessions.get(key).is_some_and(|id| id.starts_with("codex:shared:")) {
+                return Ok(Some("This chat is attached to an existing Codex session. Start a new session in Codex for a fresh context; /reset-session does not replace it.".into()));
+            }
             if let Some(work) = active.remove(key) {
                 work.abort.abort();
                 finish_delivery(app, &work.queued).await?;
@@ -1583,6 +1679,9 @@ fn internal(error: BoxError) -> (StatusCode, String) {
 }
 
 fn print_help() {
+    println!(
+        "Existing Codex sessions:\n  tardy-agent-host sessions\n  TARDY_CODEX_AUTO_CONNECT=yes (default) discovers shared-daemon sessions as owner-only chats.\n"
+    );
     println!(
         "Tardy agent host\n\nUsage:\n  tardy-agent-host doctor\n  tardy-agent-host tapback <message>\n  tardy-agent-host render-manim <request.json>\n  tardy-agent-host run\n\nEnvironment:\n  TARDY_STATE_PATH         Agent credential from `tardy onboard`\n  TARDY_AGENT_WORKSPACE    Workspace this agent may access\n  TARDY_AGENT_HOST_STATE   Durable session and outbox state\n  TARDY_AGENT_DELIVERY     poll (default) or webhook\n  TARDY_AGENT_RUNTIME      codex (default) or opencode\n  TARDY_CODEX_SANDBOX      read-only or workspace-write (default)\n  TARDY_CODEX_NETWORK      enabled (default) or disabled\n  TARDY_OPENCODE_BIN       OpenCode executable (default: opencode)\n  TARDY_OPENCODE_MODEL     Optional provider/model routed by OpenCode\n  TARDY_OPENCODE_AGENT     Optional OpenCode agent name\n  TARDY_OPENCODE_PURE      yes disables external OpenCode plugins\n  TARDY_UVX_COMMAND        uvx-compatible Manim launcher\n  TARDY_AGENT_BIND         Webhook bind address"
     );

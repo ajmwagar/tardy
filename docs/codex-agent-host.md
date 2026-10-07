@@ -12,9 +12,54 @@ Tardy agent profile (stable identity)
      -> Codex or OpenCode session B (private local execution state)
 ```
 
-Users see one DM or group chat that becomes a work thread when an agent is summoned. They do not
-see session pickers or runtime session IDs. Session rotation is an operator/recovery concern, not a
-new social identity.
+Users see one DM or group chat that becomes a work thread when an agent is summoned. Existing
+local Codex sessions can also appear as individual, named owner-only work chats. A session is
+not a new social identity: all of these chats still speak as the same claimed Tardy agent.
+
+## Automatically connect existing Codex sessions
+
+For Codex hosts, `TARDY_CODEX_AUTO_CONNECT=yes` is the default. Every 30 seconds the host
+connects with a WebSocket-over-Unix handshake to the already-running shared daemon, reads its
+loaded thread IDs and metadata, and creates one durable conversation per
+`(agent, installation key, thread ID)`. Both apps already list named conversations, so each
+discovered session becomes its own direct-chat option without a separate session picker.
+No transcript, preview, or workspace path is uploaded during discovery.
+
+Messages in these chats attach to the original thread through that daemon. Idle sessions
+receive `turn/start`; active sessions receive `turn/steer` with the observed `expectedTurnId`.
+Only matching thread/turn events are forwarded. Existing workspace, approval policy, model,
+and sandbox settings are preserved; control does not grant extra filesystem permissions.
+`/stop` interrupts the shared turn and pauses the Tardy conversation. `/reset-session`
+does not silently replace an attached session. Desktop-only turns are not passively mirrored
+when there is no Tardy activation listening.
+
+Connected session chats are owner-only and cannot add other participants or agents. Use a
+separate group conversation for multiplayer collaboration. The inbox payload identifies the
+target installation and thread so another updated host cannot accidentally execute the work.
+All hosts sharing this agent must be updated before enabling this feature; older hosts do not
+understand installation-targeted delivery. Use a unique `TARDY_AGENT_INSTALLATION_KEY` per
+machine, and only one host process for that agent/installation/state file.
+The socket defaults to `$CODEX_HOME/app-server-control/app-server-control.sock` (or
+`~/.codex/app-server-control/app-server-control.sock`). Set `TARDY_CODEX_SOCKET` for a custom
+Unix listener. This is not the daemon's raw stdio proxy protocol.
+
+Manual runbook:
+
+1. Start Codex normally using its shared daemon. `codex app-server daemon version` confirms
+   availability; the host does not start or restart this daemon for you.
+2. Inspect local discovery with `tardy-agent-host sessions` (metadata only; no Tardy credential).
+3. Upgrade the Tardy API and apply migration `0034_codex_session_chats.sql` before the host.
+4. Run the host with its existing claimed credential and stable installation key. Within one
+   polling cycle, look for named session chats in your Messages list.
+5. Send a follow-up there; check that the same Codex session responds, then test `/stop`.
+6. Set `TARDY_CODEX_AUTO_CONNECT=no` to stop creating new session chats. Existing attached
+   chats remain bound and controllable; this setting is not a revocation switch.
+
+Only sessions loaded by the connected shared daemon are discovered. Separate app-server
+processes, `--no-daemon` sessions, and windows using another Codex home are not imported or
+forked as a fallback. Discovery failure is logged, and ordinary host-owned chats remain usable.
+Closed windows are not an authoritative lifecycle signal: a thread may remain loaded, and a
+previously connected conversation intentionally persists after its window closes.
 
 ## Workspace isolation
 
