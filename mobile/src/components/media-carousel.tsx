@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import { memo, useCallback, useState } from 'react';
-import { FlatList, StyleSheet, Text, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
+import { FlatList, Pressable, StyleSheet, Text, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 
 import type { MediaItem } from '@/data/types';
 import { logEngagement, toggleMuted, useStore } from '@/state/store';
@@ -88,6 +88,7 @@ export const MediaCarousel = memo(function MediaCarousel({
   );
 
   return (
+    <View>
     <DoubleTapLike
       postId={postId}
       onSingleTap={singleTap}
@@ -118,12 +119,13 @@ export const MediaCarousel = memo(function MediaCarousel({
           </Text>
         </View>
       )}
-      {hasVideo && (
-        <View style={styles.mute} pointerEvents="none">
-          <Icon name={muted ? 'speaker.slash.fill' : 'speaker.wave.2.fill'} size={12} color="#fff" />
-        </View>
-      )}
     </DoubleTapLike>
+      {hasVideo && (
+        <Pressable style={styles.mute} onPress={toggleMuted} hitSlop={12} accessibilityRole="button" accessibilityLabel={muted ? 'Unmute video' : 'Mute video'}>
+          <Icon name={muted ? 'speaker.slash.fill' : 'speaker.wave.2.fill'} size={16} color="#fff" />
+        </Pressable>
+      )}
+    </View>
   );
 });
 

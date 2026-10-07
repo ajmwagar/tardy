@@ -13,7 +13,7 @@ import { ActivityButton } from '@/components/activity-button';
 import { BreakingTicker } from '@/components/breaking-ticker';
 import { EmptyState, ErrorState, ReelSkeleton } from '@/components/states';
 import { StyleChip } from '@/components/style-chip';
-import { Avatar, Icon, NameLine, PressableScale, Reaction, StatusPill } from '@/components/ui';
+import { Avatar, haptic, Icon, NameLine, PressableScale, Reaction, StatusPill } from '@/components/ui';
 import { VideoSurface } from '@/components/video-surface';
 import type { Post } from '@/data/types';
 import { api, ensureAccounts, ingestPosts, loadFeedPage, logEngagement, toggleAlarm, toggleFollowing, toggleLiked, toggleMuted, toggleRepost, toggleSaved, useAccount, useIsFollowing, usePostState, useStore } from '@/state/store';
@@ -43,28 +43,35 @@ const Reel = memo(function Reel({ post, active, height }: { post: Post; active: 
   const following = useIsFollowing(post.authorId);
   const muted = useStore((s) => s.muted);
   const [expanded, setExpanded] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const speedRef = useRef<1 | 2 | 4>(1);
   const [speed, setSpeed] = useState<1 | 2 | 4>(1);
   const [lockedSpeed, setLockedSpeed] = useState<2 | 4 | null>(null);
   const media = post.media[0];
-  useSoundPlays(post, active, muted);
+  useSoundPlays(post, active && !paused, muted);
 
   const openProfile = () => author && router.push({ pathname: '/profile/[handle]', params: { handle: author.handle } });
   const share = () => router.push({ pathname: '/share', params: { postId: post.id } });
   const previewSpeed = useCallback((nextSpeed: 2 | 4) => {
     if (!active) return;
+    if (speedRef.current !== nextSpeed) haptic.selection();
+    speedRef.current = nextSpeed;
     setSpeed(nextSpeed);
   }, [active]);
   const finishSpeed = useCallback((nextLockedSpeed: 2 | 4 | null) => {
     setLockedSpeed(nextLockedSpeed);
-    setSpeed(nextLockedSpeed ?? lockedSpeed ?? 1);
+    speedRef.current = nextLockedSpeed ?? lockedSpeed ?? 1;
+    setSpeed(speedRef.current);
+    if (nextLockedSpeed) haptic.impact();
   }, [lockedSpeed]);
   const unlockSpeed = useCallback(() => {
     setLockedSpeed(null);
+    speedRef.current = 1;
     setSpeed(1);
   }, []);
   useEffect(() => {
     // Reset after the active reel changes without synchronously cascading another render.
-    const frame = requestAnimationFrame(unlockSpeed);
+    const frame = requestAnimationFrame(() => { unlockSpeed(); setPaused(false); });
     return () => cancelAnimationFrame(frame);
   }, [active, unlockSpeed]);
 
@@ -72,8 +79,8 @@ const Reel = memo(function Reel({ post, active, height }: { post: Post; active: 
     <View style={{ height, backgroundColor: '#000' }}>
       <DoubleTapLike
         postId={post.id}
-        onSingleTap={toggleMuted}
-        singleTapIcon={muted ? 'speaker.wave.2.fill' : 'speaker.slash.fill'}
+        onSingleTap={() => setPaused((value) => !value)}
+        singleTapIcon={paused ? 'play.fill' : 'pause.fill'}
         onHoldSpeed={previewSpeed}
         onHoldEnd={finishSpeed}
         heartSize={148}>
@@ -81,10 +88,13 @@ const Reel = memo(function Reel({ post, active, height }: { post: Post; active: 
           {media?.type === 'video' && (
             // Fill when the video's shape is close to the screen's, else show it whole over the blur
             // (landscape reels, iPads). The native player applies the same rule on its own.
-            <VideoSurface postId={post.id} media={media} active={active} fullBleed playbackRate={speed} contentFit={fitFor(mediaRatio(media), width / height)} />
+            <VideoSurface postId={post.id} media={media} active={active && !paused} fullBleed playbackRate={speed} contentFit={fitFor(mediaRatio(media), width / height)} />
           )}
         </View>
       </DoubleTapLike>
+      <Pressable onPress={toggleMuted} hitSlop={12} style={{ position: 'absolute', top: height / 2 - 72, alignSelf: 'center', padding: 10, borderRadius: 24, backgroundColor: 'rgba(0,0,0,0.45)' }} accessibilityRole="button" accessibilityLabel={muted ? 'Unmute reel' : 'Mute reel'}>
+        <Icon name={muted ? 'speaker.slash.fill' : 'speaker.wave.2.fill'} size={18} color="#fff" />
+      </Pressable>
 
       {speed > 1 ? (
         <Pressable onPress={lockedSpeed ? unlockSpeed : undefined} disabled={!lockedSpeed} style={styles.speedBadge} accessibilityRole={lockedSpeed ? 'button' : undefined} accessibilityLabel={lockedSpeed ? `Unlock ${speed} times playback` : undefined}>

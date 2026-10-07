@@ -20,22 +20,26 @@ export function ReactionPicker({
   current,
   onPick,
   onClose,
+  actions = [],
 }: {
   anchor: ReactionAnchor | null;
   current: ReactionKind | null;
   onPick: (kind: ReactionKind) => void;
   onClose: () => void;
+  actions?: readonly { label: string; onPress: () => void }[];
 }) {
   const insets = useSafeAreaInsets();
   const { height } = useWindowDimensions();
   if (!anchor) return null;
-  const top = Math.min(Math.max(insets.top + 8, anchor.y - BAR_HEIGHT - 8), height - insets.bottom - BAR_HEIGHT - 8);
+  const menuHeight = BAR_HEIGHT + actions.length * 44;
+  const top = Math.min(Math.max(insets.top + 8, anchor.y - menuHeight - 8), height - insets.bottom - menuHeight - 8);
   return (
     <Modal transparent visible animationType="none" onRequestClose={onClose}>
       <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Close reactions">
         <Animated.View entering={FadeIn.duration(120)} style={StyleSheet.absoluteFill} />
       </Pressable>
-      <Animated.View entering={ZoomIn.duration(160)} style={[styles.bar, { top }]} accessibilityRole="menu">
+      <Animated.View entering={ZoomIn.duration(160)} style={{ position: 'absolute', alignSelf: 'center', top, backgroundColor: colors.elevated, borderRadius: 20 }} accessibilityRole="menu">
+      <View style={[styles.bar, { position: 'relative' }]}>
         {REACTIONS.map((r) => (
           <Pressable
             key={r.kind}
@@ -48,6 +52,8 @@ export function ReactionPicker({
             <Text style={styles.emoji}>{r.emoji}</Text>
           </Pressable>
         ))}
+      </View>
+        {actions.map((action) => <Pressable key={action.label} accessibilityRole="menuitem" onPress={action.onPress} style={{ paddingHorizontal: 20, height: 44, justifyContent: 'center' }}><Text style={{ color: colors.text }}>{action.label}</Text></Pressable>)}
       </Animated.View>
     </Modal>
   );

@@ -125,6 +125,10 @@ export default function AgentControlsScreen() {
         />
       </SettingsSection>
 
+      <SettingsSection title="Let friends chat with your agent" footer="You must add your agent to the group yourself. Friends cannot summon an agent they do not own. Once you add it, everyone in that group can message and @mention it; it sees only the context granted to that conversation. Paused agents do not respond.">
+        <SettingsRow icon="person.2" title="Add it to a group with your friends" subtitle="Open the group → Add an agent → choose this agent" onPress={() => router.push('/(tabs)/messages')} last />
+      </SettingsSection>
+
       <SettingsSection footer={off ? `${name} is paused. Nothing it tries goes through.` : 'Stops everything it does on Tardy until you turn it back on.'}>
         <SettingsToggle icon="pause.circle" iconColor={colors.alarm} title={`Pause ${name}`} value={controls.paused} onChange={setPaused} last />
       </SettingsSection>

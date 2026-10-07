@@ -202,7 +202,7 @@ export default function ShareSheet() {
     const pinnedPeople = selected.flatMap((t) => (t.kind === 'account' && !shownPeople.has(t.account.id) ? [t.account] : []));
     const pinnedGroups = selected.filter((t) => t.kind === 'group' && !groupTargets.some((g) => g.key === t.key));
     const candidates = [
-      ...[...pinnedPeople, ...people].map((account) => ({
+      ...[...pinnedPeople, ...people].filter((account) => account.id !== me).map((account) => ({
         target: { key: `a:${account.id}`, kind: 'account' as const, account },
         kind: account.kind,
         ownedByViewer: account.ownedByViewer,
@@ -242,6 +242,7 @@ export default function ShareSheet() {
 
   const send = async () => {
     if (selected.length === 0 || phase !== 'idle' || waitingForLink) return;
+    setError(null);
     setPhase('sending');
     const result = await share(api, {
       recipients: pickedPeople,
@@ -253,7 +254,7 @@ export default function ShareSheet() {
     });
     if (result.failed.length > 0) {
       const who = result.failed.map((f) => f.participantIds.map(handleOf).filter(Boolean).join(', ')).join('; ');
-      reportError(`Couldn't send to ${who}: ${result.failed[0].error}`);
+      setError(`Couldn't send to ${who}: ${result.failed[0].error}`);
     }
     if (result.sent.length === 0) {
       setPhase('idle');
@@ -332,6 +333,7 @@ export default function ShareSheet() {
         />
       </View>
 
+      {error && sections ? <Text accessibilityRole="alert" style={{ color: colors.alarm, paddingHorizontal: 16, paddingVertical: 10 }}>{error}</Text> : null}
       {error && !sections ? (
         <ErrorState
           message="Couldn't find anyone to share with. They're probably all on break."
@@ -359,7 +361,7 @@ export default function ShareSheet() {
             contentInsetAdjustmentBehavior="never"
             contentContainerStyle={styles.grid}
             keyboardShouldPersistTaps="handled"
-            keyboardDismissMode="on-drag">
+            keyboardDismissMode="interactive">
             {sections.map((section) => (
               <View key={section.title}>
                 <Text style={styles.sectionTitle} accessibilityRole="header">
