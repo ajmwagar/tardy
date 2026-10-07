@@ -251,10 +251,88 @@ pub struct SharedLink {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct Article {
+    pub title: String,
+    pub markdown: String,
+    /// Derived sanitized HTML; never accepted from the writer or persisted.
+    #[serde(default, skip_deserializing, skip_serializing_if = "String::is_empty")]
+    #[schema(read_only)]
+    pub html: String,
+}
+
+impl Article {
+    fn validate(&self) -> Result<(), SocialError> {
+        if self.title.trim().is_empty()
+            || self.title.chars().count() > 200
+            || self.markdown.trim().is_empty()
+            || self.markdown.len() > 200_000
+        {
+            return Err(SocialError::Invalid(
+                "article needs a title (up to 200 characters) and Markdown (up to 200000 bytes)",
+            ));
+        }
+        Ok(())
+    }
+
+    fn rendered(mut self) -> Self {
+        let parser = pulldown_cmark::Parser::new_ext(
+            &self.markdown,
+            pulldown_cmark::Options::ENABLE_TABLES | pulldown_cmark::Options::ENABLE_STRIKETHROUGH,
+        )
+        .map(|event| match event {
+            pulldown_cmark::Event::Html(text) | pulldown_cmark::Event::InlineHtml(text) => {
+                pulldown_cmark::Event::Text(text)
+            }
+            other => other,
+        });
+        let mut html = String::new();
+        pulldown_cmark::html::push_html(&mut html, parser);
+        self.html = ammonia::clean(&html);
+        self
+    }
+}
+
+#[cfg(test)]
+mod article_tests {
+    use super::*;
+    #[test]
+    fn markdown_is_rich_but_html_and_unsafe_links_are_not_executable() {
+        let article = Article {title: "Design".into(), markdown: "# Evidence\n\n<script>alert(1)</script>\n\n[bad](javascript:alert(1))\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\n```mermaid\ngraph TD; A-->B\n```".into(), html: String::new()}.rendered();
+        assert!(article.html.contains("<h1>Evidence</h1>"));
+        assert!(article.html.contains("<table>"));
+        assert!(!article.html.contains("<script>"));
+        assert!(!article.html.contains("href=\"javascript:"));
+        assert!(article.html.contains("A--&gt;B"));
+    }
+    #[test]
+    fn validates_boundaries_and_ignores_writer_supplied_html() {
+        let mut article: Article = serde_json::from_value(serde_json::json!({"title":"Design","markdown":"A result","html":"<script>bad</script>"})).unwrap();
+        assert!(article.html.is_empty());
+        assert!(article.validate().is_ok());
+        article.markdown = "x".repeat(200_001);
+        assert!(article.validate().is_err());
+        article.markdown = " ".into();
+        assert!(article.validate().is_err());
+    }
+}
+
+fn article_from_row(row: &sqlx::postgres::PgRow) -> Result<Option<Article>, SocialError> {
+    row.try_get::<Option<serde_json::Value>, _>("article")?
+        .map(|value| {
+            serde_json::from_value::<Article>(value)
+                .map(Article::rendered)
+                .map_err(|_| SocialError::Invalid("persisted article"))
+        })
+        .transpose()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TardyPost {
     pub id: Uuid,
     pub author_profile_id: Uuid,
     pub caption: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub article: Option<Article>,
     pub media: Vec<PostMedia>,
     pub shared_link_id: Option<Uuid>,
     pub visibility: PostVisibility,
@@ -285,6 +363,8 @@ pub struct AppFeedPost {
     pub format: &'static str,
     pub media: Vec<serde_json::Value>,
     pub caption: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub article: Option<Article>,
     pub links: Vec<serde_json::Value>,
     pub created_at_ms: i64,
     pub like_count: i64,
@@ -571,7 +651,7 @@ impl PgSocialStore {
         limit: i64,
     ) -> Result<Vec<AppFeedPost>, SocialError> {
         let rows = sqlx::query(
-            "SELECT p.id,p.author_profile_id,p.caption,p.media,p.created_at,l.canonical_url,
+            "SELECT p.id,p.author_profile_id,p.caption,p.article,p.media,p.created_at,l.canonical_url,
                     (SELECT count(*) FROM post_comments c WHERE c.post_id=p.id)::bigint AS comment_count,
                     (SELECT count(*) FROM post_likes x WHERE x.post_id=p.id)::bigint AS like_count,
                     (SELECT count(*) FROM post_alarms x WHERE x.post_id=p.id)::bigint AS alarm_count,
@@ -606,6 +686,7 @@ impl PgSocialStore {
                     format: post_format(&row)?,
                     media: app_media(&row)?,
                     caption: row.try_get("caption")?,
+                    article: article_from_row(&row)?,
                     links: link
                         .map(|url| {
                             vec![serde_json::json!({"kind":"other","label":"Open link","url":url})]
@@ -638,7 +719,7 @@ impl PgSocialStore {
         limit: i64,
     ) -> Result<Vec<AppFeedPost>, SocialError> {
         let rows = sqlx::query(
-            "SELECT p.id,p.author_profile_id,p.caption,p.media,p.created_at,l.canonical_url,
+            "SELECT p.id,p.author_profile_id,p.caption,p.article,p.media,p.created_at,l.canonical_url,
                     (SELECT count(*) FROM post_comments c WHERE c.post_id=p.id)::bigint AS comment_count,
                     (SELECT count(*) FROM post_likes x WHERE x.post_id=p.id)::bigint AS like_count,
                     (SELECT count(*) FROM post_alarms x WHERE x.post_id=p.id)::bigint AS alarm_count,
@@ -675,7 +756,7 @@ impl PgSocialStore {
         id: Uuid,
     ) -> Result<AppFeedPost, SocialError> {
         let row = sqlx::query(
-            "SELECT p.id,p.author_profile_id,p.caption,p.media,p.created_at,l.canonical_url,
+            "SELECT p.id,p.author_profile_id,p.caption,p.article,p.media,p.created_at,l.canonical_url,
                     (SELECT count(*) FROM post_comments c WHERE c.post_id=p.id)::bigint AS comment_count,
                     (SELECT count(*) FROM post_likes x WHERE x.post_id=p.id)::bigint AS like_count,
                     (SELECT count(*) FROM post_alarms x WHERE x.post_id=p.id)::bigint AS alarm_count,
@@ -726,7 +807,7 @@ impl PgSocialStore {
         }
         let rows = sqlx::query(
             "WITH q AS (SELECT websearch_to_tsquery('english',$2) value)
-             SELECT p.id,p.author_profile_id,p.caption,p.media,p.created_at,l.canonical_url,
+             SELECT p.id,p.author_profile_id,p.caption,p.article,p.media,p.created_at,l.canonical_url,
                     (SELECT count(*) FROM post_comments c WHERE c.post_id=p.id)::bigint AS comment_count,
                     (SELECT count(*) FROM post_likes x WHERE x.post_id=p.id)::bigint AS like_count,
                     (SELECT count(*) FROM post_alarms x WHERE x.post_id=p.id)::bigint AS alarm_count,
@@ -734,7 +815,7 @@ impl PgSocialStore {
                     EXISTS(SELECT 1 FROM post_likes x WHERE x.post_id=p.id AND x.profile_id=$1) AS viewer_has_liked,
                     EXISTS(SELECT 1 FROM post_alarms x WHERE x.post_id=p.id AND x.profile_id=$1) AS viewer_has_alarm,
                     EXISTS(SELECT 1 FROM post_reposts x WHERE x.post_id=p.id AND x.profile_id=$1) AS viewer_has_reposted,
-                    ts_rank_cd(to_tsvector('english',p.caption||' '||i.handle||' '||COALESCE(h.display_name,s.display_name,'')),q.value)::float8 AS relevance_score
+                    ts_rank_cd(to_tsvector('english',p.caption||' '||COALESCE(p.article->>'title','')||' '||COALESCE(p.article->>'markdown','')||' '||i.handle||' '||COALESCE(h.display_name,s.display_name,'')),q.value)::float8 AS relevance_score
              FROM tardy_posts p
              JOIN social_identities i ON i.profile_id=p.author_profile_id
              LEFT JOIN human_profiles h ON h.profile_id=i.profile_id
@@ -751,7 +832,7 @@ impl PgSocialStore {
                     OR (p.visibility='followers' AND EXISTS (
                         SELECT 1 FROM profile_follows f
                         WHERE f.follower_profile_id=$1 AND f.followed_profile_id=p.author_profile_id)))
-               AND to_tsvector('english',p.caption||' '||i.handle||' '||COALESCE(h.display_name,s.display_name,'')) @@ q.value
+               AND to_tsvector('english',p.caption||' '||COALESCE(p.article->>'title','')||' '||COALESCE(p.article->>'markdown','')||' '||i.handle||' '||COALESCE(h.display_name,s.display_name,'')) @@ q.value
              ORDER BY relevance_score DESC,p.created_at DESC,p.id DESC LIMIT $3",
         )
         .bind(viewer)
@@ -2220,12 +2301,40 @@ impl PgSocialStore {
         visibility: PostVisibility,
         media: &[PostMedia],
     ) -> Result<TardyPost, SocialError> {
+        self.publish_post_with_article(
+            actor,
+            client_request_id,
+            caption,
+            shared_link_id,
+            visibility,
+            media,
+            None,
+        )
+        .await
+    }
+
+    pub async fn publish_post_with_article(
+        &self,
+        actor: Uuid,
+        client_request_id: Uuid,
+        caption: &str,
+        shared_link_id: Option<Uuid>,
+        visibility: PostVisibility,
+        media: &[PostMedia],
+        article: Option<&Article>,
+    ) -> Result<TardyPost, SocialError> {
+        if let Some(article) = article {
+            article.validate()?;
+            if media.iter().any(|item| item.kind != "image") {
+                return Err(SocialError::Invalid("article media must be images"));
+            }
+        }
         let caption = validated_text(caption, 5_000)?;
         validate_post_media(media)?;
         let media =
             serde_json::to_value(media).map_err(|_| SocialError::Invalid("invalid media"))?;
-        let row = sqlx::query("INSERT INTO tardy_posts (id,author_profile_id,client_request_id,caption,media,shared_link_id,visibility) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (author_profile_id,client_request_id) DO UPDATE SET client_request_id=excluded.client_request_id RETURNING id,author_profile_id,caption,media,shared_link_id,visibility,created_at")
-            .bind(Uuid::new_v4()).bind(actor).bind(client_request_id).bind(caption).bind(media).bind(shared_link_id).bind(visibility_name(visibility)).fetch_one(&self.pool).await?;
+        let row = sqlx::query("INSERT INTO tardy_posts (id,author_profile_id,client_request_id,caption,media,shared_link_id,visibility,article) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (author_profile_id,client_request_id) DO UPDATE SET client_request_id=excluded.client_request_id RETURNING id,author_profile_id,caption,article,media,shared_link_id,visibility,created_at")
+            .bind(Uuid::new_v4()).bind(actor).bind(client_request_id).bind(caption).bind(media).bind(shared_link_id).bind(visibility_name(visibility)).bind(article.map(|a| serde_json::json!({"title": a.title, "markdown": a.markdown}))).fetch_one(&self.pool).await?;
         Ok(post_from_row(&row)?)
     }
 
@@ -2235,7 +2344,7 @@ impl PgSocialStore {
         id: Uuid,
         visibility: PostVisibility,
     ) -> Result<TardyPost, SocialError> {
-        let row = sqlx::query("UPDATE tardy_posts SET visibility=$3 WHERE id=$1 AND author_profile_id=$2 RETURNING id,author_profile_id,caption,media,shared_link_id,visibility,created_at")
+        let row = sqlx::query("UPDATE tardy_posts SET visibility=$3 WHERE id=$1 AND author_profile_id=$2 RETURNING id,author_profile_id,caption,article,media,shared_link_id,visibility,created_at")
             .bind(id)
             .bind(actor)
             .bind(visibility_name(visibility))
@@ -2633,6 +2742,7 @@ fn app_post_from_row(row: sqlx::postgres::PgRow) -> Result<AppFeedPost, SocialEr
         format: post_format(&row)?,
         media: app_media(&row)?,
         caption: row.try_get("caption")?,
+        article: article_from_row(&row)?,
         links: link
             .map(|url| vec![serde_json::json!({"kind":"other","label":"Open link","url":url})])
             .unwrap_or_default(),
@@ -2655,6 +2765,7 @@ fn post_from_row(row: &sqlx::postgres::PgRow) -> Result<TardyPost, SocialError> 
         id: row.try_get("id")?,
         author_profile_id: row.try_get("author_profile_id")?,
         caption: row.try_get("caption")?,
+        article: article_from_row(row)?,
         media: serde_json::from_value(row.try_get("media")?)
             .map_err(|_| SocialError::Invalid("persisted media"))?,
         shared_link_id: row.try_get("shared_link_id")?,
@@ -2664,6 +2775,12 @@ fn post_from_row(row: &sqlx::postgres::PgRow) -> Result<TardyPost, SocialError> 
 }
 
 fn post_format(row: &sqlx::postgres::PgRow) -> Result<&'static str, SocialError> {
+    if row
+        .try_get::<Option<serde_json::Value>, _>("article")?
+        .is_some()
+    {
+        return Ok("article");
+    }
     let media = app_media(row)?;
     Ok(
         if media.first().is_some_and(|item| item["type"] == "video") {

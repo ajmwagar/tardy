@@ -1647,7 +1647,7 @@ fn localize_posts(state: &AppState, posts: &mut [AppFeedPost]) {
         return;
     }
     for post in posts {
-        if !post.media.is_empty() {
+        if !post.media.is_empty() || post.article.is_some() {
             continue;
         }
         if let Some((_, slug, duration_ms)) = DEV_BRAGS
@@ -2718,6 +2718,8 @@ pub(crate) struct PublishSocialPost {
     client_request_id: Uuid,
     caption: String,
     #[serde(default)]
+    article: Option<crate::social::Article>,
+    #[serde(default)]
     media: Vec<PostMedia>,
     shared_link_id: Option<Uuid>,
     visibility: PostVisibility,
@@ -2731,13 +2733,14 @@ async fn publish_social_post(
     let actor = authenticated_actor(&state, &headers).await?;
     bind_post_assets(&state, actor, &mut body.media).await?;
     let post = social_store(&state)?
-        .publish_post_with_media(
+        .publish_post_with_article(
             actor,
             body.client_request_id,
             &body.caption,
             body.shared_link_id,
             body.visibility,
             &body.media,
+            body.article.as_ref(),
         )
         .await?;
     Ok((
@@ -3116,7 +3119,19 @@ async fn run_search(
             .iter()
             .map(|result| SearchDocument {
                 id: result.post.id,
-                text: result.post.caption.clone(),
+                text: result
+                    .post
+                    .article
+                    .as_ref()
+                    .map(|article| {
+                        format!(
+                            "{}\n{}\n{}",
+                            result.post.caption,
+                            article.title,
+                            article.markdown.chars().take(8_000).collect::<String>()
+                        )
+                    })
+                    .unwrap_or_else(|| result.post.caption.clone()),
             })
             .collect::<Vec<_>>();
         let ranked = state

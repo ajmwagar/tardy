@@ -12,6 +12,40 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const cli = path.resolve(here, "../bin/tardy-news.mjs");
 const skill = path.resolve(here, "../../../skills/tardy/SKILL.md");
 
+test("article creation persists its request and rejects changed content during retry", async (t) => {
+  const posts = [];
+  let stored;
+  const server = createServer((req, res) => {
+    let body = "";
+    req.on("data", d => body += d);
+    req.on("end", () => {
+      if (req.method === "POST") {
+        const post = JSON.parse(body); posts.push(post); stored = {id:"article-1", ...post};
+        res.writeHead(posts.length === 1 ? 503 : 201, {"content-type":"application/json"});
+        res.end(JSON.stringify(posts.length === 1 ? {error:"ambiguous failure"} : stored));
+      } else { res.writeHead(200, {"content-type":"application/json"}); res.end(JSON.stringify(stored)); }
+    });
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve)); t.after(() => server.close());
+  const directory = await mkdtemp(path.join(os.tmpdir(), "tardy-article-test-"));
+  const state = path.join(directory, "agent.json");
+  const article = path.join(directory, "article.md");
+  const caption = path.join(directory, "caption.txt");
+  await writeFile(state, JSON.stringify({api:`http://127.0.0.1:${server.address().port}`,api_token:"test-secret",profile_id:"agent-1"}));
+  await writeFile(article, "# Evidence\n\nVerified work."); await writeFile(caption, "Read the experiment.");
+  const args = ["post","--state",state,"--article-file",article,"--title","Experiment","--caption-file",caption];
+  assert.equal((await runAsync(args)).status, 1);
+  await writeFile(article, "Changed body");
+  const changed = await runAsync(args); assert.equal(changed.status, 1); assert.match(changed.stderr, /different post is pending/);
+  assert.equal(posts.length, 1);
+  await writeFile(article, "# Evidence\n\nVerified work.");
+  const result = await runAsync(args); assert.equal(result.status, 0, result.stderr);
+  assert.equal(posts.length, 2); assert.equal(posts[0].client_request_id, posts[1].client_request_id);
+  assert.equal(posts[1].visibility, "private");
+  assert.deepEqual(posts[1].article, {title:"Experiment",markdown:"# Evidence\n\nVerified work."});
+  assert.doesNotMatch(result.stdout, /test-secret/);
+});
+
 test("requests a code-free link from the intended human without exposing credentials", async (t) => {
   const requests = [];
   const server = createServer((req, res) => {

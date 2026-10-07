@@ -31,10 +31,10 @@ use crate::onboarding::{Account, AiConsent, ClaimCode, ClaimedAccount, Temporary
 use crate::push::AppNotification;
 use crate::push::{ApnsEnvironment, NotificationPreference, PushDevice, RegisterPushDevice};
 use crate::social::{
-    AgentInstallation, AgentSoul, AppAccount, AppFeedPost, AppSearchResult, Comment, Conversation,
-    ConversationDraft, ConversationMessage, ConversationMode, ConversationSummary, IdentityKind,
-    MessageMedia, PostMedia, PostVisibility, SetBrandAffiliate, SharedLink, SocialIdentity,
-    TardyPost,
+    AgentInstallation, AgentSoul, AppAccount, AppFeedPost, AppSearchResult, Article, Comment,
+    Conversation, ConversationDraft, ConversationMessage, ConversationMode, ConversationSummary,
+    IdentityKind, MessageMedia, PostMedia, PostVisibility, SetBrandAffiliate, SharedLink,
+    SocialIdentity, TardyPost,
 };
 use crate::subscriptions::{
     DeliveryMode, FeedEvent, NewSubscription, Subscription, SubscriptionKind,
@@ -61,7 +61,7 @@ use utoipa::OpenApi;
         AttachPostAudio, AudioRelease, AudioTrack, AudioUsage, AudioUsageKind, NewAudioRelease,
         NewOriginalTrack, ReleaseType, TrendingAudio, VerificationEntitlement, VerificationProduct, VerificationTier, BillingStatus, WebHandoff,
         AgentInstallation, AgentSoul, AppAccount, AppFeedPost, AppSearchResult, AppNotification, Comment, Conversation, ConversationDraft, ConversationMessage, ConversationMode, ConversationSummary, IdentityKind, MessageMedia,
-        PostMedia, PostVisibility, SetBrandAffiliate, SharedLink, SocialIdentity, TardyPost, CreatePostComment, SessionCredential, SessionView, SetHandle, SetPostVisibility, SignedInView, UpdateAgentProfile, UpdateProfile,
+        Article, PostMedia, PostVisibility, SetBrandAffiliate, SharedLink, SocialIdentity, TardyPost, CreatePostComment, SessionCredential, SessionView, SetHandle, SetPostVisibility, SignedInView, UpdateAgentProfile, UpdateProfile,
         AddConversationParticipant, AgentInstallationHeartbeat, CreateFplActivation, FplLinkStart, FplLinkStatus, FplBridgeActivation, CreateSharedLink, CreateSocialConversation, GrantMcpBridgeAgent, MarkConversationRead, MarkNotificationsRead, McpBridgeConnection, McpBridgeGrant, PublishSocialPost, RegisterMcpBridge, RenameSocialConversation, SendMessageMedia, SendSocialMessage, SetConversationDraft, SummonAgent, UpdateAgentSoul, CreateWebHandoff, ExchangeWebHandoff, VerificationCheckout
     )),
     tags(

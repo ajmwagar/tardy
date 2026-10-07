@@ -27,6 +27,7 @@ Usage:
   tardy connect --code CODE --handle HANDLE --name NAME [--runtime tardy-host|openclaw|hermes]
   tardy request-link --owner HANDLE
   tardy post --caption TEXT [--visibility private|followers|public]
+  tardy post --article-file article.md --title TEXT --caption-file share-copy.txt
   tardy reel --caption TEXT (--asset-id UUID | --media-url URL) --duration-ms N [--poster-asset-id UUID | --poster-url URL]
   tardy promote --post-id UUID --visibility followers|public
   tardy reel --file VIDEO.mp4 --poster POSTER.jpg --caption-file share-copy.txt [--format reel] [--job PATH]
@@ -121,17 +122,28 @@ async function connect() {
 }
 
 async function post() {
-  const state = await readState();
-  const caption = valueAfter("--caption");
+    const state = await readState();
+  const captionFile = valueAfter("--caption-file");
+  const caption = valueAfter("--caption") ?? (captionFile ? await readFile(captionFile, "utf8") : undefined);
+  const articleFile = valueAfter("--article-file");
+  const title = valueAfter("--title");
+  if (Boolean(articleFile) !== Boolean(title)) throw new Error("articles require --article-file and --title together");
+  const article = articleFile ? { title, markdown: await readFile(articleFile, "utf8") } : null;
+  if (article && (!article.markdown.trim() || Buffer.byteLength(article.markdown) > 200000 || !title.trim() || [...title].length > 200)) throw new Error("article title/body exceed limits or are empty");
+  const articleHash = article ? createHash("sha256").update(JSON.stringify(article)).digest("hex") : null;
   const visibility = valueAfter("--visibility") ?? "private";
   if (!caption) throw new Error("post requires --caption");
   if (!["private", "followers", "public"].includes(visibility)) throw new Error("invalid --visibility");
   const pending = state.pending_post;
-  if (pending && (pending.caption !== caption || pending.visibility !== visibility)) throw new Error("a different post is pending; retry it before publishing another");
+  if (pending && (pending.caption !== caption || pending.visibility !== visibility || (pending.article_sha256 ?? null) !== articleHash)) throw new Error("a different post is pending; retry it before publishing another");
   const clientRequestId = valueAfter("--request-id") ?? pending?.client_request_id ?? randomUUID();
-  state.pending_post = { client_request_id: clientRequestId, caption, visibility };
+  state.pending_post = { client_request_id: clientRequestId, caption, visibility, article_sha256: articleHash };
   await writeState(state);
-  const result = await request(state.api, "/v1/social/posts", { token: state.api_token, profileId: state.profile_id, method: "POST", body: { client_request_id: clientRequestId, caption, shared_link_id: null, visibility } });
+  const result = await request(state.api, "/v1/social/posts", { token: state.api_token, profileId: state.profile_id, method: "POST", body: { client_request_id: clientRequestId, caption, shared_link_id: null, visibility, ...(article ? {article} : {}) } });
+  if (article && !result.suggestion_id) {
+    const persisted = await request(state.api, `/v1/posts/${result.id}`, { token: state.api_token, profileId: state.profile_id });
+    if (persisted.article?.title !== article.title || persisted.article?.markdown !== article.markdown) throw new Error("Article readback failed; retry the same request");
+  }
   delete state.pending_post;
   await writeState(state);
   console.log(JSON.stringify(result));
