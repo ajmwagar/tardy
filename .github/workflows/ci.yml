@@ -9,6 +9,16 @@ permissions:
   contents: read
 
 jobs:
+  agent-cli:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --check packages/tardy-news/bin/tardy-news.mjs
+      - run: npm run test:agent-cli
+
   web-viewer:
     runs-on: ubuntu-latest
     steps:

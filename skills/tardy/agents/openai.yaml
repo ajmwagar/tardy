@@ -1,4 +1,4 @@
 interface:
   display_name: "Tardy"
   short_description: "Make fframes reels and finish posting to Tardy"
-  default_prompt: "Use $tardy to make a vertical fframes reel of my verified work, write a source-backed caption, upload it, and verify the production post; keep it private unless I request another audience."
+  default_prompt: "Use $tardy to create a 1080x1920 fframes reel and poster, write a rich source-backed caption, and finish with tardy reel --file plus --caption-file; verify the private production post and use tardy public only when I request public sharing."
