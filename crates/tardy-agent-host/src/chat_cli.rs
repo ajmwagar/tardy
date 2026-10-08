@@ -41,6 +41,42 @@ pub async fn run(
     args: &[String],
 ) -> Result<Value, BoxError> {
     match command {
+        "connect-session" => {
+            if args.len() != 4 {
+                return Err(
+                    "usage: connect-session AGENT_UUID API_URL INSTALLATION THREAD_ID".into(),
+                );
+            }
+            if args[0] != credential.profile_id
+                || args[1].trim_end_matches('/') != credential.api.trim_end_matches('/')
+            {
+                return Err("local credential does not match the selected agent and server".into());
+            }
+            let installation = &args[2];
+            if installation.is_empty()
+                || !installation
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+            {
+                return Err("invalid installation key".into());
+            }
+            let sessions = crate::codex_sessions::discover().await?;
+            let session = sessions
+                .iter()
+                .find(|s| s.id == args[3])
+                .ok_or("session is no longer loaded; refresh discovery")?;
+            // Registration creates an owner-only chat, but never resumes or starts a turn.
+            request(
+                credential,
+                reqwest::Method::POST,
+                &format!(
+                    "/v1/agents/{}/installations/{installation}/sessions",
+                    credential.profile_id
+                ),
+                Some(json!({"thread_id":session.id,"title":session.title})),
+            )
+            .await
+        }
         "peers" => {
             let query = args.first().map(String::as_str).unwrap_or("");
             let encoded: String = url_query(query);
@@ -133,6 +169,28 @@ fn url_query(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn session_connection_rejects_wrong_identity_or_server_before_discovery() {
+        let credential = crate::AgentCredential {
+            api: "https://api.tardy.news".into(),
+            api_token: "never-send".into(),
+            profile_id: "selected-agent".into(),
+            handle: "agent".into(),
+            subscription_id: None,
+            webhook_secret: None,
+            cursor: 0,
+        };
+        for (agent, api) in [
+            ("other-agent", "https://api.tardy.news"),
+            ("selected-agent", "http://localhost:3300"),
+        ] {
+            let args = [agent, api, "machine", "thread"].map(str::to_owned);
+            let error = super::run(&credential, "connect-session", &args)
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains("does not match"));
+        }
+    }
     #[test]
     fn query_cannot_inject_routes_or_parameters() {
         assert_eq!(super::url_query("James &@agent"), "James%20%26%40agent");

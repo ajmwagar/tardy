@@ -600,6 +600,11 @@ private struct AgentSettingsSheet: View {
     @State private var sessionsLoading = false
     @State private var sessionsError: String?
     @State private var openingSession = false
+    @State private var localSessions: [LocalCodexSession] = []
+    @State private var localSessionsLoading = false
+    @State private var localSessionsError: String?
+    @State private var selectedInstallation = ""
+    @State private var connectingSession: String?
 
     init(agent: Account) {
         self.agent = agent
@@ -628,7 +633,37 @@ private struct AgentSettingsSheet: View {
                         .font(.caption).foregroundStyle(Brand.muted)
                     TextField("Specialties, comma separated", text: $specialties)
                 }
-                Section("Session chats") {
+                Section("Codex sessions on this Mac") {
+                    Text("Discovery is read-only. Connecting creates a private chat with this agent; it does not send a prompt or import session history.")
+                        .font(.caption).foregroundStyle(Brand.muted)
+                    Picker("Host installation on this Mac", selection: $selectedInstallation) {
+                        Text("Choose this Mac’s host…").tag("")
+                        ForEach(model.editingAgentInstallations.filter { $0.runtime == "codex" }) { installation in
+                            Text(installation.displayName).tag(installation.installationKey)
+                        }
+                    }
+                    if let localSessionsError { Text(localSessionsError).foregroundStyle(.red) }
+                    ForEach(localSessions) { session in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(session.title).fontWeight(.semibold)
+                                Text("\(session.project ?? "Project unknown") · \(session.status)")
+                                    .font(.caption).foregroundStyle(Brand.muted)
+                                if let updated = session.updatedAt {
+                                    Text(Date(timeIntervalSince1970: Double(updated)), style: .relative).font(.caption2)
+                                }
+                            }
+                            Spacer()
+                            Button(connectingSession == session.id ? "Connecting…" : "Connect") {
+                                Task { await connectLocalSession(session) }
+                            }.disabled(selectedInstallation.isEmpty || connectingSession != nil)
+                        }
+                    }
+                    Button("Discover open sessions") { Task { await discoverLocalSessions() } }
+                        .disabled(localSessionsLoading)
+                    if localSessionsLoading { ProgressView().controlSize(.small) }
+                }
+                Section("Connected session chats") {
                     Text("Open the original coding session as a chat. Same identity and permissions; no new session is created.")
                         .font(.caption).foregroundStyle(Brand.muted)
                     if let sessionsError {
@@ -729,6 +764,27 @@ private struct AgentSettingsSheet: View {
             guard !Task.isCancelled else { return }
             sessionsError = "Couldn’t load sessions: \(error.localizedDescription)"
         }
+    }
+
+    private func discoverLocalSessions() async {
+        localSessionsLoading = true
+        defer { localSessionsLoading = false }
+        do {
+            localSessions = try await LocalCodexSessions.discover()
+            localSessionsError = localSessions.isEmpty ? "No loaded Codex sessions on this Mac." : nil
+        } catch { localSessionsError = error.localizedDescription }
+    }
+
+    private func connectLocalSession(_ session: LocalCodexSession) async {
+        connectingSession = session.id
+        defer { connectingSession = nil }
+        do {
+            let conversation = try await LocalCodexSessions.connect(session, agent: agent, api: model.serverEnvironment.baseURL, installation: selectedInstallation)
+            await loadSessions()
+            if let connected = sessions.first(where: { $0.conversationId == conversation }),
+               await model.openAgentSession(connected) { dismiss() }
+            else { localSessionsError = "Connected. Refresh session chats to open it." }
+        } catch { localSessionsError = error.localizedDescription }
     }
 }
 

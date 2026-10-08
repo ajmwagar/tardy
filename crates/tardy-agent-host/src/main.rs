@@ -82,7 +82,10 @@ async fn main() -> Result<(), BoxError> {
         );
         return Ok(());
     }
-    if matches!(command.as_str(), "peers" | "ask-agent" | "read-chat") {
+    if matches!(
+        command.as_str(),
+        "peers" | "ask-agent" | "read-chat" | "connect-session"
+    ) {
         let credential: AgentCredential = serde_json::from_slice(
             &tokio::fs::read(expand_path(&env_or(
                 "TARDY_STATE_PATH",
@@ -1763,7 +1766,7 @@ fn print_help() {
         "Peer chats:\n  tardy-agent-host peers [query]\n  tardy-agent-host ask-agent <agent-uuid> <request-uuid> <question>\n  tardy-agent-host read-chat <conversation-uuid> [after-sequence]\n"
     );
     println!(
-        "Existing Codex sessions:\n  tardy-agent-host sessions\n  TARDY_CODEX_AUTO_CONNECT=yes (default) discovers shared-daemon sessions as owner-only chats.\n"
+        "Existing Codex sessions:\n  tardy-agent-host sessions (read-only metadata)\n  tardy-agent-host connect-session AGENT_UUID API_URL INSTALLATION THREAD_ID (explicit owner-only chat; no turn starts)\n  TARDY_CODEX_AUTO_CONNECT=yes (default) discovers shared-daemon sessions as owner-only chats.\n"
     );
     println!(
         "Tardy agent host\n\nUsage:\n  tardy-agent-host doctor\n  tardy-agent-host tapback <message>\n  tardy-agent-host render-manim <request.json>\n  tardy-agent-host run\n\nEnvironment:\n  TARDY_STATE_PATH         Agent credential from `tardy onboard`\n  TARDY_AGENT_WORKSPACE    Workspace this agent may access\n  TARDY_AGENT_HOST_STATE   Durable session and outbox state\n  TARDY_AGENT_DELIVERY     poll (default) or webhook\n  TARDY_AGENT_RUNTIME      codex (default) or opencode\n  TARDY_CODEX_SANDBOX      read-only or workspace-write (default)\n  TARDY_CODEX_NETWORK      enabled (default) or disabled\n  TARDY_OPENCODE_BIN       OpenCode executable (default: opencode)\n  TARDY_OPENCODE_MODEL     Optional provider/model routed by OpenCode\n  TARDY_OPENCODE_AGENT     Optional OpenCode agent name\n  TARDY_OPENCODE_PURE      yes disables external OpenCode plugins\n  TARDY_UVX_COMMAND        uvx-compatible Manim launcher\n  TARDY_AGENT_BIND         Webhook bind address"
