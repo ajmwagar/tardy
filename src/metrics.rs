@@ -26,6 +26,22 @@ struct UsageLabels {
     window: String,
 }
 
+#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct PostUsageLabels {
+    kind: String,
+    window: String,
+    visibility: String,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+pub struct PostUsageSnapshot {
+    pub kind: String,
+    pub window: String,
+    pub visibility: String,
+    pub post_count: i64,
+    pub caption_characters: i64,
+}
+
 #[derive(Debug, sqlx::FromRow)]
 pub struct UsageSnapshot {
     pub kind: String,
@@ -48,6 +64,8 @@ pub struct Metrics {
     engagements: Family<UsageLabels, Gauge>,
     usage_last_success: Gauge,
     usage_failures: Counter,
+    posts_by_visibility: Family<PostUsageLabels, Gauge>,
+    caption_characters: Family<PostUsageLabels, Gauge>,
 }
 
 impl Metrics {
@@ -64,6 +82,8 @@ impl Metrics {
         let engagements = Family::<UsageLabels, Gauge>::default();
         let usage_last_success = Gauge::default();
         let usage_failures = Counter::default();
+        let posts_by_visibility = Family::<PostUsageLabels, Gauge>::default();
+        let caption_characters = Family::<PostUsageLabels, Gauge>::default();
         let build = Gauge::<i64, AtomicI64>::default();
         build.set(1);
 
@@ -89,6 +109,8 @@ impl Metrics {
             accounts_claimed.clone(),
         );
         registry.register("tardy_build_info", "Static service build marker.", build);
+        registry.register("tardy_posts_by_visibility", "Current persisted posts created in a rolling window by visibility and durable account kind.", posts_by_visibility.clone());
+        registry.register("tardy_post_caption_characters_sum", "Sum of PostgreSQL character lengths for posts created in a rolling window; divide by matching post count for an average.", caption_characters.clone());
         registry.register("tardy_active_accounts", "Distinct durable accounts with a product action in a rolling window, by durable account kind.", active_accounts.clone());
         registry.register(
             "tardy_active_publishers",
@@ -128,6 +150,8 @@ impl Metrics {
             engagements,
             usage_last_success,
             usage_failures,
+            posts_by_visibility,
+            caption_characters,
         }
     }
 
@@ -139,7 +163,18 @@ impl Metrics {
         self.accounts_claimed.inc();
     }
 
-    pub fn update_usage(&self, rows: Vec<UsageSnapshot>, timestamp: i64) {
+    pub fn update_usage(
+        &self,
+        rows: Vec<UsageSnapshot>,
+        posts: Vec<PostUsageSnapshot>,
+        timestamp: i64,
+    ) {
+        // Scrapes and snapshot publication share this lock: ratios never see a
+        // new character sum paired with an old post count.
+        let _registry_guard = self
+            .registry
+            .lock()
+            .expect("metrics registry lock poisoned");
         for row in rows {
             let labels = UsageLabels {
                 kind: row.kind,
@@ -155,6 +190,19 @@ impl Metrics {
                 .get_or_create(&labels)
                 .set(row.posts_created);
             self.engagements.get_or_create(&labels).set(row.engagements);
+        }
+        for row in posts {
+            let labels = PostUsageLabels {
+                kind: row.kind,
+                window: row.window,
+                visibility: row.visibility,
+            };
+            self.posts_by_visibility
+                .get_or_create(&labels)
+                .set(row.post_count);
+            self.caption_characters
+                .get_or_create(&labels)
+                .set(row.caption_characters);
         }
         self.usage_last_success.set(timestamp);
     }
@@ -254,13 +302,27 @@ mod tests {
             posts_created: 2,
             engagements: 3,
         };
-        metrics.update_usage(vec![row(5)], 100);
-        metrics.update_usage(vec![row(4)], 200);
+        metrics.update_usage(vec![row(5)], vec![], 100);
+        metrics.update_usage(
+            vec![row(4)],
+            vec![PostUsageSnapshot {
+                kind: "human".into(),
+                window: "24h".into(),
+                visibility: "private".into(),
+                post_count: 2,
+                caption_characters: 20,
+            }],
+            200,
+        );
         metrics.note_usage_failure();
         let output = metrics.encode().unwrap();
         assert!(output.contains("tardy_active_accounts{kind=\"human\",window=\"24h\"} 4"));
         assert!(output.contains("tardy_usage_last_success_timestamp_seconds 200"));
         assert!(output.contains("tardy_usage_collection_failures_total 1"));
         assert!(!output.contains("account_id"));
+        assert!(output.contains(
+            "tardy_posts_by_visibility{kind=\"human\",window=\"24h\",visibility=\"private\"} 2"
+        ));
+        assert!(output.contains("tardy_post_caption_characters_sum{kind=\"human\",window=\"24h\",visibility=\"private\"} 20"));
     }
 }

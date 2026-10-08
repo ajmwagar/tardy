@@ -25,6 +25,16 @@ tardy_active_accounts{kind="human",window="30d"}
 tardy_posts_created{window="24h"}
 tardy_active_publishers{window="24h"}
 tardy_engagement_events{window="24h"}
+# Post visibility mix: private, followers, or public (all are zero-filled).
+tardy_posts_by_visibility{window="24h"}
+# Current inventory across all ages, not lifetime creations/deletions.
+tardy_posts_by_visibility{window="all"}
+# Average caption length across groups, weighted by their number of posts.
+sum(tardy_post_caption_characters_sum{window="24h"})
+  / sum(tardy_posts_by_visibility{window="24h"})
+# Average public caption length by human/agent account kind.
+sum by (kind) (tardy_post_caption_characters_sum{window="24h",visibility="public"})
+  / sum by (kind) (tardy_posts_by_visibility{window="24h",visibility="public"})
 # Alert on a missing/stale snapshot, not on deceptively unchanged usage gauges.
 time() - tardy_usage_last_success_timestamp_seconds > 180
 increase(tardy_usage_collection_failures_total[5m]) > 0
@@ -34,6 +44,15 @@ Gauges replace snapshots; do not use `rate()` on them. On failure the last value
 remain and freshness stops advancing. Before the first successful snapshot,
 usage series are absent and the success timestamp is zero. For multiple API
 replicas use `max by (kind, window)` rather than summing duplicate snapshots.
+
+Caption length measures the raw stored caption, including Markdown and URLs.
+It uses PostgreSQL `char_length`: Unicode characters, not bytes or
+displayed grapheme clusters. The character sum and post count are gauges, not
+cumulative counters. A group with no posts has a count and sum of zero, so its
+average is undefined (`NaN`); show “no posts,” not a fabricated zero average.
+Deduplicate replicas with `max by (kind, window, visibility)` before aggregating
+visibility metrics. Both usage queries run in one read-only repeatable-read
+transaction; a failed query publishes neither snapshot.
 
 Manual verification: run the PostgreSQL fixture with `TEST_DATABASE_URL` and
 `cargo test --test usage_metrics_pg`, start the API against a development PG17
