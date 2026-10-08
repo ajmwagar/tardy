@@ -19,6 +19,23 @@ function fakeFetch(...replies: Reply[]) {
 
 const BASE = 'https://api.example.test/';
 
+describe('owned agent session chats', () => {
+  const session = { conversation_id: 'chat-1', title: 'Build the picker', installation_key: 'studio', status: 'available', last_activity_at: '2026-10-07T12:00:00Z' };
+  it('decodes sessions and uses the owner-only route', async () => {
+    const { api, calls } = await signedInClient({ status: 200, body: [session] });
+    expect(await api.agentSessions('agent/1')).toEqual([{ conversationId: 'chat-1', title: 'Build the picker', installationKey: 'studio', status: 'available', lastActivityAt: '2026-10-07T12:00:00.000Z' }]);
+    expect(calls[0].url).toBe(`${BASE}v1/agents/agent%2F1/sessions`);
+  });
+  it('rejects malformed sessions rather than quietly hiding them', async () => {
+    const { api } = await signedInClient({ status: 200, body: [{ ...session, status: 'idle' }] });
+    await expect(api.agentSessions('agent')).rejects.toBeInstanceOf(TardyWireError);
+  });
+  it('surfaces an ownership rejection', async () => {
+    const { api } = await signedInClient({ status: 403, body: { code: 'forbidden', message: 'Not your agent' } });
+    await expect(api.agentSessions('agent')).rejects.toMatchObject({ code: 'forbidden' });
+  });
+});
+
 const wireAccount = {
   id: 'acct-1',
   kind: 'human',
@@ -122,15 +139,51 @@ describe('HttpTardyApi: auth', () => {
   it('signs in without credentials, snake-casing the provider credential', async () => {
     const { fetch, calls } = fakeFetch({ status: 201, body: wireSignedIn() });
     const api = new HttpTardyApi({ baseUrl: BASE, fetch });
-    const signedIn = await api.signIn({ provider: 'github', code: 'c', codeVerifier: 'v', redirectUri: 'tardy://cb' });
-    expect(calls[0]).toMatchObject({ method: 'POST', url: 'https://api.example.test/v1/sessions' });
-    expect(calls[0].body).toEqual({ provider: 'github', code: 'c', code_verifier: 'v', redirect_uri: 'tardy://cb' });
+    const signedIn = await api.signIn({ provider: 'github', code: 'c', codeVerifier: 'v', state: 'bound-state', redirectUri: 'tardy://cb' });
+    expect(calls[0]).toMatchObject({ method: 'POST', url: 'https://api.example.test/v1/auth/github/complete' });
+    expect(calls[0].body).toEqual({ code: 'c', code_verifier: 'v', state: 'bound-state' });
     expect(calls[0].headers.Authorization).toBeUndefined();
     expect(signedIn).toEqual({
       session: { token: 'tok-1', accountId: 'acct-1', provider: 'github', expiresAt: '1970-01-01T00:00:00.000Z' },
       account: { id: 'acct-1', kind: 'human', handle: 'ada', name: 'Ada', avatarUrl: 'https://a', bio: '', verified: false, followers: 1, following: 2, postCount: 3 },
       onboardedAt: null,
     });
+  });
+
+  it('starts identity-only GitHub auth without sending a current session', async () => {
+    const { fetch, calls } = fakeFetch({ status: 200, body: { authorization_url: 'https://github.com/login/oauth/authorize', state: 'state', expires_at_ms: 600000 } });
+    const api = new HttpTardyApi({ baseUrl: BASE, fetch });
+    await expect(api.beginGithubSignIn('challenge')).resolves.toEqual({ authorizationUrl: 'https://github.com/login/oauth/authorize', state: 'state', expiresAt: '1970-01-01T00:10:00.000Z' });
+    expect(calls[0].body).toEqual({ code_challenge: 'challenge' });
+    expect(calls[0].headers.Authorization).toBeUndefined();
+  });
+
+  it('rejects GitHub credentials without a bound state before contacting the server', async () => {
+    const { fetch, calls } = fakeFetch();
+    const api = new HttpTardyApi({ baseUrl: BASE, fetch });
+    await expect(api.signIn({ provider: 'github', code: 'code', codeVerifier: 'v', redirectUri: 'tardy://cb' })).rejects.toThrow('server-bound');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('links GitHub only with an explicit link flag and authenticated human session', async () => {
+    const { api, calls } = await signedInClient({ status: 200, body: { authorization_url: 'https://github.com/login/oauth/authorize', state: 'state', expires_at_ms: 600000 } }, { status: 201, body: wireSignedIn() });
+    await api.beginGithubSignIn('challenge', true);
+    await api.linkIdentity({ provider: 'github', state: 'state', code: 'code', codeVerifier: 'verifier', redirectUri: 'tardy://auth/github' });
+    expect(calls[0].body).toEqual({ code_challenge: 'challenge', link: true });
+    expect(calls[1].body).toEqual({ code: 'code', code_verifier: 'verifier', state: 'state', link: true });
+    expect(calls[0].headers.Authorization).toBe('Bearer tok-1');
+    expect(calls[1].headers.Authorization).toBe('Bearer tok-1');
+  });
+
+  it('does not adopt a linked session belonging to another account', async () => {
+    const wrong = wireSignedIn();
+    wrong.session.account_id = 'other-account';
+    wrong.account.id = 'other-account';
+    const { api, calls } = await signedInClient({ status: 201, body: wrong }, { status: 200, body: [] });
+    await expect(api.linkIdentity({ provider: 'github', state: 'state', code: 'code', codeVerifier: 'verifier', redirectUri: 'tardy://auth/github' })).rejects.toThrow('preserve');
+    await api.followingIds();
+    expect(calls[1].headers.Authorization).toBe('Bearer tok-1');
+    expect(calls[1].headers['x-tardy-profile-id']).toBe('acct-1');
   });
 
   it('sends the bearer token and selected profile on every call after sign-in', async () => {
@@ -313,14 +366,14 @@ describe('HttpTardyApi: decoding', () => {
   });
 
   it('shares a tardy as a link to its URL, and reads it back as a tardy card', async () => {
-    const link = { id: 'l1', canonical_url: 'https://tardy.news/t/p9', provider: 'web', status: 'queued' };
-    const sent = wireMessage(3, 'https://tardy.news/t/p9', { sender_profile_id: 'acct-1', shared_link_id: 'l1' });
+    const link = { id: 'l1', canonical_url: 'https://tardy.news/viewer.html?id=p9', provider: 'web', status: 'queued' };
+    const sent = wireMessage(3, 'https://tardy.news/viewer.html?id=p9', { sender_profile_id: 'acct-1', shared_link_id: 'l1' });
     const { api, calls } = await signedInClient({ status: 201, body: link }, { status: 201, body: sent }, { status: 201, body: wireMessage(4, 'look') });
     const message = await api.sendMessage('t1', 'look', { sharedPostId: 'p9' });
     expect(message).toMatchObject({ text: '', sharedPost: { status: 'available', postId: 'p9' }, sharedLinkId: 'l1' });
     expect(calls.map((c) => [c.url.replace(BASE, '/'), c.body])).toEqual([
-      ['/v1/social/shared-links', { url: 'https://tardy.news/t/p9' }],
-      ['/v1/social/conversations/t1/messages', { body: 'https://tardy.news/t/p9', shared_link_id: 'l1' }],
+      ['/v1/social/shared-links', { url: 'https://tardy.news/viewer.html?id=p9' }],
+      ['/v1/social/conversations/t1/messages', { body: 'https://tardy.news/viewer.html?id=p9', shared_link_id: 'l1' }],
       ['/v1/social/conversations/t1/messages', { body: 'look' }],
     ]);
   });

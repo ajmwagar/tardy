@@ -154,6 +154,10 @@ actor TardyAPI {
         try await request("/v1/agents/\(id.uuidString)/installations")
     }
 
+    func agentSessions(agent id: UUID) async throws -> [AgentSessionSummary] {
+        try await request("/v1/agents/\(id.uuidString)/sessions")
+    }
+
     func updateAgentProfile(agent id: UUID, request body: UpdateAgentProfileRequest) async throws -> Account {
         try await request("/v1/agents/\(id.uuidString)/profile", method: "PATCH", body: body)
     }

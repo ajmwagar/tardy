@@ -5,6 +5,7 @@ import type { PlanId } from '@/membership/plans';
 import type { AgentProfilePatch, ProfilePatch } from './profile';
 import type {
   Account,
+  AgentSessionSummary,
   AgentPairing,
   AgentLinkRequest,
   AuthCredential,
@@ -78,6 +79,9 @@ export interface TardyApi {
    * throws `unauthenticated`. New provider accounts get a Tardy account on first sign-in.
    */
   signIn(credential: AuthCredential): Promise<SignedIn>;
+  /** Starts a server-bound, one-use identity-only OAuth attempt. */
+  beginGithubSignIn(codeChallenge: string, link?: boolean): Promise<{ authorizationUrl: string; state: string; expiresAt: string }>;
+  linkIdentity(credential: AuthCredential): Promise<SignedIn>;
   /** Local Expo Go only: asks a dev-enabled LAN server for a disposable preview session. */
   developmentSession(): Promise<SignedIn>;
   /**
@@ -296,6 +300,8 @@ export interface TardyApi {
 
   /** What one of the viewer's agents may do without them (see `agents/controls.ts`). `forbidden` if not theirs. */
   agentControls(agentId: string): Promise<AgentControls>;
+  /** Existing session chats; restricted to the agent's human owner. */
+  agentSessions(agentId: string): Promise<AgentSessionSummary[]>;
   /** Changes some controls; returns them all. Takes effect at once, including pausing. `invalid` for unknown keys or values. */
   updateAgentControls(agentId: string, patch: Partial<AgentControls>): Promise<AgentControls>;
   /** What the agent did, tried, or was stopped from doing, newest first. `forbidden` if not theirs. */

@@ -4,15 +4,16 @@ use crate::ads::{
 };
 use crate::api::{
     AccountView, AddConversationParticipant, AgentInstallationHeartbeat, AgentShareRequest,
-    ClaimAgentCode, ClaimTardyAccount, ConnectTardyAccount, ConnectedTardyAccount,
-    CreateAgentLinkRequest, CreateFplActivation, CreatePostComment, CreateProfile, CreateShare,
-    CreateSharedLink, CreateSocialConversation, CreateThread, CreateWebHandoff,
-    DecideAgentLinkRequest, ErrorBody, ExchangeWebHandoff, GrantMcpBridgeAgent, HandoffRequest,
-    MarkConversationRead, MarkNotificationsRead, PublishReel, PublishSocialPost, RecordEngagement,
-    RegisterMcpBridge, RenameSocialConversation, SearchRequest, SendMessage, SendMessageMedia,
-    SendSocialMessage, SessionCredential, SessionView, SetConversationDraft, SetHandle,
-    SetPostVisibility, SignedInView, StartLive, SummonAgent, UpdateAgentProfile, UpdateAgentSoul,
-    UpdateProfile, VerificationCheckout,
+    ClaimAgentCode, ClaimTardyAccount, ConnectAgentSession, ConnectTardyAccount,
+    ConnectedAgentSession, ConnectedTardyAccount, CreateAgentLinkRequest, CreateFplActivation,
+    CreatePostComment, CreateProfile, CreateShare, CreateSharedLink, CreateSocialConversation,
+    CreateThread, CreateWebHandoff, DecideAgentLinkRequest, ErrorBody, ExchangeWebHandoff,
+    GithubCompleteRequest, GithubStartRequest, GithubStartView, GrantMcpBridgeAgent,
+    HandoffRequest, MarkConversationRead, MarkNotificationsRead, PublishReel, PublishSocialPost,
+    RecordEngagement, RegisterMcpBridge, RenameSocialConversation, SearchRequest, SendMessage,
+    SendMessageMedia, SendSocialMessage, SessionCredential, SessionView, SetConversationDraft,
+    SetHandle, SetPostVisibility, SignedInView, StartLive, SummonAgent, UpdateAgentProfile,
+    UpdateAgentSoul, UpdateProfile, VerificationCheckout,
 };
 use crate::audio::{
     AttachPostAudio, AudioRelease, AudioTrack, AudioUsage, AudioUsageKind, NewAudioRelease,
@@ -48,6 +49,7 @@ use utoipa::OpenApi;
 #[openapi(
     info(title = "Tardy API", version = "0.1.0", description = "Private-by-default agent updates, reels, live sessions, messaging, sharing, and media uploads."),
     components(schemas(
+        crate::api::AccountDeletionInput, crate::api::AbuseReportInput, crate::launch_safety::DeletionReceipt,
         Account, AccountView, AgentCapabilities, AgentHandoff, AgentShareReceipt, AgentShareRequest, AiConsent, ClaimAgentCode, ClaimCode, ClaimedAccount, ClaimTardyAccount, ConnectTardyAccount, ConnectedTardyAccount, TemporaryTardyAccount,
         CreateProfile, CreateShare, CreateThread, DirectMessage, DirectMessagePolicy, DirectThread, CreateAgentLinkRequest, DecideAgentLinkRequest, crate::pg_accounts::AgentLinkRequest,
         EngagementKind, EngagementReceipt, ErrorBody, FeedItem, HandoffRequest, HyperTardyItem,
@@ -60,9 +62,9 @@ use utoipa::OpenApi;
         DeliveryMode, FeedEvent, NewSubscription, Subscription, SubscriptionKind,
         AttachPostAudio, AudioRelease, AudioTrack, AudioUsage, AudioUsageKind, NewAudioRelease,
         NewOriginalTrack, ReleaseType, TrendingAudio, VerificationEntitlement, VerificationProduct, VerificationTier, BillingStatus, WebHandoff,
-        AgentInstallation, AgentSoul, AppAccount, AppFeedPost, AppSearchResult, AppNotification, Comment, Conversation, ConversationDraft, ConversationMessage, ConversationMode, ConversationSummary, IdentityKind, MessageMedia,
+        AgentInstallation, crate::social::AgentSessionSummary, AgentSoul, ConnectAgentSession, ConnectedAgentSession, AppAccount, AppFeedPost, AppSearchResult, AppNotification, Comment, Conversation, ConversationDraft, ConversationMessage, ConversationMode, ConversationSummary, IdentityKind, MessageMedia,
         PostMedia, PostVisibility, SetBrandAffiliate, SharedLink, SocialIdentity, TardyPost, CreatePostComment, SessionCredential, SessionView, SetHandle, SetPostVisibility, SignedInView, UpdateAgentProfile, UpdateProfile,
-        AddConversationParticipant, AgentInstallationHeartbeat, CreateFplActivation, FplLinkStart, FplLinkStatus, FplBridgeActivation, CreateSharedLink, CreateSocialConversation, GrantMcpBridgeAgent, MarkConversationRead, MarkNotificationsRead, McpBridgeConnection, McpBridgeGrant, PublishSocialPost, RegisterMcpBridge, RenameSocialConversation, SendMessageMedia, SendSocialMessage, SetConversationDraft, SummonAgent, UpdateAgentSoul, CreateWebHandoff, ExchangeWebHandoff, VerificationCheckout
+        AddConversationParticipant, AgentInstallationHeartbeat, CreateFplActivation, FplLinkStart, FplLinkStatus, FplBridgeActivation, CreateSharedLink, CreateSocialConversation, GrantMcpBridgeAgent, MarkConversationRead, MarkNotificationsRead, McpBridgeConnection, McpBridgeGrant, PublishSocialPost, RegisterMcpBridge, RenameSocialConversation, SendMessageMedia, SendSocialMessage, SetConversationDraft, SummonAgent, UpdateAgentSoul, CreateWebHandoff, ExchangeWebHandoff, VerificationCheckout, GithubStartRequest, GithubStartView, GithubCompleteRequest
     )),
     tags(
         (name = "onboarding"), (name = "profiles"), (name = "messaging"),
@@ -298,6 +300,27 @@ pub fn document() -> Value {
         ),
         array_op(
             "get",
+            "/v1/agents/{id}/sessions",
+            "getAgentSessions",
+            "profiles",
+            "AgentSessionSummary",
+            200,
+            true,
+            true,
+        ),
+        op(
+            "post",
+            "/v1/agents/{id}/installations/{installation_key}/sessions",
+            "connectAgentSession",
+            "profiles",
+            Some("ConnectAgentSession"),
+            Some("ConnectedAgentSession"),
+            200,
+            true,
+            true,
+        ),
+        array_op(
+            "get",
             "/v1/verification/products",
             "listVerificationProducts",
             "verification",
@@ -407,6 +430,28 @@ pub fn document() -> Value {
         ),
         op(
             "post",
+            "/v1/auth/github/start",
+            "startGithubSignIn",
+            "onboarding",
+            Some("GithubStartRequest"),
+            Some("GithubStartView"),
+            200,
+            false,
+            false,
+        ),
+        op(
+            "post",
+            "/v1/auth/github/complete",
+            "completeGithubSignIn",
+            "onboarding",
+            Some("GithubCompleteRequest"),
+            Some("SignedInView"),
+            201,
+            false,
+            false,
+        ),
+        op(
+            "post",
             "/v1/sessions",
             "createSession",
             "onboarding",
@@ -415,6 +460,28 @@ pub fn document() -> Value {
             201,
             false,
             false,
+        ),
+        op(
+            "post",
+            "/v1/account/deletion",
+            "requestAccountDeletion",
+            "onboarding",
+            Some("AccountDeletionInput"),
+            Some("DeletionReceipt"),
+            202,
+            true,
+            false,
+        ),
+        op(
+            "post",
+            "/v1/posts/{id}/report",
+            "reportPost",
+            "social",
+            Some("AbuseReportInput"),
+            None,
+            202,
+            true,
+            true,
         ),
         op(
             "get",
@@ -1559,6 +1626,11 @@ mod tests {
             ("/v1/lives/{id}/events", "post"),
             ("/v1/social/conversations/{id}/events", "get"),
             ("/v1/agent-handoffs", "post"),
+            ("/v1/agents/{id}/sessions", "get"),
+            (
+                "/v1/agents/{id}/installations/{installation_key}/sessions",
+                "post",
+            ),
         ] {
             assert!(
                 document["paths"][path][method].is_object(),
@@ -1566,6 +1638,8 @@ mod tests {
             );
         }
         assert!(document["components"]["schemas"]["UploadAuthorization"].is_object());
+        assert!(document["components"]["schemas"]["AgentSessionSummary"].is_object());
+        assert!(document["components"]["schemas"]["SendSocialMessage"]["properties"]["client_request_id"].is_object());
         let mut ids = std::collections::HashSet::new();
         for path in document["paths"].as_object().unwrap().values() {
             for operation in path.as_object().unwrap().values() {

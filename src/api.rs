@@ -65,6 +65,7 @@ pub struct AppState {
     pub social: Option<Arc<PgSocialStore>>,
     pub audio: Option<Arc<PgAudioStore>>,
     pub apple_auth: Option<Arc<AppleAuthenticator>>,
+    pub github_auth: Option<Arc<crate::github_auth::GithubAuthenticator>>,
     pub web_billing: Option<Arc<PgWebBillingStore>>,
     pub mcp_bridges: Option<Arc<PgMcpBridgeStore>>,
     pub fpl_bridge: Option<Arc<crate::fpl_bridge::FplBridgeRuntime>>,
@@ -96,6 +97,7 @@ impl AppState {
             social: None,
             audio: None,
             apple_auth: None,
+            github_auth: None,
             web_billing: None,
             mcp_bridges: None,
             fpl_bridge: None,
@@ -121,6 +123,7 @@ impl AppState {
             social: None,
             audio: None,
             apple_auth: None,
+            github_auth: None,
             web_billing: None,
             mcp_bridges: None,
             fpl_bridge: None,
@@ -146,6 +149,7 @@ impl AppState {
             social: None,
             audio: None,
             apple_auth: None,
+            github_auth: None,
             web_billing: None,
             mcp_bridges: None,
             fpl_bridge: None,
@@ -192,6 +196,11 @@ impl AppState {
         self
     }
 
+    pub fn with_github_auth(mut self, value: crate::github_auth::GithubAuthenticator) -> Self {
+        self.github_auth = Some(Arc::new(value));
+        self
+    }
+
     pub fn with_web_billing(mut self, value: PgWebBillingStore) -> Self {
         self.web_billing = Some(Arc::new(value));
         self
@@ -232,6 +241,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]);
     Router::new()
         .route("/healthz", get(|| async { StatusCode::NO_CONTENT }))
+        .route("/readyz", get(readiness_endpoint))
         .route("/metrics", get(metrics_endpoint))
         .route("/openapi.json", get(openapi_endpoint))
         .route("/v1/verification/products", get(verification_products))
@@ -248,8 +258,12 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/llms.txt", get(llms_txt))
         .route("/mcp", post(crate::mcp::endpoint))
         .route("/v1/sessions", post(create_session))
+        .route("/v1/auth/github/start", post(start_github_oauth))
+        .route("/v1/auth/github/complete", post(complete_github_oauth))
         .route("/v1/dev/session", post(development_session))
         .route("/v1/session", get(current_session).delete(delete_session))
+        .route("/v1/account/deletion", post(request_account_deletion))
+        .route("/v1/posts/{id}/report", post(report_post))
         .route("/v1/profile", get(current_profile).patch(update_profile))
         .route("/v1/profile/avatar/generate", post(generate_profile_avatar))
         .route("/v1/avatars/{seed}", get(generated_avatar))
@@ -271,9 +285,14 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/v1/agents/{id}/installations",
             get(get_agent_installations),
         )
+        .route("/v1/agents/{id}/sessions", get(get_agent_sessions))
         .route(
             "/v1/agents/{id}/installations/{installation_key}",
             put(heartbeat_agent_installation),
+        )
+        .route(
+            "/v1/agents/{id}/installations/{installation_key}/sessions",
+            post(connect_agent_session),
         )
         .route(
             "/v1/mcp-bridges",
@@ -774,6 +793,8 @@ pub(crate) enum SessionCredential {
         authorization_code: String,
         nonce: String,
         full_name: Option<String>,
+        #[serde(default)]
+        link: bool,
     },
 }
 
@@ -814,6 +835,7 @@ pub(crate) struct SignedInView {
 
 async fn create_session(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(credential): Json<SessionCredential>,
 ) -> Result<(StatusCode, Json<SignedInView>), ApiError> {
     let accounts = state
@@ -826,6 +848,7 @@ async fn create_session(
             authorization_code,
             nonce,
             full_name,
+            link,
         } => {
             if authorization_code.trim().is_empty() {
                 return Err(ApiError::bad_request(
@@ -837,17 +860,148 @@ async fn create_session(
                 message: "Sign in with Apple is not configured".into(),
             })?;
             let identity = verifier.verify(&identity_token, &nonce).await?;
-            accounts
-                .sign_in_apple(
-                    &identity.subject,
-                    identity.email.as_deref(),
-                    full_name.as_deref(),
-                    &identity.assertion_digest,
-                    now_ms()?,
-                )
-                .await?
+            if let Some(account) = human_link_actor(&state, &headers, link).await? {
+                accounts
+                    .link_apple(
+                        account,
+                        &identity.subject,
+                        identity.email.as_deref(),
+                        full_name.as_deref(),
+                        &identity.assertion_digest,
+                        now_ms()?,
+                    )
+                    .await?
+            } else {
+                accounts
+                    .sign_in_apple(
+                        &identity.subject,
+                        identity.email.as_deref(),
+                        full_name.as_deref(),
+                        &identity.assertion_digest,
+                        now_ms()?,
+                    )
+                    .await?
+            }
         }
     };
+    Ok((
+        StatusCode::CREATED,
+        Json(signed_in_view(&state, session).await?),
+    ))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct GithubStartRequest {
+    code_challenge: String,
+    #[serde(default)]
+    link: bool,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct GithubStartView {
+    authorization_url: String,
+    state: String,
+    expires_at_ms: u64,
+}
+
+async fn human_link_actor(
+    state: &AppState,
+    headers: &HeaderMap,
+    linking: bool,
+) -> Result<Option<Uuid>, ApiError> {
+    if !linking {
+        return Ok(None);
+    }
+    let token = bearer_token(headers)?
+        .ok_or_else(|| ApiError::unauthorized("Sign in before linking a provider"))?;
+    // A human session, not an agent API key, is required to approve identity linking.
+    let session = state
+        .pg_accounts
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("PostgreSQL accounts are not configured"))?
+        .resume_human_session(token, now_ms()?)
+        .await
+        .map_err(|_| ApiError::unauthorized("invalid human session"))?;
+    Ok(Some(session.profile.account_id))
+}
+
+async fn start_github_oauth(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<GithubStartRequest>,
+) -> Result<Json<GithubStartView>, ApiError> {
+    let auth = state.github_auth.as_ref().ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        message: "GitHub sign-in is not configured".into(),
+    })?;
+    if !crate::github_auth::valid_challenge(&body.code_challenge) {
+        return Err(ApiError::bad_request("S256 code challenge is required"));
+    }
+    let actor = human_link_actor(&state, &headers, body.link).await?;
+    let now = now_ms()?;
+    let attempt = state
+        .pg_accounts
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("PostgreSQL accounts are not configured"))?
+        .begin_github_oauth(&body.code_challenge, actor, now)
+        .await?;
+    Ok(Json(GithubStartView {
+        authorization_url: auth.authorization_url(&attempt, &body.code_challenge),
+        state: attempt,
+        expires_at_ms: now + 600_000,
+    }))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct GithubCompleteRequest {
+    state: String,
+    code: String,
+    code_verifier: String,
+    #[serde(default)]
+    link: bool,
+}
+
+async fn complete_github_oauth(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<GithubCompleteRequest>,
+) -> Result<(StatusCode, Json<SignedInView>), ApiError> {
+    let auth = state.github_auth.as_ref().ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        message: "GitHub sign-in is not configured".into(),
+    })?;
+    let challenge = crate::github_auth::challenge(&body.code_verifier)
+        .ok_or_else(|| ApiError::bad_request("invalid code verifier"))?;
+    if body.code.is_empty() || body.code.len() > 1024 || body.state.len() > 256 {
+        return Err(ApiError::bad_request("invalid OAuth callback"));
+    }
+    let actor = human_link_actor(&state, &headers, body.link).await?;
+    let accounts = state
+        .pg_accounts
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("PostgreSQL accounts are not configured"))?;
+    // Burn the bound attempt before remote exchange. A failed exchange requires a fresh flow.
+    accounts
+        .consume_github_oauth(&body.state, &challenge, actor, now_ms()?)
+        .await?;
+    let identity = auth
+        .exchange(&body.code, &body.code_verifier)
+        .await
+        .map_err(|_| {
+            ApiError::unauthorized("GitHub authorization could not be verified; start again")
+        })?;
+    if identity.id == 0 {
+        return Err(ApiError::unauthorized("invalid GitHub identity"));
+    }
+    let session = accounts
+        .sign_in_github(
+            &identity.id.to_string(),
+            identity.name.as_deref().unwrap_or(&identity.login),
+            &body.state,
+            actor,
+            now_ms()?,
+        )
+        .await?;
     Ok((
         StatusCode::CREATED,
         Json(signed_in_view(&state, session).await?),
@@ -901,6 +1055,60 @@ async fn current_session(
         .await
         .map_err(|_| ApiError::unauthorized("invalid bearer token"))?;
     Ok(Json(signed_in_view(&state, session).await?))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct AccountDeletionInput {
+    confirmation: String,
+}
+
+async fn request_account_deletion(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(input): Json<AccountDeletionInput>,
+) -> Result<(StatusCode, Json<crate::launch_safety::DeletionReceipt>), ApiError> {
+    // Do not accept an irreversible user request before the completion worker is deployed.
+    if std::env::var("TARDY_ACCOUNT_DELETION_INTAKE_ENABLED").as_deref() != Ok("true") {
+        return Err(ApiError {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            message: "Account deletion rollout is not enabled".into(),
+        });
+    }
+    if input.confirmation != "DELETE" {
+        return Err(ApiError::bad_request("confirm deletion with DELETE"));
+    }
+    let account = authenticated_account(&state, &headers).await?;
+    let accounts = state
+        .pg_accounts
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("PostgreSQL account service unavailable"))?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(accounts.request_deletion(account).await?),
+    ))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct AbuseReportInput {
+    reason: String,
+    #[serde(default)]
+    details: String,
+}
+
+async fn report_post(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(input): Json<AbuseReportInput>,
+) -> Result<StatusCode, ApiError> {
+    if !crate::launch_safety::valid_report(&input.reason, &input.details) {
+        return Err(ApiError::bad_request("invalid report reason or details"));
+    }
+    let actor = authenticated_actor(&state, &headers).await?;
+    social_store(&state)?
+        .report_post(actor, id, &input.reason, &input.details)
+        .await?;
+    Ok(StatusCode::ACCEPTED)
 }
 
 async fn delete_session(
@@ -1025,6 +1233,45 @@ async fn get_agent_installations(
     Ok(Json(
         social_store(&state)?.agent_installations(owner, id).await?,
     ))
+}
+
+async fn get_agent_sessions(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<crate::social::AgentSessionSummary>>, ApiError> {
+    let owner = authenticated_account(&state, &headers).await?;
+    Ok(Json(social_store(&state)?.agent_sessions(owner, id).await?))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct ConnectAgentSession {
+    thread_id: String,
+    title: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct ConnectedAgentSession {
+    conversation_id: Uuid,
+}
+
+async fn connect_agent_session(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((id, installation)): Path<(Uuid, String)>,
+    Json(body): Json<ConnectAgentSession>,
+) -> Result<Json<ConnectedAgentSession>, ApiError> {
+    if authenticated_actor(&state, &headers).await? != id {
+        return Err(ApiError::forbidden(
+            "sessions may connect only their own agent",
+        ));
+    }
+    let conversation = social_store(&state)?
+        .connect_agent_session(id, &installation, &body.thread_id, &body.title)
+        .await?;
+    Ok(Json(ConnectedAgentSession {
+        conversation_id: conversation,
+    }))
 }
 
 async fn heartbeat_agent_installation(
@@ -2093,6 +2340,17 @@ async fn metrics_endpoint(State(state): State<Arc<AppState>>) -> Response {
     crate::metrics::response(&state.metrics)
 }
 
+/// Liveness stays cheap; readiness must not promote a disconnected PG runtime.
+async fn readiness_endpoint(State(state): State<Arc<AppState>>) -> StatusCode {
+    let Some(accounts) = &state.pg_accounts else {
+        return StatusCode::SERVICE_UNAVAILABLE;
+    };
+    match tokio::time::timeout(std::time::Duration::from_secs(2), accounts.readiness()).await {
+        Ok(Ok(())) => StatusCode::NO_CONTENT,
+        _ => StatusCode::SERVICE_UNAVAILABLE,
+    }
+}
+
 async fn openapi_endpoint() -> Json<serde_json::Value> {
     Json(crate::openapi::document())
 }
@@ -2327,6 +2585,8 @@ pub(crate) struct SendSocialMessage {
     body: String,
     shared_link_id: Option<Uuid>,
     #[serde(default)]
+    client_request_id: Option<Uuid>,
+    #[serde(default)]
     media: Vec<SendMessageMedia>,
 }
 
@@ -2458,7 +2718,14 @@ async fn send_social_message(
         });
     }
     let mut message = social_store(&state)?
-        .send_message(actor, id, &body.body, body.shared_link_id, &media)
+        .send_message_idempotent(
+            actor,
+            id,
+            &body.body,
+            body.shared_link_id,
+            &media,
+            body.client_request_id,
+        )
         .await?;
     hydrate_message_media(&state, &mut message).await?;
     Ok((StatusCode::CREATED, Json(message)))
@@ -4519,8 +4786,13 @@ impl From<PgAccountError> for ApiError {
                 status: StatusCode::CONFLICT,
                 message: value.to_string(),
             },
+            PgAccountError::IdentityConflict => Self {
+                status: StatusCode::CONFLICT,
+                message: value.to_string(),
+            },
             PgAccountError::InvalidEmail => Self::bad_request(value.to_string()),
             PgAccountError::AssertionReplayed => Self::unauthorized(value.to_string()),
+            PgAccountError::AccountUnavailable => Self::unauthorized(value.to_string()),
             PgAccountError::InvalidHandle => Self::bad_request(value.to_string()),
             PgAccountError::HandleConflict => Self {
                 status: StatusCode::CONFLICT,
@@ -4708,6 +4980,46 @@ impl From<AudioError> for ApiError {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn readiness_rejects_missing_and_closed_database() {
+        let state = AppState::in_memory("http://localhost").unwrap();
+        assert_eq!(
+            readiness_endpoint(State(Arc::new(state))).await,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://localhost/tardy_readiness_unused")
+            .unwrap();
+        pool.close().await;
+        let state = AppState::in_memory("http://localhost")
+            .unwrap()
+            .with_pg_accounts(PgAccountStore::new(pool));
+        assert_eq!(
+            readiness_endpoint(State(Arc::new(state))).await,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+    }
+
+    #[tokio::test]
+    async fn readiness_accepts_live_postgres() {
+        let Ok(url) = std::env::var("TEST_DATABASE_URL") else {
+            return;
+        };
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&url)
+            .await
+            .unwrap();
+        let state = AppState::in_memory("http://localhost")
+            .unwrap()
+            .with_pg_accounts(PgAccountStore::new(pool.clone()));
+        assert_eq!(
+            readiness_endpoint(State(Arc::new(state))).await,
+            StatusCode::NO_CONTENT
+        );
+        pool.close().await;
+    }
+
     #[test]
     fn profile_avatar_defaults_are_kind_specific_and_never_reel_media() {
         let human = super::dicebear_avatar_url(IdentityKind::Human, "avery fpl");

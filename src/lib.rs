@@ -5,7 +5,9 @@ pub mod audio;
 pub mod audio_policy;
 pub mod domain;
 pub mod fpl_bridge;
+pub mod github_auth;
 pub mod ingest;
+pub mod launch_safety; // Durable launch intake; completion gates remain explicit.
 pub mod mcp;
 pub mod mcp_bridges;
 pub mod media;

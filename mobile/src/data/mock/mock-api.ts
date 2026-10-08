@@ -336,6 +336,14 @@ export class MockTardyApi implements TardyApi {
     return this.delay(this.signedIn());
   }
 
+  async beginGithubSignIn(_codeChallenge: string): Promise<{ authorizationUrl: string; state: string; expiresAt: string }> {
+    throw new Error('Mock sign-in uses mock identity credentials, not external OAuth');
+  }
+
+  async linkIdentity(_credential: AuthCredential): Promise<SignedIn> {
+    throw new Error('Provider linking requires the real Tardy backend');
+  }
+
   async developmentSession() {
     await this.loadAuth();
     await this.auth.signIn(mockCredential.github('jamesmerrill'));
@@ -894,6 +902,12 @@ export class MockTardyApi implements TardyApi {
   async agentControls(agentId: string) {
     this.ownedAgent(agentId);
     return this.delay(this.controlsFor(agentId));
+  }
+
+  async agentSessions(agentId: string) {
+    this.ownedAgent(agentId);
+    // The preview has no native coding host; never invent connected sessions.
+    return this.delay([]);
   }
 
   async updateAgentControls(agentId: string, patch: Partial<AgentControls>) {

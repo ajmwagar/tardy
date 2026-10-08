@@ -3,7 +3,7 @@ import { useSyncExternalStore } from 'react';
 import { sessionTokenStorage } from '@/auth/keychain';
 import { createAuth, type AuthState } from '@/auth/session';
 import { mockIdentity } from '@/data/mock/mock-identity';
-import { nativeIdentity } from '@/auth/native-identity';
+import { createNativeIdentity } from '@/auth/native-identity';
 import { unregisterPush } from '@/notifications/push';
 
 import { api, bootstrap, flushEngagement, resetViewerState, usesMockBackend } from './store';
@@ -12,7 +12,7 @@ import { api, bootstrap, flushEngagement, resetViewerState, usesMockBackend } fr
 export const auth = createAuth({
   api,
   storage: sessionTokenStorage,
-  identity: usesMockBackend ? mockIdentity : nativeIdentity,
+  identity: usesMockBackend ? mockIdentity : createNativeIdentity((challenge, link) => api.beginGithubSignIn(challenge, link)),
   onSignedIn: () => bootstrap(),
   // While the outgoing session can still authenticate: send its engagement log, and
   // unregister this device's push token so the next person here gets none of its pushes.

@@ -94,6 +94,10 @@ resource "fpl_postgres_database" "primary" {
   lifecycle { prevent_destroy = true }
 }
 
+locals {
+  native_apple_client_id = jsondecode(file("${path.module}/../mobile/app.json")).expo.ios.bundleIdentifier
+}
+
 resource "fpl_shroud_service" "api" {
   project    = var.project
   name       = "api"
@@ -102,16 +106,26 @@ resource "fpl_shroud_service" "api" {
   memory_mib = var.api_memory_mib
   rollout    = "blue_green"
 
-  bindings = {
+  bindings = merge({
     media    = fpl_storage_bucket.media.binding_ref
     postgres = fpl_postgres_database.primary.binding_ref
-  }
+  }, var.github_binding_ref == null ? {} : { github = var.github_binding_ref })
 
-  env = {
+  env = merge({
     TARDY_BIND            = "0.0.0.0:3000"
     TARDY_PUBLIC_BASE_URL = "https://${var.api_domain}"
-    APPLE_CLIENT_ID       = var.apple_client_id
+    APPLE_CLIENT_ID       = var.apple_client_id == null ? local.native_apple_client_id : var.apple_client_id
     RUST_LOG              = "info"
+    }, var.github_client_id == null ? {} : {
+    GITHUB_CLIENT_ID    = var.github_client_id
+    GITHUB_REDIRECT_URI = var.github_redirect_uri
+  })
+
+  lifecycle {
+    precondition {
+      condition     = (var.github_client_id == null) == (var.github_binding_ref == null)
+      error_message = "Enable GitHub with both its public client ID and opaque credential binding."
+    }
   }
 
   port {
@@ -123,7 +137,7 @@ resource "fpl_shroud_service" "api" {
 
   health {
     type            = "http"
-    path            = "/healthz"
+    path            = "/readyz"
     expected_status = 204
   }
 }

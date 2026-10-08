@@ -56,12 +56,37 @@ variable "api_domain" {
 
 variable "apple_client_id" {
   type        = string
-  default     = "dev.fpl.tardy"
-  description = "Sign in with Apple audience. For the native app this is the immutable iOS bundle identifier, not a secret."
+  default     = null
+  nullable    = true
+  description = "Optional Apple audience override; otherwise derived from mobile/app.json's immutable iOS bundle identifier. Not a secret."
   validation {
-    condition     = length(trimspace(var.apple_client_id)) > 0
+    condition     = var.apple_client_id == null ? true : length(trimspace(var.apple_client_id)) > 0
     error_message = "Apple client ID must not be empty."
   }
+}
+
+variable "github_client_id" {
+  type        = string
+  default     = null
+  nullable    = true
+  description = "Public identity-only GitHub OAuth app client ID. Repository access uses a separate connector."
+}
+
+variable "github_binding_ref" {
+  type        = string
+  default     = null
+  nullable    = true
+  description = "Opaque runtime binding containing GITHUB_CLIENT_SECRET only; never put the secret in tfvars/state."
+  validation {
+    condition     = var.github_binding_ref == null ? true : startswith(var.github_binding_ref, "binding://")
+    error_message = "GitHub credentials require an opaque binding:// reference."
+  }
+}
+
+variable "github_redirect_uri" {
+  type        = string
+  default     = "https://tardy.news/auth/github.html"
+  description = "Exact HTTPS callback registered on the identity-only GitHub OAuth app. No caller-supplied redirects."
 }
 
 variable "api_cpu" {

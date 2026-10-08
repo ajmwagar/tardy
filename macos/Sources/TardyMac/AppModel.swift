@@ -177,6 +177,20 @@ final class AppModel {
         } catch { show(error) }
     }
 
+    func openAgentSession(_ session: AgentSessionSummary) async -> Bool {
+        let viewer = account?.id
+        let environment = serverEnvironment
+        destination = .messages
+        await refreshInbox()
+        guard !Task.isCancelled, account?.id == viewer, serverEnvironment == environment else { return false }
+        guard conversations.contains(where: { $0.id == session.conversationId }) else {
+            errorMessage = "This session’s chat could not be loaded. Refresh and try again."
+            return false
+        }
+        select(session.conversationId)
+        return true
+    }
+
     func saveAgentSettings(
         agent: Account,
         displayName: String,

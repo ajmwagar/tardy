@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer"><meta name="robots" content="noindex">
+<title>Return to Tardy</title><link rel="icon" href="/favicon.svg">
+<style>body{background:#09090b;color:#fafafa;font:18px system-ui;max-width:36rem;margin:15vh auto;padding:24px}a{color:#f5d547}</style>
+</head><body><h1>Continue in Tardy</h1><p id="status">Returning your GitHub sign-in to the app…</p><a id="return" hidden>Open Tardy</a>
+<script>
+  const params = new URLSearchParams(location.search);
+  const state = params.get('state');
+  const code = params.get('code');
+  const error = params.get('error');
+  // Never accept a caller-supplied redirect or put a Tardy/GitHub access token in the URL.
+  if (state && (code || error)) {
+    const callback = new URL('tardy://auth/github');
+    callback.searchParams.set('state', state);
+    if (code) callback.searchParams.set('code', code);
+    if (error) callback.searchParams.set('error', error);
+    history.replaceState(null, '', location.pathname);
+    const link = document.getElementById('return'); link.href = callback.href; link.hidden = false;
+    location.replace(callback.href);
+  } else { document.getElementById('status').textContent = 'This sign-in callback is incomplete. Start again from the Tardy app.'; }
+</script></body></html>

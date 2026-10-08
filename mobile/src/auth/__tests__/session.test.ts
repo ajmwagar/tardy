@@ -38,6 +38,35 @@ function launch(device: Device, credential: AuthCredential | null = mockCredenti
 
 const unauthenticated = expect.objectContaining({ name: 'TardyApiError', code: 'unauthenticated' });
 
+test('explicit provider linking preserves the current profile and persists its returned session', async () => {
+  const device = newDevice();
+  const { api, auth, identity } = launch(device);
+  await auth.bootstrap();
+  await auth.signIn('github');
+  await auth.completeOnboarding();
+  const before = auth.getState();
+  if (before.status !== 'signed_in') throw new Error('test must be signed in');
+  jest.spyOn(api, 'linkIdentity').mockResolvedValue(before.signedIn);
+  await auth.linkProvider('github');
+  expect(identity.authorize).toHaveBeenLastCalledWith('github', true);
+  expect(api.linkIdentity).toHaveBeenCalledWith(mockCredential.github('jamesmerrill'));
+  expect(auth.getState()).toEqual(before);
+  expect(device.keychain.peek()).toBe(before.signedIn.session.token);
+});
+
+test('linking failure does not sign out the existing account', async () => {
+  const device = newDevice();
+  const { api, auth } = launch(device);
+  await auth.bootstrap();
+  await auth.signIn('github');
+  await auth.completeOnboarding();
+  const before = auth.getState();
+  jest.spyOn(api, 'linkIdentity').mockRejectedValue(new Error('already belongs to another account'));
+  await expect(auth.linkProvider('github')).rejects.toThrow('another account');
+  expect(auth.getState()).toEqual(before);
+  expect(device.keychain.peek()).not.toBeNull();
+});
+
 test('signed out → signed in → onboarded → signed out', async () => {
   const device = newDevice();
   const { api, auth, onSignedIn, onSignedOut } = launch(device);

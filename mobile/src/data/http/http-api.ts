@@ -3,6 +3,7 @@ import { TardyApiError, type TardyApi, type TardyApiErrorCode } from '../api';
 import type { AgentProfilePatch, ProfilePatch } from '../profile';
 import type {
   Account,
+  AgentSessionSummary,
   AgentPairing,
   AgentLinkRequest,
   AuthCredential,
@@ -210,9 +211,39 @@ export class HttpTardyApi implements TardyApi {
   // MARK: auth
 
   async signIn(credential: AuthCredential): Promise<SignedIn> {
+    if (credential.provider === 'github') {
+      if (!credential.state) throw new Error('GitHub sign-in must begin with a server-bound OAuth attempt');
+      return this.adopt(await this.request('POST', '/v1/auth/github/complete', {
+        body: { code: credential.code, code_verifier: credential.codeVerifier, state: credential.state },
+        decode: W.signedIn, auth: 'none', timeoutMs: AUTH_REQUEST_TIMEOUT_MS,
+      }));
+    }
     return this.adopt(await this.request('POST', '/v1/sessions', {
       body: snakeKeys(credential), decode: W.signedIn, auth: 'none', timeoutMs: AUTH_REQUEST_TIMEOUT_MS,
     }));
+  }
+
+  async beginGithubSignIn(codeChallenge: string, link = false) {
+    return this.request('POST', '/v1/auth/github/start', {
+      body: { code_challenge: codeChallenge, ...(link ? { link: true } : {}) }, auth: link ? 'session' : 'none',
+      decode: object({ authorizationUrl: string, state: string, expiresAt: timeMs }),
+    });
+  }
+
+  async linkIdentity(credential: AuthCredential): Promise<SignedIn> {
+    const before = this.current;
+    if (!before) throw new Error('Sign in before linking a provider');
+    if (credential.provider !== 'github' && credential.provider !== 'apple') throw new Error('Provider linking is not supported');
+    if (credential.provider === 'github' && !credential.state) throw new Error('GitHub linking requires a server-bound attempt');
+    const route = credential.provider === 'github' ? '/v1/auth/github/complete' : '/v1/sessions';
+    const body = credential.provider === 'github'
+      ? { code: credential.code, code_verifier: credential.codeVerifier, state: credential.state, link: true }
+      : { ...snakeKeys(credential), link: true };
+    const linked = await this.request('POST', route, { body, decode: W.signedIn, timeoutMs: AUTH_REQUEST_TIMEOUT_MS });
+    if (this.current !== before || linked.session.accountId !== before.accountId || linked.account.id !== before.accountId) {
+      throw new Error('Provider linking must preserve the current account and session');
+    }
+    return this.adopt(linked);
   }
 
   async developmentSession(): Promise<SignedIn> {
@@ -589,6 +620,10 @@ export class HttpTardyApi implements TardyApi {
 
   agentControls(agentId: string): Promise<AgentControls> {
     return this.request('GET', `/v1/agents/${segment(agentId)}/controls`, { decode: W.agentControls });
+  }
+
+  agentSessions(agentId: string): Promise<AgentSessionSummary[]> {
+    return this.request('GET', `/v1/agents/${segment(agentId)}/sessions`, { decode: array(W.agentSession) });
   }
 
   updateAgentControls(agentId: string, patch: Partial<AgentControls>): Promise<AgentControls> {

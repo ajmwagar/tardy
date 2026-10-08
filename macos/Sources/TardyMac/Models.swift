@@ -50,6 +50,25 @@ struct AgentInstallation: Codable, Identifiable, Equatable, Sendable {
     let lastSeenAt: String
 }
 
+struct AgentSessionSummary: Codable, Identifiable, Equatable, Sendable {
+    var id: UUID { conversationId }
+    let conversationId: UUID
+    let title: String
+    let installationKey: String
+    let status: String
+    let lastActivityAt: String
+
+    var statusLabel: String {
+        switch status {
+        case "available": "Host online"
+        case "working": "Streaming"
+        case "paused": "Host paused"
+        case "disconnected": "Host offline"
+        default: "Status unavailable"
+        }
+    }
+}
+
 struct UpdateAgentSoulRequest: Encodable, Sendable {
     let expectedRevision: Int64
     let publicSummary: String

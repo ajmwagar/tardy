@@ -17,6 +17,7 @@ import {
   type SpendKey,
 } from '@/agents/controls';
 import { BackFallback } from '@/components/back-fallback';
+import { AgentSessionsSection } from '@/components/agent-sessions';
 import { SettingsChoice, SettingsRow, SettingsSection, SettingsToggle } from '@/components/settings-ui';
 import { ErrorState, Pulse, SkeletonBlock } from '@/components/states';
 import { Avatar, NameLine } from '@/components/ui';
@@ -182,6 +183,7 @@ export default function AgentControlsScreen() {
         <SettingsRow icon="person.crop.square" title="View profile" onPress={() => agent && router.push({ pathname: '/profile/[handle]', params: { handle: agent.handle } })} last />
       </SettingsSection>
 
+      <AgentSessionsSection agentId={agentId} />
       <SettingsSection title="Sessions" footer="Each conversation has its own resumable session. Different conversations can work at the same time; messages inside one conversation stay ordered.">
         <SettingsRow
           icon="terminal"

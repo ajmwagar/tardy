@@ -443,14 +443,15 @@ export type AuthProvider = 'github' | 'apple' | 'google' | 'x' | 'email';
 /**
  * One-time proof from an identity provider, exchanged for a Tardy session. The server
  * verifies it with the provider (it holds the client secrets); provider tokens never
- * reach the client. Wire: `POST /sessions` with `{ "provider": ..., ...snake_case fields }`.
+ * reach the client. Apple uses `POST /sessions`; GitHub uses the bound start/complete flow.
  * - `github`: an OAuth authorization code from GitHub's web flow, with its PKCE verifier
- *   and the redirect URI it was issued for.
+ *   and server-issued state. The server owns the exact provider redirect URI.
+ *   `state` is optional only for built-in mock credentials; HTTP rejects it when absent.
  * - `apple`: Sign in with Apple's identity token and authorization code, plus the raw
  *   nonce whose hash is in the token. Apple sends the name only on first authorization.
  */
 export type AuthCredential =
-  | { provider: 'github'; code: string; codeVerifier: string; redirectUri: string }
+  | { provider: 'github'; code: string; codeVerifier: string; redirectUri: string; state?: string }
   | { provider: 'apple'; identityToken: string; authorizationCode: string; nonce: string; fullName?: string }
   /** Google Sign-In (covers Gmail): the ID token, plus the raw nonce whose hash is in it. */
   | { provider: 'google'; idToken: string; nonce: string }
@@ -489,3 +490,11 @@ export type SignedIn = {
   account: Account;
   onboardedAt: string | null;
 };
+/** Owner-only chats connected to existing native coding sessions. */
+export interface AgentSessionSummary {
+  conversationId: string;
+  title: string;
+  installationKey: string;
+  status: 'available' | 'working' | 'paused' | 'disconnected';
+  lastActivityAt: string;
+}

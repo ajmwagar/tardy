@@ -34,11 +34,11 @@ export type TokenStorage = {
  * Resolves null when the person cancels.
  */
 export type IdentityProvider = {
-  authorize(provider: AuthProvider): Promise<AuthCredential | null>;
+  authorize(provider: AuthProvider, link?: boolean): Promise<AuthCredential | null>;
 };
 
 export type AuthDeps = {
-  api: Pick<TardyApi, 'signIn' | 'developmentSession' | 'resumeSession' | 'signOut' | 'completeOnboarding'>;
+  api: Pick<TardyApi, 'signIn' | 'developmentSession' | 'resumeSession' | 'signOut' | 'completeOnboarding'> & Partial<Pick<TardyApi, 'linkIdentity'>>;
   storage: TokenStorage;
   identity: IdentityProvider;
   /** Loads per-viewer client state (account, follows). Runs before any gated screen shows. */
@@ -134,6 +134,22 @@ export function createAuth(deps: AuthDeps) {
     /** One-tap providers (GitHub, Apple, Google, X): runs the provider's sheet, then signs in. */
     signIn(provider: AuthProvider): Promise<void> {
       return attempt(() => deps.identity.authorize(provider));
+    },
+
+    /** Explicit linking keeps the currently authenticated human account. */
+    async linkProvider(provider: 'github' | 'apple'): Promise<void> {
+      if (state.status !== 'signed_in') throw new Error('Sign in before linking a provider');
+      if (!deps.api.linkIdentity) throw new Error('Provider linking is unavailable');
+      const accountId = state.signedIn.account.id;
+      const token = state.signedIn.session.token;
+      const credential = await deps.identity.authorize(provider, true);
+      if (!credential) return;
+      if (state.status !== 'signed_in' || state.signedIn.account.id !== accountId || state.signedIn.session.token !== token) {
+        throw new Error('Your session changed while linking; start again');
+      }
+      const signedIn = await deps.api.linkIdentity(credential);
+      if (signedIn.account.id !== accountId) throw new Error('Linked identity returned a different account');
+      await enter(signedIn);
     },
 
     /** Passwordless email, with the code `api.requestEmailCode(email)` sent. */

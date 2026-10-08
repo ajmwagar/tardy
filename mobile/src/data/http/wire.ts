@@ -6,6 +6,7 @@ import { parseTardyUrl } from '@/share/links';
 
 import type {
   Account,
+  AgentSessionSummary,
   AgentPairing,
   AccountKind,
   AuthProvider,
@@ -227,7 +228,7 @@ const sharedPost: Decoder<SharedPostRef> = tagged<SharedPostRef>('status', {
 
 /**
  * The social `ConversationMessage`, plus its `sequence` (the paging cursor). A tardy shared
- * into a conversation travels as a shared link to its `tardy.news/t/{id}` URL in the body
+ * into a conversation travels as a shared link to its Tardy viewer URL in the body
  * (the server has no shared-post field); it decodes back to `sharedPost` so it renders as a
  * tardy card. `shared_post` (proposed) wins when the server sends it.
  */
@@ -336,6 +337,13 @@ export const postSuggestion: Decoder<PostSuggestion> = object<PostSuggestion>({
 });
 
 const ACTION_MODES = ['auto', 'ask', 'off'] as const;
+export const agentSession: Decoder<AgentSessionSummary> = object<AgentSessionSummary>({
+  conversationId: wire('conversation_id', string),
+  title: string,
+  installationKey: wire('installation_key', string),
+  status: oneOf(['available', 'working', 'paused', 'disconnected'] as const),
+  lastActivityAt: wire('last_activity_at', isoTime),
+});
 const AUDIENCES = ['private', 'followers', 'public'] as const;
 
 /** `GET /v1/agents/{id}/controls`: what one of the viewer's agents may do without them. */

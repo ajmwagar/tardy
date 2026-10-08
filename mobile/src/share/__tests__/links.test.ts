@@ -23,5 +23,12 @@ describe('tardy URLs', () => {
     expect(parseTardyUrl(tardyUrl('post-1'))).toBe('post-1');
     expect(parseTardyUrl('https://tardy.news/t/abc?x=1')).toBe('abc');
     expect(parseTardyUrl('https://example.com/t/abc')).toBeNull();
+    expect(tardyUrl('post-1')).toBe('https://tardy.news/viewer.html?id=post-1');
+    expect(parseTardyUrl('https://tardy.news/viewer.html?id=post-1')).toBe('post-1');
+    expect(parseTardyUrl('https://example.com/viewer.html?id=post-1')).toBeNull();
+    expect(parseTardyUrl('https://tardy.news/viewer.html?id=a&id=b')).toBeNull();
+    expect(parseTardyUrl('https://tardy.news/viewer.html?demo=1')).toBeNull();
+    expect(parseTardyUrl('https://tardy.news/t/%ZZ')).toBeNull();
+    expect(parseTardyUrl('https://attacker@tardy.news/viewer.html?id=a')).toBeNull();
   });
 });

@@ -16,7 +16,7 @@ pub enum PgAccountError {
     Push(#[from] crate::push::PushError),
     #[error("claim code is invalid or expired")]
     InvalidClaim,
-    #[error("email already has an account")]
+    #[error("email already has an account; sign in to it and explicitly link this provider")]
     EmailConflict,
     #[error("email address is invalid")]
     InvalidEmail,
@@ -24,6 +24,10 @@ pub enum PgAccountError {
     Timestamp,
     #[error("identity assertion has already been used")]
     AssertionReplayed,
+    #[error("provider identity is already linked to another account")]
+    IdentityConflict,
+    #[error("account is unavailable")]
+    AccountUnavailable,
     #[error("handle must be 3 to 30 lowercase letters, numbers, dots, or underscores")]
     InvalidHandle,
     #[error("handle is already taken")]
@@ -84,6 +88,19 @@ fn link_request(row: sqlx::postgres::PgRow) -> Result<AgentLinkRequest, PgAccoun
 impl PgAccountStore {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
+    }
+
+    /// Bounded by the caller; validates the shared runtime database connection.
+    pub async fn readiness(&self) -> Result<(), sqlx::Error> {
+        sqlx::query("SELECT 1").execute(&self.pool).await?;
+        Ok(())
+    }
+
+    pub async fn request_deletion(
+        &self,
+        account: Uuid,
+    ) -> Result<crate::launch_safety::DeletionReceipt, PgAccountError> {
+        Ok(crate::launch_safety::request_deletion(&self.pool, account).await?)
     }
 
     pub async fn issue_human_claim(&self, now_ms: u64) -> Result<ClaimCode, PgAccountError> {
@@ -336,12 +353,12 @@ impl PgAccountStore {
     pub async fn authenticate(&self, token: &str, now_ms: u64) -> Result<Uuid, PgAccountError> {
         let token_hash = hash(token);
         let now = timestamp(now_ms)?;
-        if let Some(account) = sqlx::query_scalar("SELECT account_id FROM auth_sessions WHERE token_hash=$1 AND revoked_at IS NULL AND expires_at>$2")
+        if let Some(account) = sqlx::query_scalar("SELECT account_id FROM auth_sessions s WHERE token_hash=$1 AND revoked_at IS NULL AND expires_at>$2 AND NOT EXISTS(SELECT 1 FROM account_deletion_requests d WHERE d.account_id=s.account_id)")
             .bind(&token_hash).bind(now).fetch_optional(&self.pool).await?
         {
             return Ok(account);
         }
-        sqlx::query_scalar("SELECT account_id FROM account_api_tokens WHERE token_hash=$1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>$2)")
+        sqlx::query_scalar("SELECT account_id FROM account_api_tokens s WHERE token_hash=$1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>$2) AND NOT EXISTS(SELECT 1 FROM account_deletion_requests d WHERE d.account_id=s.account_id)")
             .bind(token_hash).bind(now).fetch_optional(&self.pool).await?.ok_or(PgAccountError::InvalidClaim)
     }
 
@@ -353,6 +370,97 @@ impl PgAccountStore {
         assertion_digest: &[u8],
         now_ms: u64,
     ) -> Result<HumanSession, PgAccountError> {
+        self.sign_in_provider(
+            "apple",
+            subject,
+            email,
+            display_name,
+            assertion_digest,
+            None,
+            now_ms,
+        )
+        .await
+    }
+
+    pub async fn begin_github_oauth(
+        &self,
+        challenge: &str,
+        link_account: Option<Uuid>,
+        now_ms: u64,
+    ) -> Result<String, PgAccountError> {
+        let state = new_token();
+        sqlx::query("INSERT INTO github_oauth_attempts(state_hash,code_challenge,link_account_id,expires_at) VALUES ($1,$2,$3,$4)")
+            .bind(hash(&state)).bind(challenge).bind(link_account).bind(timestamp(now_ms + 600_000)?).execute(&self.pool).await?;
+        Ok(state)
+    }
+
+    pub async fn link_apple(
+        &self,
+        account: Uuid,
+        subject: &str,
+        email: Option<&str>,
+        display_name: Option<&str>,
+        assertion_digest: &[u8],
+        now_ms: u64,
+    ) -> Result<HumanSession, PgAccountError> {
+        self.sign_in_provider(
+            "apple",
+            subject,
+            email,
+            display_name,
+            assertion_digest,
+            Some(account),
+            now_ms,
+        )
+        .await
+    }
+
+    pub async fn consume_github_oauth(
+        &self,
+        state: &str,
+        challenge: &str,
+        actor: Option<Uuid>,
+        now_ms: u64,
+    ) -> Result<(), PgAccountError> {
+        let result = sqlx::query("UPDATE github_oauth_attempts SET consumed_at=$1 WHERE state_hash=$2 AND code_challenge=$3 AND link_account_id IS NOT DISTINCT FROM $4 AND expires_at>$1 AND consumed_at IS NULL")
+            .bind(timestamp(now_ms)?).bind(hash(state)).bind(challenge).bind(actor).execute(&self.pool).await?;
+        if result.rows_affected() != 1 {
+            return Err(PgAccountError::AssertionReplayed);
+        }
+        Ok(())
+    }
+
+    pub async fn sign_in_github(
+        &self,
+        subject: &str,
+        display_name: &str,
+        state: &str,
+        link_account: Option<Uuid>,
+        now_ms: u64,
+    ) -> Result<HumanSession, PgAccountError> {
+        // GitHub numeric ID is the identity; mutable login/email never select an account.
+        self.sign_in_provider(
+            "github",
+            subject,
+            None,
+            Some(display_name),
+            &hash(state),
+            link_account,
+            now_ms,
+        )
+        .await
+    }
+
+    async fn sign_in_provider(
+        &self,
+        provider: &str,
+        subject: &str,
+        email: Option<&str>,
+        display_name: Option<&str>,
+        assertion_digest: &[u8],
+        link_account: Option<Uuid>,
+        now_ms: u64,
+    ) -> Result<HumanSession, PgAccountError> {
         let now = timestamp(now_ms)?;
         let expires_at_ms = now_ms
             .checked_add(HUMAN_SESSION_TTL_MS)
@@ -360,21 +468,25 @@ impl PgAccountStore {
         let expires = timestamp(expires_at_ms)?;
         let email = email.map(normalize_email).transpose()?;
         let mut tx = self.pool.begin().await?;
-        let inserted = sqlx::query("INSERT INTO auth_assertions (provider,assertion_hash,used_at) VALUES ('apple',$1,$2) ON CONFLICT DO NOTHING")
-            .bind(assertion_digest).bind(now).execute(&mut *tx).await?;
+        let inserted = sqlx::query("INSERT INTO auth_assertions (provider,assertion_hash,used_at) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING")
+            .bind(provider).bind(assertion_digest).bind(now).execute(&mut *tx).await?;
         if inserted.rows_affected() != 1 {
             return Err(PgAccountError::AssertionReplayed);
         }
 
         let existing: Option<Uuid> = sqlx::query_scalar(
-            "SELECT account_id FROM auth_identities WHERE provider='apple' AND subject=$1",
+            "SELECT account_id FROM auth_identities WHERE provider=$1 AND subject=$2",
         )
+        .bind(provider)
         .bind(subject)
         .fetch_optional(&mut *tx)
         .await?;
         let account_id = if let Some(account_id) = existing {
-            sqlx::query("UPDATE auth_identities SET last_used_at=$1,email=COALESCE($2,email) WHERE provider='apple' AND subject=$3")
-                .bind(now).bind(&email).bind(subject).execute(&mut *tx).await?;
+            if link_account.is_some_and(|owner| owner != account_id) {
+                return Err(PgAccountError::IdentityConflict);
+            }
+            sqlx::query("UPDATE auth_identities SET last_used_at=$1,email=COALESCE($2,email) WHERE provider=$3 AND subject=$4")
+                .bind(now).bind(&email).bind(provider).bind(subject).execute(&mut *tx).await?;
             account_id
         } else {
             let matching_email: Option<Uuid> = if let Some(email) = &email {
@@ -383,31 +495,35 @@ impl PgAccountStore {
             } else {
                 None
             };
-            let account_id = matching_email.unwrap_or_else(Uuid::new_v4);
-            if matching_email.is_none() {
+            if matching_email.is_some() && link_account.is_none() {
+                return Err(PgAccountError::EmailConflict);
+            }
+            let account_id = link_account.unwrap_or_else(Uuid::new_v4);
+            if link_account.is_none() {
                 sqlx::query("INSERT INTO durable_accounts (id,email,kind,temporary,created_at) VALUES ($1,$2,'human',false,$3)")
                     .bind(account_id).bind(&email).bind(now).execute(&mut *tx).await?;
             }
-            sqlx::query("INSERT INTO auth_identities (provider,subject,account_id,email,created_at,last_used_at) VALUES ('apple',$1,$2,$3,$4,$4)")
-                .bind(subject).bind(account_id).bind(&email).bind(now).execute(&mut *tx).await?;
+            sqlx::query("INSERT INTO auth_identities (provider,subject,account_id,email,created_at,last_used_at) VALUES ($1,$2,$3,$4,$5,$5)")
+                .bind(provider).bind(subject).bind(account_id).bind(&email).bind(now).execute(&mut *tx).await?;
             account_id
         };
 
+        require_active_human(&mut tx, account_id).await?;
         let profile = ensure_human_profile(
             &mut tx,
             account_id,
-            subject,
+            &format!("{provider}:{subject}"),
             display_name.unwrap_or("Tardy User"),
             now,
         )
         .await?;
         let token = new_token();
-        sqlx::query("INSERT INTO auth_sessions (id,account_id,provider,token_hash,expires_at,created_at,last_used_at) VALUES ($1,$2,'apple',$3,$4,$5,$5)")
-            .bind(Uuid::new_v4()).bind(account_id).bind(hash(&token)).bind(expires).bind(now).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO auth_sessions (id,account_id,provider,token_hash,expires_at,created_at,last_used_at) VALUES ($1,$2,$3,$4,$5,$6,$6)")
+            .bind(Uuid::new_v4()).bind(account_id).bind(provider).bind(hash(&token)).bind(expires).bind(now).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(HumanSession {
             token,
-            provider: "apple".into(),
+            provider: provider.into(),
             expires_at_ms,
             profile,
         })
@@ -422,7 +538,8 @@ impl PgAccountStore {
         let row = sqlx::query(
             "SELECT s.provider,s.expires_at,p.account_id,p.profile_id,p.handle,p.display_name,p.bio,p.avatar_url,p.onboarded_at
              FROM auth_sessions s JOIN human_profiles p ON p.account_id=s.account_id
-             WHERE s.token_hash=$1 AND s.revoked_at IS NULL AND s.expires_at>$2",
+             WHERE s.token_hash=$1 AND s.revoked_at IS NULL AND s.expires_at>$2
+               AND NOT EXISTS(SELECT 1 FROM account_deletion_requests d WHERE d.account_id=s.account_id)",
         )
         .bind(hash(token))
         .bind(now)
@@ -460,6 +577,7 @@ impl PgAccountStore {
         .fetch_optional(&mut *tx)
         .await?
         .ok_or(PgAccountError::InvalidClaim)?;
+        require_active_human(&mut tx, account_id).await?;
         let mut profile =
             ensure_human_profile(&mut tx, account_id, "dev-preview", "James", now).await?;
         sqlx::query(
@@ -719,6 +837,32 @@ impl PgAccountStore {
 
 fn new_token() -> String {
     format!("tardy_{}", Uuid::new_v4().simple())
+}
+
+async fn require_active_human(
+    tx: &mut Transaction<'_, Postgres>,
+    account: Uuid,
+) -> Result<(), PgAccountError> {
+    // Share the account lock with deletion intake: issuance cannot race revocation.
+    let human: Option<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM durable_accounts WHERE id=$1 AND kind='human' AND NOT temporary FOR UPDATE",
+    )
+    .bind(account)
+    .fetch_optional(&mut **tx)
+    .await?;
+    if human.is_none() {
+        return Err(PgAccountError::AccountUnavailable);
+    }
+    let deleting: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM account_deletion_requests WHERE account_id=$1)",
+    )
+    .bind(account)
+    .fetch_one(&mut **tx)
+    .await?;
+    if deleting {
+        return Err(PgAccountError::AccountUnavailable);
+    }
+    Ok(())
 }
 
 async fn ensure_human_profile(

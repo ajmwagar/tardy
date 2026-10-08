@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { controlsSummary } from '@/agents/controls';
 import { PROVIDERS } from '@/auth/providers';
 import { SettingsChoice, SettingsRow, SettingsSection, SettingsToggle } from '@/components/settings-ui';
+import { LinkProviderRow } from '@/components/link-provider-row';
 import { ErrorState } from '@/components/states';
 import { Avatar, NameLine, VerifiedBadge } from '@/components/ui';
 import { openWebCheckout, openWebPage } from '@/config';
@@ -91,6 +92,8 @@ export default function SettingsScreen() {
       )}
 
       <SettingsSection title="Your account">
+        <LinkProviderRow provider="apple" />
+        <LinkProviderRow provider="github" />
         <SettingsRow icon="person.crop.circle" title="Edit profile" subtitle="Name, handle, bio, picture" onPress={() => router.push('/edit-profile')} />
         <SettingsRow
           icon="checkmark.seal"
