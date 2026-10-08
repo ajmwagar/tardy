@@ -31,6 +31,9 @@ final class AppModel {
     var commentDraft = ""
     var selectedProfile: Account?
     var profilePosts: [TardyPost] = []
+    var profileLoadError: String?
+    var isLoadingInbox = false
+    var inboxLoadError: String?
     var isLoadingContent = false
     var isLoadingComments = false
     var isLoadingProfile = false
@@ -229,6 +232,9 @@ final class AppModel {
 
     func refreshInbox() async {
         guard let account else { return }
+        isLoadingInbox = true
+        inboxLoadError = nil
+        defer { isLoadingInbox = false }
         do {
             let rows = try await api.conversations()
             conversations = Conversation.hidingRedundantEmptyDirects(rows.sorted {
@@ -241,7 +247,11 @@ final class AppModel {
                 profiles.forEach { accounts[$0.id] = $0 }
             }
             accounts[account.id] = account
-        } catch { show(error) }
+        } catch {
+            guard !Task.isCancelled, !isRequestCancellation(error) else { return }
+            inboxLoadError = error.localizedDescription
+            show(error)
+        }
     }
 
     func refreshReels() async {
@@ -312,6 +322,7 @@ final class AppModel {
         profileTask?.cancel()
         selectedProfile = accounts[id]
         profilePosts = []
+        profileLoadError = nil
         isLoadingProfile = true
         profileTask = Task { [weak self] in
             guard let self else { return }
@@ -327,7 +338,9 @@ final class AppModel {
                 prefetchPosters(in: page.items)
             } catch is CancellationError {
             } catch {
+                guard !Task.isCancelled else { return }
                 isLoadingProfile = false
+                profileLoadError = error.localizedDescription
                 show(error)
             }
         }
@@ -455,9 +468,7 @@ final class AppModel {
         guard destination == .messages, selectedConversationId == id else { return }
         do {
             let after = messages.last?.sequence ?? 0
-            async let messageRequest = api.messages(conversation: id, after: after)
-            async let typingRequest = api.typing(conversation: id)
-            let (fresh, typing) = try await (messageRequest, typingRequest)
+            let fresh = try await api.messages(conversation: id, after: after)
             try Task.checkCancellation()
             guard destination == .messages, selectedConversationId == id else { return }
             if !fresh.isEmpty {
@@ -466,7 +477,12 @@ final class AppModel {
                     try? await api.markRead(conversation: id, through: last.id)
                 }
             }
-            typingProfileIds = typing
+            // A presence failure must not discard successfully loaded messages.
+            do {
+                let typing = try await api.typing(conversation: id)
+                guard !Task.isCancelled, destination == .messages, selectedConversationId == id else { return }
+                typingProfileIds = typing
+            } catch { show(error) }
         } catch is CancellationError {
         } catch { show(error) }
     }
@@ -593,6 +609,7 @@ final class AppModel {
     }
 
     private func show(_ error: Error) {
+        guard !Task.isCancelled, !isRequestCancellation(error) else { return }
         errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
     }
 }

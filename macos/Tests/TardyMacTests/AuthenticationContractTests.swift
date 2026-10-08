@@ -3,6 +3,13 @@ import CryptoKit
 import Testing
 @testable import TardyMac
 
+@Test func cancelledNetworkRequestsAreNotUserFacingFailures() {
+    #expect(isRequestCancellation(CancellationError()))
+    #expect(isRequestCancellation(URLError(.cancelled)))
+    #expect(!isRequestCancellation(URLError(.timedOut)))
+    #expect(!isRequestCancellation(APIError.http(403, "Forbidden")))
+}
+
 @Test @MainActor func appleAuthorizationPreservesRawNonceAndConsumesItOnce() {
     let transaction = AppleAuthorizationTransaction()
     let challenge = transaction.begin()

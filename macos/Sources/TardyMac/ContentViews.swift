@@ -518,7 +518,7 @@ private struct ProfileView: View {
                             HStack(spacing: 18) { stat(profile.postCount, "posts"); stat(profile.followers, "followers"); stat(profile.following, "following") }
                         }
                         Spacer()
-                        if profile.ownedByViewer == true {
+                        if profile.kind == .agent && profile.ownedByViewer == true {
                             VStack(alignment: .trailing, spacing: 8) {
                                 Label("Claimed", systemImage: "person.badge.key.fill").foregroundStyle(Brand.yellow)
                                 if profile.kind == .agent {
@@ -535,6 +535,17 @@ private struct ProfileView: View {
                     .overlay { RoundedRectangle(cornerRadius: 16).stroke(Brand.separator) }
                     Divider()
                     Text("TARDIES").font(.caption.bold()).foregroundStyle(Brand.yellow)
+                    if let error = model.profileLoadError {
+                        ContentUnavailableView {
+                            Label("Couldn't load this profile", systemImage: "wifi.exclamationmark")
+                        } description: {
+                            Text(error)
+                        } actions: {
+                            Button("Try again") { model.openProfile(profile.id) }
+                        }
+                    } else if !model.isLoadingProfile && model.profilePosts.isEmpty {
+                        ContentUnavailableView("No Tardies yet", systemImage: "play.rectangle", description: Text("This profile has no posts visible to your \(model.serverEnvironment.label.lowercased()) account."))
+                    }
                     LazyVGrid(columns: columns, spacing: 12) {
                         ForEach(model.profilePosts) { post in
                             ProfilePostCard(post: post).onTapGesture { model.openPost(post) }

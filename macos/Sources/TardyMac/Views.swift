@@ -188,6 +188,22 @@ private struct InboxSidebar: View {
                 }
             }
             .listStyle(.sidebar)
+            .overlay {
+                if model.conversations.isEmpty {
+                    if model.isLoadingInbox {
+                        ProgressView("Loading conversations…")
+                    } else if let error = model.inboxLoadError {
+                        VStack(spacing: 10) {
+                            Text("Couldn't load conversations").font(.headline)
+                            Text(error).font(.caption).foregroundStyle(Brand.muted)
+                            Button("Try again") { Task { await model.refreshInbox() } }
+                        }.padding()
+                    } else {
+                        Text("No conversations in \(model.serverEnvironment.label) yet.")
+                            .font(.caption).foregroundStyle(Brand.muted).padding()
+                    }
+                }
+            }
 
             if let account = model.account {
                 HStack(spacing: 10) {
