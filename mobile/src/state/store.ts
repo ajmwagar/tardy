@@ -335,25 +335,44 @@ export const reportError = (message: string) => set(() => ({ lastError: message 
 
 let queue: EngagementAction[] = [];
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
+let flushInFlight = false;
+let engagementGeneration = 0;
+let retryAt = 0;
+let retryDelay = 2000;
 
 /** Queues an engagement action; flushed in batches so logging never blocks a frame. */
 export function logEngagement(action: EngagementAction) {
   queue.push(action);
-  if (queue.length >= 20) void flushEngagement();
-  else flushTimer ??= setTimeout(flushEngagement, 2000);
+  if (queue.length >= 20 && !flushInFlight && Date.now() >= retryAt) void flushEngagement();
+  else flushTimer ??= setTimeout(flushEngagement, Math.max(2000, retryAt - Date.now()));
 }
 
 export async function flushEngagement() {
   if (flushTimer) clearTimeout(flushTimer);
   flushTimer = null;
+  if (flushInFlight) return;
   if (queue.length === 0) return;
+  if (Date.now() < retryAt) {
+    flushTimer = setTimeout(flushEngagement, retryAt - Date.now());
+    return;
+  }
+  flushInFlight = true;
+  const generation = engagementGeneration;
   const batch = queue;
   queue = [];
   try {
     await api.logEngagement(batch);
+    if (generation === engagementGeneration) { retryAt = 0; retryDelay = 2000; }
   } catch (error) {
-    queue = [...batch, ...queue];
-    set(() => ({ lastError: `Engagement sync failed: ${error instanceof Error ? error.message : String(error)}` }));
+    if (generation === engagementGeneration) {
+      queue = [...batch, ...queue];
+      retryAt = Date.now() + retryDelay;
+      retryDelay = Math.min(retryDelay * 2, 30000);
+      set(() => ({ lastError: `Engagement sync failed: ${error instanceof Error ? error.message : String(error)}` }));
+    }
+  } finally {
+    flushInFlight = false;
+    if (queue.length > 0) flushTimer ??= setTimeout(flushEngagement, Math.max(2000, retryAt - Date.now()));
   }
 }
 
@@ -374,6 +393,9 @@ export function cacheAccounts(accounts: Account[]) {
 
 /** Drops everything that belonged to the signed-out viewer. */
 export function resetViewerState() {
+  engagementGeneration += 1;
+  retryAt = 0;
+  retryDelay = 2000;
   if (flushTimer) clearTimeout(flushTimer);
   flushTimer = null;
   queue = [];

@@ -92,9 +92,6 @@ const Reel = memo(function Reel({ post, active, height }: { post: Post; active: 
           )}
         </View>
       </DoubleTapLike>
-      <Pressable onPress={toggleMuted} hitSlop={12} style={{ position: 'absolute', top: height / 2 - 72, alignSelf: 'center', padding: 10, borderRadius: 24, backgroundColor: 'rgba(0,0,0,0.45)' }} accessibilityRole="button" accessibilityLabel={muted ? 'Unmute reel' : 'Mute reel'}>
-        <Icon name={muted ? 'speaker.slash.fill' : 'speaker.wave.2.fill'} size={18} color="#fff" />
-      </Pressable>
 
       {speed > 1 ? (
         <Pressable onPress={lockedSpeed ? unlockSpeed : undefined} disabled={!lockedSpeed} style={styles.speedBadge} accessibilityRole={lockedSpeed ? 'button' : undefined} accessibilityLabel={lockedSpeed ? `Unlock ${speed} times playback` : undefined}>
@@ -106,6 +103,9 @@ const Reel = memo(function Reel({ post, active, height }: { post: Post; active: 
       <LinearGradient pointerEvents="none" colors={['transparent', 'rgba(0,0,0,0.55)']} style={[styles.scrim, { height: chrome + 150 }]} />
 
       <View style={[styles.rail, { bottom: chrome + 8 }]}>
+        <Pressable onPress={toggleMuted} hitSlop={8} style={styles.volumeButton} accessibilityRole="button" accessibilityLabel={muted ? 'Unmute reel' : 'Mute reel'}>
+          <Icon name={muted ? 'speaker.slash.fill' : 'speaker.wave.2.fill'} size={18} color="#fff" />
+        </Pressable>
         <Reaction
           vertical
           size={30}
@@ -214,7 +214,7 @@ const Reel = memo(function Reel({ post, active, height }: { post: Post; active: 
           {muted && (
             <View style={styles.chip}>
               <Icon name="speaker.slash.fill" size={10} color="#fff" />
-              <Text style={styles.chipText}>Tap to unmute</Text>
+              <Text style={styles.chipText}>Muted</Text>
             </View>
           )}
         </View>
@@ -403,6 +403,7 @@ const styles = StyleSheet.create({
   speedHint: { color: 'rgba(255,255,255,0.72)', fontSize: 10, fontWeight: '800', marginTop: 2 },
   topBar: { position: 'absolute', left: 0, right: 0, height: 44, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14 },
   rail: { position: 'absolute', right: 8, alignItems: 'center', gap: 18 },
+  volumeButton: { padding: 10, borderRadius: 22, backgroundColor: 'rgba(0,0,0,0.4)' },
   info: { position: 'absolute', left: 12, right: 70, gap: 6 },
   authorRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   white: { color: '#fff', ...shadow },
