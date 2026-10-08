@@ -21,6 +21,7 @@ pub mod product;
 pub mod push;
 pub mod ranking;
 pub mod search;
+pub mod share_preview;
 pub mod social;
 pub mod source_dispatch;
 pub mod store;

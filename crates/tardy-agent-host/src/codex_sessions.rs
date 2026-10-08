@@ -135,6 +135,9 @@ impl Connection {
 pub struct CodexSession {
     pub id: String,
     pub title: String,
+    pub project: Option<String>,
+    pub status: String,
+    pub updated_at: Option<i64>,
 }
 
 pub async fn discover() -> Result<Vec<CodexSession>, BoxError> {
@@ -250,6 +253,13 @@ fn session_metadata(value: &Value) -> Option<CodexSession> {
     Some(CodexSession {
         id: id.into(),
         title: title.chars().take(100).collect(),
+        project: project.map(str::to_owned),
+        status: value
+            .pointer("/status/type")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_owned(),
+        updated_at: value.get("updatedAt").and_then(Value::as_i64),
     })
 }
 
@@ -293,7 +303,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             serde_json::to_value(session).unwrap(),
-            json!({"id":"one","title":"Project"})
+            json!({"id":"one","title":"Project","project":null,"status":"unknown","updated_at":null})
         );
         assert!(session_metadata(&json!({"id":""})).is_none());
     }

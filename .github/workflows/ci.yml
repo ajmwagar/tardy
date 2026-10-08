@@ -90,6 +90,13 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo check --locked --all-targets
       - run: cargo test --locked
+      - name: Verify production-backed dev gateway on isolated PG17
+        env:
+          TARDY_DEV_OVERLAY_TEST_DATABASE_URL: postgres://tardy:tardy@127.0.0.1:5432/tardy_overlay_test
+        run: |
+          psql "$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -c 'CREATE DATABASE tardy_overlay_test'
+          cargo check --locked -p tardy-dev-overlay --all-targets
+          cargo test --locked -p tardy-dev-overlay -- --include-ignored
       - name: Validate generated OpenAPI
         run: |
           cargo run --locked --quiet --bin export-openapi -- /tmp/tardy-openapi.json

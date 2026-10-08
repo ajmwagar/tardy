@@ -100,7 +100,9 @@ export async function ensureAccounts(ids: Iterable<string | undefined>): Promise
   const missing = [...new Set(ids)].filter((id): id is string => !!id && !state.accounts.has(id));
   const fresh = missing.filter((id) => !inflight.has(id));
   if (fresh.length > 0) {
+    const generation = engagementGeneration;
     const request = api.accounts(fresh).then((accounts) => {
+      if (generation !== engagementGeneration) return;
       set((s) => {
         const next = new Map(s.accounts);
         accounts.forEach((a) => next.set(a.id, a));
@@ -108,7 +110,8 @@ export async function ensureAccounts(ids: Iterable<string | undefined>): Promise
       });
     });
     fresh.forEach((id) => inflight.set(id, request));
-    request.finally(() => fresh.forEach((id) => inflight.delete(id)));
+    const clear = () => fresh.forEach((id) => { if (inflight.get(id) === request) inflight.delete(id); });
+    void request.then(clear, clear);
   }
   await Promise.all(missing.map((id) => inflight.get(id)));
 }
@@ -159,9 +162,13 @@ export function ingestPosts(posts: Post[]) {
 }
 
 export async function loadFeedPage(page: Promise<{ items: Post[]; nextCursor: string | null }>) {
+  const generation = engagementGeneration;
   const result = await page;
-  await ensureAccounts(result.items.flatMap((p) => [p.authorId, p.projectId, ...(p.collaboratorIds ?? [])]));
+  if (generation !== engagementGeneration) throw new Error('Feed session changed while loading');
   ingestPosts(result.items);
+  void ensureAccounts(result.items.flatMap((p) => [p.authorId, p.projectId, ...(p.collaboratorIds ?? [])])).catch((error) => {
+    if (generation === engagementGeneration) reportError(`Author profiles could not load: ${error instanceof Error ? error.message : String(error)}`);
+  });
   return result;
 }
 
@@ -335,25 +342,44 @@ export const reportError = (message: string) => set(() => ({ lastError: message 
 
 let queue: EngagementAction[] = [];
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
+let flushInFlight = false;
+let engagementGeneration = 0;
+let retryAt = 0;
+let retryDelay = 2000;
 
 /** Queues an engagement action; flushed in batches so logging never blocks a frame. */
 export function logEngagement(action: EngagementAction) {
   queue.push(action);
-  if (queue.length >= 20) void flushEngagement();
-  else flushTimer ??= setTimeout(flushEngagement, 2000);
+  if (queue.length >= 20 && !flushInFlight && Date.now() >= retryAt) void flushEngagement();
+  else flushTimer ??= setTimeout(flushEngagement, Math.max(2000, retryAt - Date.now()));
 }
 
 export async function flushEngagement() {
   if (flushTimer) clearTimeout(flushTimer);
   flushTimer = null;
+  if (flushInFlight) return;
   if (queue.length === 0) return;
+  if (Date.now() < retryAt) {
+    flushTimer = setTimeout(flushEngagement, retryAt - Date.now());
+    return;
+  }
+  flushInFlight = true;
+  const generation = engagementGeneration;
   const batch = queue;
   queue = [];
   try {
     await api.logEngagement(batch);
+    if (generation === engagementGeneration) { retryAt = 0; retryDelay = 2000; }
   } catch (error) {
-    queue = [...batch, ...queue];
-    set(() => ({ lastError: `Engagement sync failed: ${error instanceof Error ? error.message : String(error)}` }));
+    if (generation === engagementGeneration) {
+      queue = [...batch, ...queue];
+      retryAt = Date.now() + retryDelay;
+      retryDelay = Math.min(retryDelay * 2, 30000);
+      set(() => ({ lastError: `Engagement sync failed: ${error instanceof Error ? error.message : String(error)}` }));
+    }
+  } finally {
+    flushInFlight = false;
+    if (queue.length > 0) flushTimer ??= setTimeout(flushEngagement, Math.max(2000, retryAt - Date.now()));
   }
 }
 
@@ -374,6 +400,10 @@ export function cacheAccounts(accounts: Account[]) {
 
 /** Drops everything that belonged to the signed-out viewer. */
 export function resetViewerState() {
+  inflight.clear();
+  engagementGeneration += 1;
+  retryAt = 0;
+  retryDelay = 2000;
   if (flushTimer) clearTimeout(flushTimer);
   flushTimer = null;
   queue = [];

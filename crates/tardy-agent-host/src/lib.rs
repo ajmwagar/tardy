@@ -13,6 +13,7 @@ use tokio::process::Command;
 use uuid::Uuid;
 
 pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
+pub mod chat_cli;
 pub mod codex_sessions;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -100,6 +101,13 @@ pub fn delivery_request_id(delivery: &str) -> String {
 }
 
 impl HostData {
+    /// A snapshot, not an activation lease. Never infer idleness from missing JSON fields.
+    pub fn is_idle(&self) -> bool {
+        self.queue.is_empty()
+            && self.pending_replies.is_empty()
+            && self.dispatched_deliveries.is_empty()
+            && self.completed_runs.is_empty()
+    }
     pub fn needs_dispatch_recovery(&self, delivery: &str) -> bool {
         self.dispatched_deliveries.contains(delivery)
             && !self.completed_runs.contains_key(delivery)
@@ -1256,14 +1264,28 @@ impl CodexRunner {
             }
         }
         if !completed {
-            let stderr = stderr_task.await.unwrap_or_default();
+            let mut stderr_task = stderr_task;
+            let stderr = tokio::time::timeout(Duration::from_secs(1), &mut stderr_task)
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .unwrap_or_default();
+            stderr_task.abort();
             return Err(format!("Codex app-server ended before turn completion: {stderr}").into());
         }
+        // A launcher/descendant can retain stderr after the coding turn completes.
+        // Completion is authoritative; pipe EOF must never gate a durable reply.
+        drop(stdin);
+        drop(lines);
+        stderr_task.abort();
         if let Some(child) = &mut child {
-            let _ = child.kill().await;
-            let _ = child.wait().await;
+            if tokio::time::timeout(Duration::from_secs(2), child.wait())
+                .await
+                .is_err()
+            {
+                let _ = child.kill().await;
+            }
         }
-        let _ = stderr_task.await;
         let reply = authoritative_reply
             .unwrap_or(streamed_reply)
             .trim()
@@ -1373,11 +1395,51 @@ pub fn activation_prompt(
             .unwrap_or_else(|| "current message".into()),
         granted_context,
         activation_note
-    )
+    ) + chat_cli::INSTRUCTIONS
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn idle_snapshot_checks_the_real_queue_and_execution_journals() {
+        let mut data = HostData::default();
+        assert!(data.is_idle());
+        data.queue.push_back(QueuedEvent {
+            delivery_id: "poll:1".into(),
+            event: InboxEvent {
+                id: 1,
+                kind: "work_message".into(),
+                payload: serde_json::json!({}),
+            },
+        });
+        assert!(!data.is_idle());
+        data.queue.clear();
+        data.dispatched_deliveries.insert("poll:1".into());
+        assert!(!data.is_idle());
+        data.dispatched_deliveries.clear();
+        data.completed_runs.insert(
+            "poll:1".into(),
+            RuntimeResult {
+                session: "codex:test".into(),
+                reply: "done".into(),
+            },
+        );
+        assert!(!data.is_idle());
+        data.completed_runs.clear();
+        data.pending_replies.insert(
+            "poll:1".into(),
+            PendingReply {
+                request_id: None,
+                conversation_id: "test".into(),
+                body: "done".into(),
+                media: vec![],
+                legacy_dm: false,
+                context_cursor: None,
+                publish_tardy: false,
+            },
+        );
+        assert!(!data.is_idle());
+    }
     #[test]
     fn ambiguous_dispatch_is_not_reexecuted_but_completed_work_is_retryable() {
         let mut state = HostData::default();
@@ -1557,6 +1619,8 @@ while IFS= read -r line; do
       printf '%s\n' '{"method":"item/agentMessage/delta","params":{"delta":"Streamed ","itemId":"item","threadId":"thr_fake","turnId":"turn_fake"}}'
       printf '%s\n' '{"method":"item/agentMessage/delta","params":{"delta":"reply","itemId":"item","threadId":"thr_fake","turnId":"turn_fake"}}'
       printf '%s\n' '{"method":"item/completed","params":{"item":{"type":"agentMessage","text":"Streamed reply"},"threadId":"thr_fake","turnId":"turn_fake"}}'
+      # A descendant keeps stderr open beyond the completed turn.
+      sleep 8 >&2 &
       printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thr_fake","turn":{"status":"completed"}}}'
       ;;
   esac
@@ -1575,10 +1639,13 @@ done
         )
         .with_binary(binary);
         let (sender, mut receiver) = tokio::sync::mpsc::channel(16);
-        let result = runner
-            .dispatch(None, "private granted context", Some(sender))
-            .await
-            .unwrap();
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            runner.dispatch(None, "private granted context", Some(sender)),
+        )
+        .await
+        .expect("a completed turn must not wait for inherited stderr EOF")
+        .unwrap();
         assert_eq!(result.thread_id, "thr_fake");
         assert_eq!(result.reply, "Streamed reply");
         let mut events = Vec::new();

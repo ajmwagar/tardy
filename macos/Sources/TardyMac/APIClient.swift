@@ -1,5 +1,11 @@
 import Foundation
 
+func isRequestCancellation(_ error: Error) -> Bool {
+    if error is CancellationError { return true }
+    let nsError = error as NSError
+    return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
+}
+
 enum APIError: LocalizedError, Sendable {
     case invalidResponse
     case http(Int, String)
@@ -37,7 +43,7 @@ actor TardyAPI {
     }
 
     func appleSession(_ credential: AppleSessionRequest) async throws -> SessionEnvelope {
-        try await request("/v1/session", method: "POST", body: credential, authenticated: false)
+        try await request("/v1/sessions", method: "POST", body: credential, authenticated: false)
     }
 
     func conversations() async throws -> [Conversation] {
@@ -46,6 +52,10 @@ actor TardyAPI {
 
     func reels() async throws -> PostPage {
         try await request("/v1/feed/reels?limit=50")
+    }
+
+    func post(id: UUID) async throws -> TardyPost {
+        try await request("/v1/posts/\(id.uuidString)")
     }
 
     func profile(id: UUID) async throws -> Account {
@@ -107,9 +117,10 @@ actor TardyAPI {
                         throw APIError.http(response.statusCode, "Conversation stream rejected")
                     }
                     var parser = ConversationSSEParser()
-                    for try await line in bytes.lines {
+                    // AsyncBytes.lines drops empty lines, including SSE frame boundaries.
+                    for try await byte in bytes {
                         try Task.checkCancellation()
-                        if let event = try parser.consume(line: line) {
+                        if let event = try parser.consume(byte: byte) {
                             continuation.yield(event)
                         }
                     }
@@ -254,9 +265,29 @@ actor TardyAPI {
 }
 
 struct ConversationSSEParser {
+    private var lineBytes: [UInt8] = []
+    private var skipLF = false
     private var eventName = "message"
     private var eventId: Int?
     private var dataLines: [String] = []
+
+    mutating func consume(byte: UInt8) throws -> ConversationStreamEvent? {
+        if skipLF {
+            skipLF = false
+            if byte == 10 { return nil }
+        }
+        if byte == 10 || byte == 13 {
+            skipLF = byte == 13
+            guard let line = String(bytes: lineBytes, encoding: .utf8) else {
+                throw APIError.invalidResponse
+            }
+            lineBytes.removeAll(keepingCapacity: true)
+            return try consume(line: line)
+        }
+        guard lineBytes.count < 1_048_576 else { throw APIError.invalidResponse }
+        lineBytes.append(byte)
+        return nil
+    }
 
     mutating func consume(line: String) throws -> ConversationStreamEvent? {
         if line.isEmpty {

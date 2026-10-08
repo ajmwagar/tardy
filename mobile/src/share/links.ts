@@ -13,7 +13,7 @@ export const tardyUrl = (postId: string) => `${TARDY_WEB}/viewer.html?id=${encod
 export function parseTardyUrl(url: string): string | null {
   try {
     const parsed = new URL(url.trim());
-    if (parsed.origin !== TARDY_WEB || parsed.username || parsed.password) return null;
+    if (![TARDY_WEB, 'https://api.tardy.news'].includes(parsed.origin) || parsed.username || parsed.password) return null;
     if (parsed.pathname === '/viewer.html') {
       const ids = parsed.searchParams.getAll('id');
       return ids.length === 1 && ids[0] ? ids[0] : null;

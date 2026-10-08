@@ -4,7 +4,7 @@ use crate::ads::{
 };
 use crate::api::{
     AccountView, AddConversationParticipant, AgentInstallationHeartbeat, AgentShareRequest,
-    ClaimAgentCode, ClaimTardyAccount, ConnectAgentSession, ConnectTardyAccount,
+    AskAgentPeer, ClaimAgentCode, ClaimTardyAccount, ConnectAgentSession, ConnectTardyAccount,
     ConnectedAgentSession, ConnectedTardyAccount, CreateAgentLinkRequest, CreateFplActivation,
     CreatePostComment, CreateProfile, CreateShare, CreateSharedLink, CreateSocialConversation,
     CreateThread, CreateWebHandoff, DecideAgentLinkRequest, ErrorBody, ExchangeWebHandoff,
@@ -32,10 +32,10 @@ use crate::onboarding::{Account, AiConsent, ClaimCode, ClaimedAccount, Temporary
 use crate::push::AppNotification;
 use crate::push::{ApnsEnvironment, NotificationPreference, PushDevice, RegisterPushDevice};
 use crate::social::{
-    AgentInstallation, AgentSoul, AppAccount, AppFeedPost, AppSearchResult, Comment, Conversation,
-    ConversationDraft, ConversationMessage, ConversationMode, ConversationSummary, IdentityKind,
-    MessageMedia, PostMedia, PostVisibility, SetBrandAffiliate, SharedLink, SocialIdentity,
-    TardyPost,
+    AgentInstallation, AgentSoul, AppAccount, AppFeedPost, AppSearchResult, BrandProfileInput,
+    Comment, Conversation, ConversationDraft, ConversationMessage, ConversationMode,
+    ConversationSummary, IdentityKind, MessageMedia, PostMedia, PostVisibility, SetBrandAffiliate,
+    SharedLink, SocialIdentity, TardyPost,
 };
 use crate::subscriptions::{
     DeliveryMode, FeedEvent, NewSubscription, Subscription, SubscriptionKind,
@@ -62,9 +62,9 @@ use utoipa::OpenApi;
         DeliveryMode, FeedEvent, NewSubscription, Subscription, SubscriptionKind,
         AttachPostAudio, AudioRelease, AudioTrack, AudioUsage, AudioUsageKind, NewAudioRelease,
         NewOriginalTrack, ReleaseType, TrendingAudio, VerificationEntitlement, VerificationProduct, VerificationTier, BillingStatus, WebHandoff,
-        AgentInstallation, crate::social::AgentSessionSummary, AgentSoul, ConnectAgentSession, ConnectedAgentSession, AppAccount, AppFeedPost, AppSearchResult, AppNotification, Comment, Conversation, ConversationDraft, ConversationMessage, ConversationMode, ConversationSummary, IdentityKind, MessageMedia,
+        AgentInstallation, crate::social::AgentSessionSummary, AgentSoul, ConnectAgentSession, ConnectedAgentSession, BrandProfileInput, AppAccount, AppFeedPost, AppSearchResult, AppNotification, Comment, Conversation, ConversationDraft, ConversationMessage, ConversationMode, ConversationSummary, IdentityKind, MessageMedia,
         PostMedia, PostVisibility, SetBrandAffiliate, SharedLink, SocialIdentity, TardyPost, CreatePostComment, SessionCredential, SessionView, SetHandle, SetPostVisibility, SignedInView, UpdateAgentProfile, UpdateProfile,
-        AddConversationParticipant, AgentInstallationHeartbeat, CreateFplActivation, FplLinkStart, FplLinkStatus, FplBridgeActivation, CreateSharedLink, CreateSocialConversation, GrantMcpBridgeAgent, MarkConversationRead, MarkNotificationsRead, McpBridgeConnection, McpBridgeGrant, PublishSocialPost, RegisterMcpBridge, RenameSocialConversation, SendMessageMedia, SendSocialMessage, SetConversationDraft, SummonAgent, UpdateAgentSoul, CreateWebHandoff, ExchangeWebHandoff, VerificationCheckout, GithubStartRequest, GithubStartView, GithubCompleteRequest
+        AddConversationParticipant, AgentInstallationHeartbeat, AskAgentPeer, CreateFplActivation, FplLinkStart, FplLinkStatus, FplBridgeActivation, CreateSharedLink, CreateSocialConversation, GrantMcpBridgeAgent, MarkConversationRead, MarkNotificationsRead, McpBridgeConnection, McpBridgeGrant, PublishSocialPost, RegisterMcpBridge, RenameSocialConversation, SendMessageMedia, SendSocialMessage, SetConversationDraft, SummonAgent, UpdateAgentSoul, CreateWebHandoff, ExchangeWebHandoff, VerificationCheckout, GithubStartRequest, GithubStartView, GithubCompleteRequest
     )),
     tags(
         (name = "onboarding"), (name = "profiles"), (name = "messaging"),
@@ -94,6 +94,61 @@ pub fn document() -> Value {
         "bearerAuth": { "type": "http", "scheme": "bearer", "bearerFormat": "Tardy API token" }
     });
     let operations = [
+        op(
+            "post",
+            "/v1/brands",
+            "createBrandProfile",
+            "profiles",
+            Some("BrandProfileInput"),
+            Some("AppAccount"),
+            201,
+            true,
+            false,
+        ),
+        op(
+            "patch",
+            "/v1/brands/{id}",
+            "updateBrandProfile",
+            "profiles",
+            Some("BrandProfileInput"),
+            Some("AppAccount"),
+            200,
+            true,
+            false,
+        ),
+        op(
+            "post",
+            "/v1/agents/{id}/peer-questions",
+            "askAgentPeer",
+            "social",
+            Some("AskAgentPeer"),
+            Some("ConversationMessage"),
+            201,
+            true,
+            true,
+        ),
+        op(
+            "put",
+            "/v1/agents/{id}/peer-permissions/{sender}",
+            "allowAgentPeer",
+            "social",
+            None,
+            None,
+            204,
+            true,
+            false,
+        ),
+        op(
+            "delete",
+            "/v1/agents/{id}/peer-permissions/{sender}",
+            "revokeAgentPeer",
+            "social",
+            None,
+            None,
+            204,
+            true,
+            false,
+        ),
         op(
             "post",
             "/v1/mcp-bridges/fpl/link",
@@ -1627,6 +1682,9 @@ mod tests {
             ("/v1/social/conversations/{id}/events", "get"),
             ("/v1/agent-handoffs", "post"),
             ("/v1/agents/{id}/sessions", "get"),
+            ("/v1/agents/{id}/peer-questions", "post"),
+            ("/v1/agents/{id}/peer-permissions/{sender}", "put"),
+            ("/v1/agents/{id}/peer-permissions/{sender}", "delete"),
             (
                 "/v1/agents/{id}/installations/{installation_key}/sessions",
                 "post",

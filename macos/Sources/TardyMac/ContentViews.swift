@@ -269,6 +269,7 @@ private struct ReelStage: View {
                     VStack(spacing: 15) {
                         ActionButton(icon: post.viewerHasLiked ? "heart.fill" : "heart", count: post.likeCount, active: post.viewerHasLiked) { Task { await model.toggleLike() } }
                         ActionButton(icon: "bubble.left.fill", count: post.commentCount, active: false) {}
+                        PostShareButton(post: post)
                         ActionButton(icon: post.viewerHasSaved ? "bookmark.fill" : "bookmark", count: nil, active: post.viewerHasSaved) { Task { await model.toggleSaved() } }
                     }
                 }.padding()
@@ -441,6 +442,17 @@ private struct ActionButton: View {
     }
 }
 
+private struct PostShareButton: View {
+    @Environment(AppModel.self) private var model
+    let post: TardyPost
+    var body: some View {
+        ShareLink(item: post.shareURL(apiBaseURL: model.serverEnvironment.baseURL)) {
+            Label("Share", systemImage: "square.and.arrow.up")
+        }
+        .help("Share this Tardy to Messages, Mail, AirDrop or another app")
+    }
+}
+
 private struct PostInspector: View {
     @Environment(AppModel.self) private var model
     let post: TardyPost
@@ -448,6 +460,11 @@ private struct PostInspector: View {
     var body: some View {
         @Bindable var model = model
         VStack(spacing: 0) {
+            HStack {
+                Text("Tardy").font(.headline)
+                Spacer()
+                PostShareButton(post: post)
+            }.padding(16)
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     if let author = model.accounts[post.authorId] {
@@ -518,7 +535,7 @@ private struct ProfileView: View {
                             HStack(spacing: 18) { stat(profile.postCount, "posts"); stat(profile.followers, "followers"); stat(profile.following, "following") }
                         }
                         Spacer()
-                        if profile.ownedByViewer == true {
+                        if profile.kind == .agent && profile.ownedByViewer == true {
                             VStack(alignment: .trailing, spacing: 8) {
                                 Label("Claimed", systemImage: "person.badge.key.fill").foregroundStyle(Brand.yellow)
                                 if profile.kind == .agent {
@@ -535,6 +552,17 @@ private struct ProfileView: View {
                     .overlay { RoundedRectangle(cornerRadius: 16).stroke(Brand.separator) }
                     Divider()
                     Text("TARDIES").font(.caption.bold()).foregroundStyle(Brand.yellow)
+                    if let error = model.profileLoadError {
+                        ContentUnavailableView {
+                            Label("Couldn't load this profile", systemImage: "wifi.exclamationmark")
+                        } description: {
+                            Text(error)
+                        } actions: {
+                            Button("Try again") { model.openProfile(profile.id) }
+                        }
+                    } else if !model.isLoadingProfile && model.profilePosts.isEmpty {
+                        ContentUnavailableView("No Tardies yet", systemImage: "play.rectangle", description: Text("This profile has no posts visible to your \(model.serverEnvironment.label.lowercased()) account."))
+                    }
                     LazyVGrid(columns: columns, spacing: 12) {
                         ForEach(model.profilePosts) { post in
                             ProfilePostCard(post: post).onTapGesture { model.openPost(post) }
@@ -572,6 +600,11 @@ private struct AgentSettingsSheet: View {
     @State private var sessionsLoading = false
     @State private var sessionsError: String?
     @State private var openingSession = false
+    @State private var localSessions: [LocalCodexSession] = []
+    @State private var localSessionsLoading = false
+    @State private var localSessionsError: String?
+    @State private var selectedInstallation = ""
+    @State private var connectingSession: String?
 
     init(agent: Account) {
         self.agent = agent
@@ -600,7 +633,37 @@ private struct AgentSettingsSheet: View {
                         .font(.caption).foregroundStyle(Brand.muted)
                     TextField("Specialties, comma separated", text: $specialties)
                 }
-                Section("Session chats") {
+                Section("Codex sessions on this Mac") {
+                    Text("Discovery is read-only. Connecting creates a private chat with this agent; it does not send a prompt or import session history.")
+                        .font(.caption).foregroundStyle(Brand.muted)
+                    Picker("Host installation on this Mac", selection: $selectedInstallation) {
+                        Text("Choose this Mac’s host…").tag("")
+                        ForEach(model.editingAgentInstallations.filter { $0.runtime == "codex" }) { installation in
+                            Text(installation.displayName).tag(installation.installationKey)
+                        }
+                    }
+                    if let localSessionsError { Text(localSessionsError).foregroundStyle(.red) }
+                    ForEach(localSessions) { session in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(session.title).fontWeight(.semibold)
+                                Text("\(session.project ?? "Project unknown") · \(session.status)")
+                                    .font(.caption).foregroundStyle(Brand.muted)
+                                if let updated = session.updatedAt {
+                                    Text(Date(timeIntervalSince1970: Double(updated)), style: .relative).font(.caption2)
+                                }
+                            }
+                            Spacer()
+                            Button(connectingSession == session.id ? "Connecting…" : "Connect") {
+                                Task { await connectLocalSession(session) }
+                            }.disabled(selectedInstallation.isEmpty || connectingSession != nil)
+                        }
+                    }
+                    Button("Discover open sessions") { Task { await discoverLocalSessions() } }
+                        .disabled(localSessionsLoading)
+                    if localSessionsLoading { ProgressView().controlSize(.small) }
+                }
+                Section("Connected session chats") {
                     Text("Open the original coding session as a chat. Same identity and permissions; no new session is created.")
                         .font(.caption).foregroundStyle(Brand.muted)
                     if let sessionsError {
@@ -701,6 +764,27 @@ private struct AgentSettingsSheet: View {
             guard !Task.isCancelled else { return }
             sessionsError = "Couldn’t load sessions: \(error.localizedDescription)"
         }
+    }
+
+    private func discoverLocalSessions() async {
+        localSessionsLoading = true
+        defer { localSessionsLoading = false }
+        do {
+            localSessions = try await LocalCodexSessions.discover()
+            localSessionsError = localSessions.isEmpty ? "No loaded Codex sessions on this Mac." : nil
+        } catch { localSessionsError = error.localizedDescription }
+    }
+
+    private func connectLocalSession(_ session: LocalCodexSession) async {
+        connectingSession = session.id
+        defer { connectingSession = nil }
+        do {
+            let conversation = try await LocalCodexSessions.connect(session, agent: agent, api: model.serverEnvironment.baseURL, installation: selectedInstallation)
+            await loadSessions()
+            if let connected = sessions.first(where: { $0.conversationId == conversation }),
+               await model.openAgentSession(connected) { dismiss() }
+            else { localSessionsError = "Connected. Refresh session chats to open it." }
+        } catch { localSessionsError = error.localizedDescription }
     }
 }
 

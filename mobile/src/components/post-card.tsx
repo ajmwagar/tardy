@@ -127,7 +127,7 @@ export const PostCard = memo(function PostCard({
         <IconButton icon="ellipsis" size={18} label="More options" onPress={more} style={styles.moreButton} />
       </View>
 
-      <View style={styles.media}>
+      {post.media.length > 0 ? <View style={styles.media}>
         <MediaCarousel
           postId={post.id}
           media={post.media}
@@ -136,7 +136,7 @@ export const PostCard = memo(function PostCard({
           onIndexChange={setIndex}
           onSingleTap={post.format === 'reel' ? openReel : undefined}
         />
-      </View>
+      </View> : null}
       <CarouselDots count={post.media.length} index={index} />
 
       <View style={styles.actions}>

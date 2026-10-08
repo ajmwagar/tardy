@@ -6,6 +6,8 @@ import Testing
     #expect(ServerEnvironment.production.baseURL.absoluteString == "https://api.tardy.news")
     #expect(ServerEnvironment.production != .local)
     #expect(ServerEnvironment.local.keychainAccount != ServerEnvironment.production.keychainAccount)
+    #expect(ServerEnvironment.devOverlay.keychainAccount == ServerEnvironment.production.keychainAccount)
+    #expect(ServerEnvironment.devOverlay.baseURL != ServerEnvironment.production.baseURL)
 }
 
 @Test func appleExchangeUsesExistingServerContract() throws {

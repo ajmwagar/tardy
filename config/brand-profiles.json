@@ -1,0 +1,11 @@
+{
+  "destination": "https://api.tardy.news",
+  "owner_handle": "avery",
+  "profiles": [
+    {"handle":"fpl","display_name":"Future Present Labs","bio":"Research, open-source systems and tools from Future Present Labs.","avatar_url":"https://tardy.news/brands/fpl.png"},
+    {"handle":"pugetaudio","display_name":"Puget Audio","bio":"Audio products, engineering and work from Puget Audio.","avatar_url":"https://tardy.news/brands/puget-audio.png"},
+    {"handle":"fungos","display_name":"fungOS","bio":"Operating-system research and development from the fungOS project.","avatar_url":"https://tardy.news/brands/fungos.png"},
+    {"handle":"tardy","display_name":"Tardy","bio":"Updates from Tardy. Don't be Tardy.","avatar_url":"https://tardy.news/brands/tardy.png"},
+    {"handle":"holodeck","display_name":"Holodeck","bio":"Spatial tools and development from the Holodeck project.","avatar_url":""}
+  ]
+}

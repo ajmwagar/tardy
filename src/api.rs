@@ -23,9 +23,10 @@ use crate::push::{
 use crate::ranking::FeedRanker;
 use crate::search::{SearchDocument, SearchError, SearchService};
 use crate::social::{
-    AppAccount, AppEngagementAction, AppFeedPost, AppSearchResult, Comment, Conversation,
-    ConversationDraft, ConversationMessage, ConversationSummary, IdentityKind, PgSocialStore,
-    PostMedia, PostVisibility, SetBrandAffiliate, SharedLink, SocialError, TardyPost,
+    AppAccount, AppEngagementAction, AppFeedPost, AppSearchResult, BrandProfileInput, Comment,
+    Conversation, ConversationDraft, ConversationMessage, ConversationSummary, IdentityKind,
+    PgSocialStore, PostMedia, PostVisibility, SetBrandAffiliate, SharedLink, SocialError,
+    TardyPost,
 };
 use crate::store::{MemoryStore, NewLive, NewProfile, NewReel, Store, StoreError};
 use crate::subscriptions::{
@@ -325,6 +326,8 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/v1/agents/{id}/avatar/generate",
             post(generate_agent_avatar),
         )
+        .route("/v1/brands", post(create_brand_profile))
+        .route("/v1/brands/{id}", patch(update_brand_profile))
         .route(
             "/v1/brands/{brand_id}/affiliates/{profile_id}",
             put(set_brand_affiliate).delete(clear_brand_affiliate),
@@ -368,6 +371,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/saved-posts/{id}", put(save_post).delete(unsave_post))
         .route("/v1/posts/{id}", get(get_app_post))
         .route("/v1/public/posts/{id}", get(get_public_post))
+        .route("/t/{id}", get(public_share_page))
+        .route("/t/{id}/poster", get(public_share_poster))
         .route("/v1/posts/{id}/like", put(like_post).delete(unlike_post))
         .route("/v1/posts/{id}/alarm", put(alarm_post).delete(unalarm_post))
         .route(
@@ -398,6 +403,11 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/dev/brags/{slug}/{name}", get(local_brag))
         .route("/v1/feed/hyper-tardy", get(hyper_tardy_feed))
         .route("/v1/agent-handoffs", post(agent_handoff))
+        .route("/v1/agents/{id}/peer-questions", post(ask_agent_peer))
+        .route(
+            "/v1/agents/{id}/peer-permissions/{sender}",
+            put(allow_agent_peer).delete(revoke_agent_peer),
+        )
         .route("/v1/agent-shares", post(share_to_agent))
         .route("/v1/social/shared-links", post(create_shared_link))
         .route("/v1/social/shared-links/{id}", get(get_shared_link))
@@ -780,6 +790,69 @@ async fn get_public_post(
     localize_posts(&state, std::slice::from_mut(&mut post));
     resolve_post_assets(&state, std::slice::from_mut(&mut post)).await?;
     Ok(([(header::CACHE_CONTROL, "no-store")], Json(post)))
+}
+
+async fn public_share_page(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+) -> Result<Response, ApiError> {
+    let post = match social_store(&state)?.app_post(None, id).await {
+        Ok(post) => post,
+        Err(SocialError::NotFound | SocialError::Forbidden) => {
+            return Ok((
+                StatusCode::NOT_FOUND,
+                [(header::CACHE_CONTROL, "no-store")],
+                axum::response::Html(crate::share_preview::unavailable_page()),
+            )
+                .into_response());
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let author = social_store(&state)?
+        .app_account_by_id(post.author_id)
+        .await?;
+    let has_poster = preview_poster(&post).is_some();
+    let html = crate::share_preview::public_page(id, &post.caption, &author.handle, has_poster);
+    Ok((
+        [(header::CACHE_CONTROL, "no-store")],
+        axum::response::Html(html),
+    )
+        .into_response())
+}
+
+fn preview_poster(post: &AppFeedPost) -> Option<&str> {
+    post.media.iter().find_map(|item| {
+        if item["type"] == "image" {
+            return item["url"].as_str();
+        }
+        item["poster_url"]
+            .as_str()
+            .filter(|poster| Some(*poster) != item["url"].as_str())
+    })
+}
+
+async fn public_share_poster(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+) -> Result<Response, ApiError> {
+    // Recheck anonymous visibility on every fetch; never cache a private signed URL in HTML.
+    let mut post = social_store(&state)?.app_post(None, id).await?;
+    resolve_post_assets(&state, std::slice::from_mut(&mut post)).await?;
+    let poster =
+        preview_poster(&post).ok_or_else(|| ApiError::not_found("post has no preview image"))?;
+    let url =
+        reqwest::Url::parse(poster).map_err(|_| ApiError::not_found("invalid preview image"))?;
+    if !matches!(url.scheme(), "https" | "http")
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return Err(ApiError::not_found("invalid preview image"));
+    }
+    Ok((
+        [(header::CACHE_CONTROL, "no-store")],
+        axum::response::Redirect::temporary(url.as_str()),
+    )
+        .into_response())
 }
 
 /// Session restoration is an explicit route even before the provider exchange lands.
@@ -1793,6 +1866,36 @@ async fn account_view(state: &AppState, value: HumanProfile) -> Result<AccountVi
     })
 }
 
+async fn create_brand_profile(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(input): Json<BrandProfileInput>,
+) -> Result<(StatusCode, Json<AppAccount>), ApiError> {
+    let owner = authenticated_account(&state, &headers).await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(
+            social_store(&state)?
+                .create_brand_profile(owner, &input)
+                .await?,
+        ),
+    ))
+}
+
+async fn update_brand_profile(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(input): Json<BrandProfileInput>,
+) -> Result<Json<AppAccount>, ApiError> {
+    let owner = authenticated_account(&state, &headers).await?;
+    Ok(Json(
+        social_store(&state)?
+            .update_brand_profile(owner, id, &input)
+            .await?,
+    ))
+}
+
 async fn set_brand_affiliate(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -1883,6 +1986,9 @@ fn dicebear_avatar_url(kind: IdentityKind, seed: &str) -> String {
 
 fn localize_accounts(accounts: &mut [AppAccount]) {
     for account in accounts {
+        if account.kind == IdentityKind::Project && account.avatar_url.is_empty() {
+            continue;
+        }
         if account.avatar_url.is_empty() || account.avatar_url == "https://tardy.news/favicon.svg" {
             account.avatar_url = dicebear_avatar_url(account.kind, &account.handle);
         }
@@ -1942,7 +2048,26 @@ fn localize_posts(state: &AppState, posts: &mut [AppFeedPost]) {
 /// Only invoked after the social store has checked post visibility. Resolve
 /// author-owned assets at read time rather than persisting temporary capabilities.
 async fn resolve_post_assets(state: &AppState, posts: &mut [AppFeedPost]) -> Result<(), ApiError> {
-    for post in posts {
+    // Cap fanout per request below the eight-connection pool size. The pool
+    // still mediates contention between requests. Mutating each original slot
+    // preserves feed ordering despite concurrent completion.
+    for chunk in posts.chunks_mut(4) {
+        let mut slots = chunk.iter_mut();
+        tokio::try_join!(
+            resolve_one_post_assets(state, slots.next()),
+            resolve_one_post_assets(state, slots.next()),
+            resolve_one_post_assets(state, slots.next()),
+            resolve_one_post_assets(state, slots.next()),
+        )?;
+    }
+    Ok(())
+}
+
+async fn resolve_one_post_assets(
+    state: &AppState,
+    post: Option<&mut AppFeedPost>,
+) -> Result<(), ApiError> {
+    if let Some(post) = post {
         for item in &mut post.media {
             for (id_field, url_field) in [("asset_id", "url"), ("poster_asset_id", "poster_url")] {
                 if item.get(id_field).is_none_or(serde_json::Value::is_null) {
@@ -2477,6 +2602,61 @@ pub(crate) struct RenameSocialConversation {
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct AddConversationParticipant {
     profile_id: Uuid,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct AskAgentPeer {
+    client_request_id: Uuid,
+    body: String,
+}
+
+async fn ask_agent_peer(
+    State(state): State<Arc<AppState>>,
+    Path(recipient): Path<Uuid>,
+    headers: HeaderMap,
+    Json(body): Json<AskAgentPeer>,
+) -> Result<(StatusCode, Json<ConversationMessage>), ApiError> {
+    let actor = authenticated_actor(&state, &headers).await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(
+            social_store(&state)?
+                .ask_agent_peer(actor, recipient, &body.body, body.client_request_id)
+                .await?,
+        ),
+    ))
+}
+
+async fn allow_agent_peer(
+    State(state): State<Arc<AppState>>,
+    Path((recipient, sender)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    social_store(&state)?
+        .set_agent_peer_permission(
+            authenticated_account(&state, &headers).await?,
+            recipient,
+            sender,
+            true,
+        )
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn revoke_agent_peer(
+    State(state): State<Arc<AppState>>,
+    Path((recipient, sender)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    social_store(&state)?
+        .set_agent_peer_permission(
+            authenticated_account(&state, &headers).await?,
+            recipient,
+            sender,
+            false,
+        )
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn create_social_conversation(

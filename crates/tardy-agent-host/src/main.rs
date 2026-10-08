@@ -66,6 +66,38 @@ async fn main() -> Result<(), BoxError> {
     if command == "doctor" {
         return doctor().await;
     }
+    if command == "host-state" {
+        let path = expand_path(&env_or(
+            "TARDY_AGENT_HOST_STATE",
+            "~/.local/state/tardy-agent-host/state.json",
+        ));
+        let value: Value = serde_json::from_slice(&tokio::fs::read(path).await?)?;
+        if !value.get("queue").is_some_and(Value::is_array) {
+            return Err("host state is missing its queue; refusing to infer idleness".into());
+        }
+        let data: HostData = serde_json::from_value(value)?;
+        println!(
+            "{}",
+            json!({"idle_snapshot":data.is_idle(),"queue":data.queue.len(),"pending_replies":data.pending_replies.len(),"dispatched":data.dispatched_deliveries.len(),"completed":data.completed_runs.len(),"paused_conversations":data.paused_conversations})
+        );
+        return Ok(());
+    }
+    if matches!(
+        command.as_str(),
+        "peers" | "ask-agent" | "read-chat" | "connect-session"
+    ) {
+        let credential: AgentCredential = serde_json::from_slice(
+            &tokio::fs::read(expand_path(&env_or(
+                "TARDY_STATE_PATH",
+                "~/.config/tardy/agent.json",
+            )))
+            .await?,
+        )?;
+        let args = std::env::args().skip(2).collect::<Vec<_>>();
+        let result = tardy_agent_host::chat_cli::run(&credential, &command, &args).await?;
+        println!("{}", serde_json::to_string_pretty(&result)?);
+        return Ok(());
+    }
     if command == "sessions" {
         println!(
             "{}",
@@ -1729,8 +1761,12 @@ fn internal(error: BoxError) -> (StatusCode, String) {
 }
 
 fn print_help() {
+    println!("Host queue snapshot (not a restart lease): tardy-agent-host host-state");
     println!(
-        "Existing Codex sessions:\n  tardy-agent-host sessions\n  TARDY_CODEX_AUTO_CONNECT=yes (default) discovers shared-daemon sessions as owner-only chats.\n"
+        "Peer chats:\n  tardy-agent-host peers [query]\n  tardy-agent-host ask-agent <agent-uuid> <request-uuid> <question>\n  tardy-agent-host read-chat <conversation-uuid> [after-sequence]\n"
+    );
+    println!(
+        "Existing Codex sessions:\n  tardy-agent-host sessions (read-only metadata)\n  tardy-agent-host connect-session AGENT_UUID API_URL INSTALLATION THREAD_ID (explicit owner-only chat; no turn starts)\n  TARDY_CODEX_AUTO_CONNECT=yes (default) discovers shared-daemon sessions as owner-only chats.\n"
     );
     println!(
         "Tardy agent host\n\nUsage:\n  tardy-agent-host doctor\n  tardy-agent-host tapback <message>\n  tardy-agent-host render-manim <request.json>\n  tardy-agent-host run\n\nEnvironment:\n  TARDY_STATE_PATH         Agent credential from `tardy onboard`\n  TARDY_AGENT_WORKSPACE    Workspace this agent may access\n  TARDY_AGENT_HOST_STATE   Durable session and outbox state\n  TARDY_AGENT_DELIVERY     poll (default) or webhook\n  TARDY_AGENT_RUNTIME      codex (default) or opencode\n  TARDY_CODEX_SANDBOX      read-only or workspace-write (default)\n  TARDY_CODEX_NETWORK      enabled (default) or disabled\n  TARDY_OPENCODE_BIN       OpenCode executable (default: opencode)\n  TARDY_OPENCODE_MODEL     Optional provider/model routed by OpenCode\n  TARDY_OPENCODE_AGENT     Optional OpenCode agent name\n  TARDY_OPENCODE_PURE      yes disables external OpenCode plugins\n  TARDY_UVX_COMMAND        uvx-compatible Manim launcher\n  TARDY_AGENT_BIND         Webhook bind address"

@@ -167,6 +167,46 @@ pub struct SocialIdentity {
     pub kind: IdentityKind,
 }
 
+/// Brands reuse durable project profiles; verification remains a separate entitlement.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BrandProfileInput {
+    pub handle: String,
+    pub display_name: String,
+    #[serde(default)]
+    pub bio: String,
+    #[serde(default)]
+    pub avatar_url: String,
+}
+
+impl BrandProfileInput {
+    fn validate(&self) -> Result<String, SocialError> {
+        let handle = normalize_handle(&self.handle)?;
+        if self.display_name.trim().is_empty()
+            || self.display_name.chars().count() > 80
+            || self.bio.chars().count() > 500
+        {
+            return Err(SocialError::Invalid("invalid brand profile metadata"));
+        }
+        if !self.avatar_url.is_empty() {
+            let url = reqwest::Url::parse(&self.avatar_url)
+                .map_err(|_| SocialError::Invalid("brand logo must be a public HTTPS URL"))?;
+            if self.avatar_url.len() > 2048
+                || url.scheme() != "https"
+                || url.host_str().is_none()
+                || !url.username().is_empty()
+                || url.password().is_some()
+                || url.query().is_some()
+            {
+                return Err(SocialError::Invalid(
+                    "brand logo must be a public HTTPS URL without credentials or signed query parameters",
+                ));
+            }
+        }
+        Ok(handle)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Conversation {
     pub id: Uuid,
@@ -293,6 +333,7 @@ pub struct PostMedia {
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct AppFeedPost {
     pub id: Uuid,
+    pub share_path: String,
     pub author_id: Uuid,
     pub format: &'static str,
     pub media: Vec<serde_json::Value>,
@@ -629,6 +670,7 @@ impl PgSocialStore {
             .map(|row| {
                 let link: Option<String> = row.try_get("canonical_url")?;
                 Ok(AppFeedPost {
+                    share_path: crate::share_preview::public_path(row.try_get("id")?),
                     id: row.try_get("id")?,
                     author_id: row.try_get("author_profile_id")?,
                     format: post_format(&row)?,
@@ -1247,6 +1289,71 @@ impl PgSocialStore {
         }
     }
 
+    pub async fn create_brand_profile(
+        &self,
+        owner: Uuid,
+        input: &BrandProfileInput,
+    ) -> Result<AppAccount, SocialError> {
+        let handle = input.validate()?;
+        let mut tx = self.pool.begin().await?;
+        let human: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM durable_accounts WHERE id=$1 AND kind='human' AND NOT temporary)").bind(owner).fetch_one(&mut *tx).await?;
+        if !human {
+            return Err(SocialError::Forbidden);
+        }
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+            .bind(format!("brand:{handle}"))
+            .execute(&mut *tx)
+            .await?;
+        let existing: Option<(Uuid, Uuid, String, String, String, String)> = sqlx::query_as("SELECT profile_id,account_id,kind,display_name,bio,avatar_url FROM social_identities WHERE handle=$1").bind(&handle).fetch_optional(&mut *tx).await?;
+        let id = if let Some((id, account, kind, name, bio, avatar)) = existing {
+            if account != owner
+                || kind != "project"
+                || name != input.display_name.trim()
+                || bio != input.bio.trim()
+                || avatar != input.avatar_url
+            {
+                return Err(SocialError::Conflict(
+                    "brand handle already exists; use its owner-authorized update route",
+                ));
+            }
+            id
+        } else {
+            let id = Uuid::new_v4();
+            sqlx::query("INSERT INTO social_identities(profile_id,account_id,handle,kind,display_name,bio,avatar_url) VALUES ($1,$2,$3,'project',$4,$5,$6)")
+                .bind(id).bind(owner).bind(&handle).bind(input.display_name.trim()).bind(input.bio.trim()).bind(&input.avatar_url).execute(&mut *tx).await?;
+            sqlx::query(
+                "INSERT INTO profile_ownership(profile_id,owner_account_id) VALUES ($1,$2)",
+            )
+            .bind(id)
+            .bind(owner)
+            .execute(&mut *tx)
+            .await?;
+            sqlx::query("INSERT INTO profile_actors(profile_id,actor_account_id) VALUES ($1,$2)")
+                .bind(id)
+                .bind(owner)
+                .execute(&mut *tx)
+                .await?;
+            id
+        };
+        tx.commit().await?;
+        self.app_account_by_id(id).await
+    }
+
+    pub async fn update_brand_profile(
+        &self,
+        owner: Uuid,
+        id: Uuid,
+        input: &BrandProfileInput,
+    ) -> Result<AppAccount, SocialError> {
+        let handle = input.validate()?;
+        let changed = sqlx::query("UPDATE social_identities SET handle=$3,display_name=$4,bio=$5,avatar_url=$6 WHERE profile_id=$1 AND account_id=$2 AND kind='project' AND EXISTS(SELECT 1 FROM durable_accounts WHERE id=$2 AND kind='human' AND NOT temporary)")
+            .bind(id).bind(owner).bind(handle).bind(input.display_name.trim()).bind(input.bio.trim()).bind(&input.avatar_url).execute(&self.pool).await?;
+        if changed.rows_affected() != 1 {
+            return Err(SocialError::Forbidden);
+        }
+        self.app_account_by_id(id).await
+    }
+
     pub async fn set_brand_affiliate(
         &self,
         actor_account_id: Uuid,
@@ -1466,6 +1573,56 @@ impl PgSocialStore {
         Ok(())
     }
 
+    pub async fn set_agent_peer_permission(
+        &self,
+        owner: Uuid,
+        recipient: Uuid,
+        sender: Uuid,
+        allowed: bool,
+    ) -> Result<(), SocialError> {
+        self.require_agent_owner(owner, recipient).await?;
+        if sender == recipient {
+            return Err(SocialError::Invalid("agent cannot contact itself"));
+        }
+        if !allowed {
+            sqlx::query("DELETE FROM agent_peer_permissions WHERE sender_profile_id=$1 AND recipient_profile_id=$2")
+                .bind(sender).bind(recipient).execute(&self.pool).await?;
+            return Ok(());
+        }
+        let updated = sqlx::query("INSERT INTO agent_peer_permissions(sender_profile_id,recipient_profile_id,sender_owner_account_id,recipient_owner_account_id) SELECT $1,$2,p.owner_account_id,$3 FROM profile_ownership p JOIN social_identities i ON i.profile_id=p.profile_id JOIN durable_accounts a ON a.id=p.owner_account_id WHERE p.profile_id=$1 AND i.kind='agent' AND a.kind='human' AND NOT a.temporary ON CONFLICT(sender_profile_id,recipient_profile_id) DO UPDATE SET sender_owner_account_id=excluded.sender_owner_account_id,recipient_owner_account_id=excluded.recipient_owner_account_id")
+            .bind(sender).bind(recipient).bind(owner).execute(&self.pool).await?.rows_affected();
+        if updated != 1 {
+            return Err(SocialError::Invalid("sender must be a claimed agent"));
+        }
+        Ok(())
+    }
+
+    pub async fn ask_agent_peer(
+        &self,
+        actor: Uuid,
+        recipient: Uuid,
+        body: &str,
+        request_id: Uuid,
+    ) -> Result<ConversationMessage, SocialError> {
+        if actor == recipient {
+            return Err(SocialError::Invalid("an agent cannot ask itself"));
+        }
+        let mut permission = self.pool.begin().await?;
+        require_peer_contact(&mut permission, actor, recipient).await?;
+        permission.commit().await?;
+        let conversation = self.create_conversation(actor, recipient).await?;
+        self.send_message_with_peer_activation(
+            actor,
+            conversation.id,
+            body,
+            None,
+            &[],
+            Some(request_id),
+            Some(recipient),
+        )
+        .await
+    }
+
     pub async fn create_conversation(
         &self,
         actor: Uuid,
@@ -1495,7 +1652,7 @@ impl PgSocialStore {
         }
         let is_direct = recipients.len() == 1 && title.is_none();
         let mut tx = self.pool.begin().await?;
-        require_identity(&mut tx, actor).await?;
+        let actor_kind = require_identity(&mut tx, actor).await?;
         let mut agent = None;
         for recipient in &recipients {
             if require_identity(&mut tx, *recipient).await? == IdentityKind::Agent {
@@ -1505,6 +1662,9 @@ impl PgSocialStore {
                     ));
                 }
                 agent = Some(*recipient);
+                if actor_kind == IdentityKind::Agent {
+                    require_peer_contact(&mut tx, actor, *recipient).await?;
+                }
             }
         }
         let mode = if agent.is_some() {
@@ -1538,6 +1698,9 @@ impl PgSocialStore {
                 let participants = sqlx::query_scalar("SELECT profile_id FROM conversation_participants WHERE conversation_id=$1 ORDER BY joined_at,profile_id")
                     .bind(id).fetch_all(&mut *tx).await?;
                 let stored_mode: String = row.try_get("mode")?;
+                if actor_kind == IdentityKind::Agent && agent.is_some() {
+                    grant_peer_participants(&mut tx, id, actor, recipient).await?;
+                }
                 tx.commit().await?;
                 return Ok(Conversation { id, mode: parse_mode(&stored_mode)?, title: row.try_get("title")?, participants });
             }
@@ -1554,6 +1717,9 @@ impl PgSocialStore {
         if let Some(agent) = agent {
             sqlx::query("INSERT INTO conversation_agent_grants (conversation_id,agent_profile_id,granted_by,context_from_sequence) VALUES ($1,$2,$3,1)")
                 .bind(id).bind(agent).bind(actor).execute(&mut *tx).await?;
+            if actor_kind == IdentityKind::Agent {
+                grant_peer_participants(&mut tx, id, actor, agent).await?;
+            }
         }
         let inviter: String =
             sqlx::query_scalar("SELECT handle FROM social_identities WHERE profile_id=$1")
@@ -2146,6 +2312,29 @@ impl PgSocialStore {
         media: &[MessageMedia],
         request_id: Option<Uuid>,
     ) -> Result<ConversationMessage, SocialError> {
+        self.send_message_with_peer_activation(
+            actor,
+            conversation_id,
+            body,
+            shared_link_id,
+            media,
+            request_id,
+            None,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn send_message_with_peer_activation(
+        &self,
+        actor: Uuid,
+        conversation_id: Uuid,
+        body: &str,
+        shared_link_id: Option<Uuid>,
+        media: &[MessageMedia],
+        request_id: Option<Uuid>,
+        requested_peer: Option<Uuid>,
+    ) -> Result<ConversationMessage, SocialError> {
         let body = body.trim();
         if body.len() > 10_000 || (body.is_empty() && shared_link_id.is_none() && media.is_empty())
         {
@@ -2175,6 +2364,19 @@ impl PgSocialStore {
         }
         let mut tx = self.pool.begin().await?;
         require_participant(&mut tx, conversation_id, actor).await?;
+        let actor_kind = require_identity(&mut tx, actor).await?;
+        if let Some(peer) = requested_peer {
+            if actor_kind != IdentityKind::Agent {
+                return Err(SocialError::Forbidden);
+            }
+            require_participant(&mut tx, conversation_id, peer).await?;
+            require_peer_contact(&mut tx, actor, peer).await?;
+            let enabled: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM conversation_agent_grants WHERE conversation_id=$1 AND agent_profile_id=$2 AND can_reply)")
+                .bind(conversation_id).bind(peer).fetch_one(&mut *tx).await?;
+            if !enabled {
+                return Err(SocialError::Forbidden);
+            }
+        }
         sqlx::query("SELECT id FROM conversations WHERE id=$1 FOR UPDATE")
             .bind(conversation_id)
             .fetch_one(&mut *tx)
@@ -2204,6 +2406,19 @@ impl PgSocialStore {
                     .into_iter().next().ok_or(SocialError::NotFound);
             }
         }
+        if let Some(peer) = requested_peer {
+            sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+                .bind(format!("peer-rate:{actor}"))
+                .execute(&mut *tx)
+                .await?;
+            let recent: i64 = sqlx::query_scalar("SELECT count(*) FROM conversation_messages m JOIN conversation_agent_grants g ON g.conversation_id=m.conversation_id WHERE m.sender_profile_id=$1 AND g.agent_profile_id=$2 AND m.created_at>now()-interval '1 hour'")
+                .bind(actor).bind(peer).fetch_one(&mut *tx).await?;
+            if recent >= 20 {
+                return Err(SocialError::Conflict(
+                    "agent peer contact hourly limit reached",
+                ));
+            }
+        }
         let sequence: i64 = sqlx::query_scalar("SELECT COALESCE(max(sequence),0)+1 FROM conversation_messages WHERE conversation_id=$1").bind(conversation_id).fetch_one(&mut *tx).await?;
         let id = Uuid::new_v4();
         let row = sqlx::query("INSERT INTO conversation_messages (id,conversation_id,sequence,sender_profile_id,body,shared_link_id,client_request_id,request_digest) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING created_at")
@@ -2212,10 +2427,18 @@ impl PgSocialStore {
             sqlx::query("INSERT INTO conversation_message_media (message_id,position,asset_id,width,height,alt_text,file_name) VALUES ($1,$2,$3,$4,$5,$6,$7)")
                 .bind(id).bind(position as i16).bind(item.asset_id).bind(item.width.map(|value| value as i32)).bind(item.height.map(|value| value as i32)).bind(&item.alt_text).bind(&item.file_name).execute(&mut *tx).await?;
         }
-        let agents: Vec<(Uuid, i64)> = sqlx::query_as("SELECT agent_profile_id,context_from_sequence FROM conversation_agent_grants WHERE conversation_id=$1 AND can_reply AND agent_profile_id<>$2 AND context_from_sequence<=$3")
-            .bind(conversation_id).bind(actor).bind(sequence).fetch_all(&mut *tx).await?;
+        // An ordinary agent reply is not another agent activation. Only a human
+        // message or a permission-checked explicit peer question can wake agents.
+        let agents: Vec<(Uuid, i64)> = if actor_kind != IdentityKind::Agent
+            || requested_peer.is_some()
+        {
+            sqlx::query_as("SELECT agent_profile_id,context_from_sequence FROM conversation_agent_grants WHERE conversation_id=$1 AND can_reply AND agent_profile_id<>$2 AND context_from_sequence<=$3 AND ($4::uuid IS NULL OR agent_profile_id=$4)")
+                .bind(conversation_id).bind(actor).bind(sequence).bind(requested_peer).fetch_all(&mut *tx).await?
+        } else {
+            Vec::new()
+        };
         for (agent, context_from_sequence) in agents {
-            emit_agent_event(&mut tx, "work_message", id, agent, serde_json::json!({"conversation_id": conversation_id, "message_id": id, "sequence": sequence, "context_from_sequence": context_from_sequence, "body": body, "shared_link_id": shared_link_id, "media": media})).await?;
+            emit_agent_event(&mut tx, "work_message", id, agent, serde_json::json!({"conversation_id": conversation_id, "message_id": id, "sequence": sequence, "context_from_sequence": context_from_sequence, "body": body, "shared_link_id": shared_link_id, "media": media, "sender_profile_id":actor, "explicit_peer_request":requested_peer.is_some()})).await?;
         }
         let sender: String =
             sqlx::query_scalar("SELECT handle FROM social_identities WHERE profile_id=$1")
@@ -2637,6 +2860,36 @@ async fn notify_human(
     Ok(())
 }
 
+async fn grant_peer_participants(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    conversation: Uuid,
+    sender: Uuid,
+    recipient: Uuid,
+) -> Result<(), SocialError> {
+    for profile in [sender, recipient] {
+        sqlx::query("INSERT INTO conversation_agent_grants(conversation_id,agent_profile_id,granted_by,context_from_sequence) VALUES ($1,$2,$3,1) ON CONFLICT DO NOTHING")
+            .bind(conversation).bind(profile).bind(sender).execute(&mut **tx).await?;
+    }
+    Ok(())
+}
+
+async fn require_peer_contact(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    sender: Uuid,
+    recipient: Uuid,
+) -> Result<(), SocialError> {
+    if sender == recipient {
+        return Err(SocialError::Forbidden);
+    }
+    let allowed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM profile_ownership s JOIN social_identities si ON si.profile_id=s.profile_id JOIN durable_accounts sa ON sa.id=s.owner_account_id JOIN profile_ownership r ON r.profile_id=$2 JOIN social_identities ri ON ri.profile_id=r.profile_id JOIN durable_accounts ra ON ra.id=r.owner_account_id WHERE s.profile_id=$1 AND si.kind='agent' AND ri.kind='agent' AND sa.kind='human' AND ra.kind='human' AND NOT sa.temporary AND NOT ra.temporary AND (s.owner_account_id=r.owner_account_id OR EXISTS(SELECT 1 FROM agent_peer_permissions p WHERE p.sender_profile_id=$1 AND p.recipient_profile_id=$2 AND p.sender_owner_account_id=s.owner_account_id AND p.recipient_owner_account_id=r.owner_account_id)))")
+        .bind(sender).bind(recipient).fetch_one(&mut **tx).await?;
+    if allowed {
+        Ok(())
+    } else {
+        Err(SocialError::Forbidden)
+    }
+}
+
 async fn require_participant(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     conversation: Uuid,
@@ -2820,6 +3073,11 @@ fn parse_visibility(value: &str) -> Result<PostVisibility, SocialError> {
     }
 }
 fn app_account_from_row(row: sqlx::postgres::PgRow) -> Result<AppAccount, SocialError> {
+    let kind = parse_kind(&row.try_get::<String, _>("kind")?)?;
+    let mut avatar_url: String = row.try_get("avatar_url")?;
+    if kind == IdentityKind::Project && avatar_url == "https://tardy.news/favicon.svg" {
+        avatar_url.clear();
+    }
     let verification_tier: Option<String> = row.try_get("verification_tier")?;
     let brand_profile_id: Option<Uuid> = row.try_get("brand_profile_id")?;
     let brand_handle: Option<String> = row.try_get("brand_handle")?;
@@ -2827,10 +3085,10 @@ fn app_account_from_row(row: sqlx::postgres::PgRow) -> Result<AppAccount, Social
     let brand_label: Option<String> = row.try_get("brand_label")?;
     Ok(AppAccount {
         id: row.try_get("profile_id")?,
-        kind: parse_kind(&row.try_get::<String, _>("kind")?)?,
+        kind,
         handle: row.try_get("handle")?,
         display_name: row.try_get("display_name")?,
-        avatar_url: row.try_get("avatar_url")?,
+        avatar_url,
         bio: row.try_get("bio")?,
         verified: verification_tier.is_some(),
         verification_tier,
@@ -2850,6 +3108,7 @@ fn app_account_from_row(row: sqlx::postgres::PgRow) -> Result<AppAccount, Social
 fn app_post_from_row(row: sqlx::postgres::PgRow) -> Result<AppFeedPost, SocialError> {
     let link: Option<String> = row.try_get("canonical_url")?;
     Ok(AppFeedPost {
+        share_path: crate::share_preview::public_path(row.try_get("id")?),
         id: row.try_get("id")?,
         author_id: row.try_get("author_profile_id")?,
         format: post_format(&row)?,

@@ -49,10 +49,17 @@ async function run(search, response, navigator = {}) {
 test('demo is labeled and makes no backend request',async()=>{const {elements,calls}=await run('?demo=1');assert.equal(calls.length,0);assert.match(elements.get('label').textContent,/DEMO/);assert.equal(elements.get('player').children.length,1);});
 test('invalid links never call backend',async()=>{const {calls}=await run('?id=nope');assert.equal(calls.length,0);});
 test('private or removed posts expose no caption or media',async()=>{const {elements,calls}=await run('?id=11111111-1111-1111-1111-111111111111',{status:404});assert.match(elements.get('title').textContent,/isn’t available/);assert.equal(elements.has('caption'),false);assert.equal(calls[0].options.credentials,'omit');});
-test('shares the deployed viewer asset rather than an unsupported nested route',async()=>{
+test('shares the server-rendered crawler-readable preview route',async()=>{
   const id='11111111-1111-1111-1111-111111111111';
   let shared;
-  const {elements}=await run(`?id=${id}`,{status:200,ok:true,json:async()=>({caption:'Public work',media:[]})},{share:async value=>{shared=value;}});
+  const {elements}=await run(`?id=${id}`,{status:200,ok:true,json:async()=>({caption:'Public work',media:[],share_path:`/t/${id}`})},{share:async value=>{shared=value;}});
+  await elements.get('share').onclick();
+  assert.equal(shared.url,`https://api.tardy.news/t/${id}`);
+});
+test('older backends retain the working viewer share URL',async()=>{
+  const id='11111111-1111-1111-1111-111111111111';
+  let shared;
+  const {elements}=await run(`?id=${id}`,{status:200,ok:true,json:async()=>({caption:'Work',media:[]})},{share:async value=>{shared=value;}});
   await elements.get('share').onclick();
   assert.equal(shared.url,`https://tardy.news/viewer.html?id=${id}`);
 });

@@ -10,14 +10,40 @@ struct AppleSessionRequest: Encodable, Sendable {
     let fullName: String?
 }
 
+// Keep the authorization transaction in reference storage: AuthenticationServices
+// callbacks can outlive the SwiftUI view value that started the request.
+@MainActor
+final class AppleAuthorizationTransaction {
+    private var pending: (nonce: String, state: String)?
+
+    func begin() -> (hashedNonce: String, state: String) {
+        let nonce = UUID().uuidString + UUID().uuidString
+        let state = UUID().uuidString
+        pending = (nonce, state)
+        return (SHA256.hash(data: Data(nonce.utf8)).map { String(format: "%02x", $0) }.joined(), state)
+    }
+
+    func consume(state: String?) -> String? {
+        defer { pending = nil }
+        guard let pending, state == pending.state else { return nil }
+        return pending.nonce
+    }
+
+    func cancel() { pending = nil }
+}
+
 struct AppleSignInButton: View {
     @Environment(AppModel.self) private var model
-    @State private var nonce = ""
+    @State private var transaction = AppleAuthorizationTransaction()
+    private var isProvisioned: Bool {
+        Bundle.main.object(forInfoDictionaryKey: "TardyAppleSignInConfigured") as? Bool == true
+    }
     var body: some View {
         SignInWithAppleButton(.signIn) { request in
-            nonce = UUID().uuidString + UUID().uuidString
+            let challenge = transaction.begin()
             request.requestedScopes = [.fullName, .email]
-            request.nonce = SHA256.hash(data: Data(nonce.utf8)).map { String(format: "%02x", $0) }.joined()
+            request.nonce = challenge.hashedNonce
+            request.state = challenge.state
         } onCompletion: { result in
             switch result {
             case .success(let authorization):
@@ -27,14 +53,21 @@ struct AppleSignInButton: View {
                     model.errorMessage = "Apple did not return a sign-in credential."
                     return
                 }
+                guard let nonce = transaction.consume(state: credential.state) else {
+                    model.errorMessage = "Apple sign-in request expired or did not match. Please try again."
+                    return
+                }
                 let name = credential.fullName.map { PersonNameComponentsFormatter().string(from: $0) }
                 let request = AppleSessionRequest(identityToken: token, authorizationCode: code, nonce: nonce, fullName: name)
                 Task { await model.appleSignIn(credential: request) }
             case .failure(let error):
+                transaction.cancel()
                 model.errorMessage = "Apple sign-in failed: \(error.localizedDescription). This Mac build requires Apple Sign in provisioning."
             }
         }
         .signInWithAppleButtonStyle(.white)
+        .disabled(!isProvisioned)
+        .help(isProvisioned ? "Sign in to your Tardy account" : "This Mac build needs its Apple sign-in provisioning profile.")
         .frame(width: 320, height: 44)
     }
 }

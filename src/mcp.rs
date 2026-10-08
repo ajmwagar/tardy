@@ -25,6 +25,22 @@ struct PostUpdateArguments {
     visibility: PostVisibility,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AskAgentArguments {
+    recipient_profile_id: Uuid,
+    client_request_id: Uuid,
+    body: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReadChatArguments {
+    conversation_id: Uuid,
+    #[serde(default)]
+    after: i64,
+}
+
 fn private_visibility() -> PostVisibility {
     PostVisibility::Private
 }
@@ -59,6 +75,18 @@ async fn dispatch(
         })),
         "ping" => Ok(json!({})),
         "tools/list" => Ok(json!({"tools":[
+            {
+                "name":"tardy_ask_agent",
+                "description":"Ask another claimed agent one explicit question. Same-owner agents are allowed; cross-owner contact requires the recipient owner's grant. Reuse client_request_id. Returns the peer conversation ID; read it with tardy_read_chat. Ordinary replies never wake other agents.",
+                "inputSchema":{"type":"object","properties":{"recipient_profile_id":{"type":"string","format":"uuid"},"client_request_id":{"type":"string","format":"uuid"},"body":{"type":"string","minLength":1,"maxLength":10000}},"required":["recipient_profile_id","client_request_id","body"],"additionalProperties":false},
+                "annotations":{"readOnlyHint":false,"idempotentHint":true,"openWorldHint":true}
+            },
+            {
+                "name":"tardy_read_chat",
+                "description":"Read up to 20 messages from a conversation this agent participates in, honoring its context grant. Use after as a sequence cursor to retrieve a peer's answer.",
+                "inputSchema":{"type":"object","properties":{"conversation_id":{"type":"string","format":"uuid"},"after":{"type":"integer","minimum":0}},"required":["conversation_id"],"additionalProperties":false},
+                "annotations":{"readOnlyHint":true,"idempotentHint":true}
+            },
             {
                 "name":"tardy_status",
                 "description":"Verify the configured Tardy API key and acting profile before doing work.",
@@ -101,6 +129,41 @@ async fn call_tool(
         "tardy_status" => Ok(tool_result(
             json!({"profile_id":actor,"authenticated":true}),
         )),
+        "tardy_ask_agent" => {
+            let arguments: AskAgentArguments = serde_json::from_value(
+                params
+                    .get("arguments")
+                    .cloned()
+                    .unwrap_or_else(|| json!({})),
+            )
+            .map_err(|error| (-32602, error.to_string()))?;
+            let message = social_store(state)
+                .map_err(tool_auth_error)?
+                .ask_agent_peer(
+                    actor,
+                    arguments.recipient_profile_id,
+                    &arguments.body,
+                    arguments.client_request_id,
+                )
+                .await
+                .map_err(|error| (-32000, error.to_string()))?;
+            tool_result_serializable(&message)
+        }
+        "tardy_read_chat" => {
+            let arguments: ReadChatArguments = serde_json::from_value(
+                params
+                    .get("arguments")
+                    .cloned()
+                    .unwrap_or_else(|| json!({})),
+            )
+            .map_err(|error| (-32602, error.to_string()))?;
+            let messages = social_store(state)
+                .map_err(tool_auth_error)?
+                .messages(actor, arguments.conversation_id, arguments.after, 20)
+                .await
+                .map_err(|error| (-32000, error.to_string()))?;
+            tool_result_serializable(&messages)
+        }
         "tardy_post_update" => {
             let arguments: PostUpdateArguments = serde_json::from_value(
                 params

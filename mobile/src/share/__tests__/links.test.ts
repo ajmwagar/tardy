@@ -22,6 +22,7 @@ describe('tardy URLs', () => {
   it('round-trip a post id, and reject other URLs', () => {
     expect(parseTardyUrl(tardyUrl('post-1'))).toBe('post-1');
     expect(parseTardyUrl('https://tardy.news/t/abc?x=1')).toBe('abc');
+    expect(parseTardyUrl('https://api.tardy.news/t/abc')).toBe('abc');
     expect(parseTardyUrl('https://example.com/t/abc')).toBeNull();
     expect(tardyUrl('post-1')).toBe('https://tardy.news/viewer.html?id=post-1');
     expect(parseTardyUrl('https://tardy.news/viewer.html?id=post-1')).toBe('post-1');

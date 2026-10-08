@@ -55,6 +55,7 @@ export function VideoSurface({
   // Settings > App > Autoplay: off means posts wait for a tap (stories always play; their timer needs it).
   const { autoplay } = useAppPrefs();
   const [tapped, setTapped] = useState(false);
+  const [renderedUrl, setRenderedUrl] = useState<string | null>(null);
   const waitingForTap = !!postId && !autoplay && !tapped;
   const playing = active && !waitingForTap;
   const source = useMemo(() => ({ uri: media.url, useCaching: !media.url.endsWith('.m3u8') }), [media.url]);
@@ -116,7 +117,7 @@ export function VideoSurface({
     }
   }, [timeUpdate, active, postId]);
 
-  const video = <VideoView player={player} style={StyleSheet.absoluteFill} contentFit={contentFit} nativeControls={false} />;
+  const video = <VideoView key={media.url} player={player} style={StyleSheet.absoluteFill} contentFit={contentFit} nativeControls={false} onFirstFrameRender={() => setRenderedUrl(media.url)} />;
 
   return (
     <View style={StyleSheet.absoluteFill}>
@@ -131,7 +132,7 @@ export function VideoSurface({
       ) : (
         video
       )}
-      {status !== 'readyToPlay' && (
+      {(status !== 'readyToPlay' || (!fullBleed && renderedUrl !== media.url)) && (
         // Same fit as the video, so nothing jumps when the first frame replaces the poster.
         <Image source={media.posterUrl} style={StyleSheet.absoluteFill} contentFit={contentFit} cachePolicy="memory-disk" transition={IMAGE_TRANSITION_MS} />
       )}

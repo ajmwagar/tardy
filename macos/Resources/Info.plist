@@ -4,7 +4,9 @@
 <dict>
     <key>CFBundleDevelopmentRegion</key><string>en</string>
     <key>CFBundleExecutable</key><string>TardyMac</string>
-    <key>CFBundleIdentifier</key><string>dev.fpl.tardy.macos</string>
+    <!-- Resolved from the universal mobile App ID by build-app.sh. -->
+    <key>CFBundleIdentifier</key><string>TARDY_NATIVE_APP_ID</string>
+    <key>TardyAppleSignInConfigured</key><false/>
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundleName</key><string>Tardy</string>
     <key>CFBundleDisplayName</key><string>Tardy</string>

@@ -40,6 +40,13 @@ struct ContentView: View {
         .background(Brand.background)
         .toolbar {
             ToolbarItem(placement: .automatic) {
+                if model.serverEnvironment == .devOverlay {
+                    Text("DEV OVERLAY · writes to prod")
+                        .font(.caption.bold()).foregroundStyle(Brand.yellow)
+                        .help("Production account, chats and writes. Only explicit overlay drafts stay local.")
+                }
+            }
+            ToolbarItem(placement: .automatic) {
                 Menu {
                     ForEach(ServerEnvironment.allCases) { server in
                         Button(server.label) { Task { await model.switchServer(to: server) } }
@@ -188,6 +195,22 @@ private struct InboxSidebar: View {
                 }
             }
             .listStyle(.sidebar)
+            .overlay {
+                if model.conversations.isEmpty {
+                    if model.isLoadingInbox {
+                        ProgressView("Loading conversations…")
+                    } else if let error = model.inboxLoadError {
+                        VStack(spacing: 10) {
+                            Text("Couldn't load conversations").font(.headline)
+                            Text(error).font(.caption).foregroundStyle(Brand.muted)
+                            Button("Try again") { Task { await model.refreshInbox() } }
+                        }.padding()
+                    } else {
+                        Text("No conversations in \(model.serverEnvironment.label) yet.")
+                            .font(.caption).foregroundStyle(Brand.muted).padding()
+                    }
+                }
+            }
 
             if let account = model.account {
                 HStack(spacing: 10) {
@@ -553,6 +576,40 @@ private struct AgentActivityTimeline: View {
     }
 }
 
+private struct SharedTardyCard: View {
+    @Environment(AppModel.self) private var model
+    let id: UUID
+    @State private var post: TardyPost?
+    @State private var failure: String?
+
+    var body: some View {
+        Group {
+            if let post {
+                Button { model.openPost(post) } label: {
+                    VStack(alignment: .leading, spacing: 8) {
+                        AsyncImage(url: post.primaryMedia.flatMap { $0.type == "image" ? $0.remoteURL : $0.posterURL }) { phase in
+                            if let image = phase.image { image.resizable().scaledToFit() }
+                            else { Image(systemName: "play.rectangle").font(.largeTitle).padding() }
+                        }.frame(maxHeight: 240)
+                        Text(post.caption).lineLimit(4).multilineTextAlignment(.leading)
+                        Label("Open Tardy", systemImage: "play.circle")
+                    }.padding(10).frame(maxWidth: 360, alignment: .leading)
+                }.buttonStyle(.plain)
+            } else if let failure {
+                Text(failure).font(.caption)
+                Button("Retry") { Task { await load() } }
+            } else { ProgressView("Loading Tardy…") }
+        }.task(id: id) { await load() }
+    }
+
+    private func load() async {
+        failure = nil
+        do { post = try await model.api.post(id: id) }
+        catch is CancellationError { }
+        catch { failure = "Could not load this Tardy. It may be private or unavailable." }
+    }
+}
+
 private struct MessageRow: View {
     @Environment(AppModel.self) private var model
     let message: Message
@@ -578,6 +635,9 @@ private struct MessageRow: View {
                     .buttonStyle(.plain)
                 }
                 VStack(alignment: .leading, spacing: 8) {
+                    if let id = TardyPost.sharedID(in: message.body) {
+                        SharedTardyCard(id: id)
+                    }
                     if !message.body.isEmpty {
                         ChatReplyView(source: message.body, expanded: expanded)
                     }
