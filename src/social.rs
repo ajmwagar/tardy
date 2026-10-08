@@ -167,6 +167,46 @@ pub struct SocialIdentity {
     pub kind: IdentityKind,
 }
 
+/// Brands reuse durable project profiles; verification remains a separate entitlement.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BrandProfileInput {
+    pub handle: String,
+    pub display_name: String,
+    #[serde(default)]
+    pub bio: String,
+    #[serde(default)]
+    pub avatar_url: String,
+}
+
+impl BrandProfileInput {
+    fn validate(&self) -> Result<String, SocialError> {
+        let handle = normalize_handle(&self.handle)?;
+        if self.display_name.trim().is_empty()
+            || self.display_name.chars().count() > 80
+            || self.bio.chars().count() > 500
+        {
+            return Err(SocialError::Invalid("invalid brand profile metadata"));
+        }
+        if !self.avatar_url.is_empty() {
+            let url = reqwest::Url::parse(&self.avatar_url)
+                .map_err(|_| SocialError::Invalid("brand logo must be a public HTTPS URL"))?;
+            if self.avatar_url.len() > 2048
+                || url.scheme() != "https"
+                || url.host_str().is_none()
+                || !url.username().is_empty()
+                || url.password().is_some()
+                || url.query().is_some()
+            {
+                return Err(SocialError::Invalid(
+                    "brand logo must be a public HTTPS URL without credentials or signed query parameters",
+                ));
+            }
+        }
+        Ok(handle)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Conversation {
     pub id: Uuid,
@@ -293,6 +333,7 @@ pub struct PostMedia {
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct AppFeedPost {
     pub id: Uuid,
+    pub share_path: String,
     pub author_id: Uuid,
     pub format: &'static str,
     pub media: Vec<serde_json::Value>,
@@ -629,6 +670,7 @@ impl PgSocialStore {
             .map(|row| {
                 let link: Option<String> = row.try_get("canonical_url")?;
                 Ok(AppFeedPost {
+                    share_path: crate::share_preview::public_path(row.try_get("id")?),
                     id: row.try_get("id")?,
                     author_id: row.try_get("author_profile_id")?,
                     format: post_format(&row)?,
@@ -1245,6 +1287,71 @@ impl PgSocialStore {
         } else {
             Err(SocialError::Forbidden)
         }
+    }
+
+    pub async fn create_brand_profile(
+        &self,
+        owner: Uuid,
+        input: &BrandProfileInput,
+    ) -> Result<AppAccount, SocialError> {
+        let handle = input.validate()?;
+        let mut tx = self.pool.begin().await?;
+        let human: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM durable_accounts WHERE id=$1 AND kind='human' AND NOT temporary)").bind(owner).fetch_one(&mut *tx).await?;
+        if !human {
+            return Err(SocialError::Forbidden);
+        }
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+            .bind(format!("brand:{handle}"))
+            .execute(&mut *tx)
+            .await?;
+        let existing: Option<(Uuid, Uuid, String, String, String, String)> = sqlx::query_as("SELECT profile_id,account_id,kind,display_name,bio,avatar_url FROM social_identities WHERE handle=$1").bind(&handle).fetch_optional(&mut *tx).await?;
+        let id = if let Some((id, account, kind, name, bio, avatar)) = existing {
+            if account != owner
+                || kind != "project"
+                || name != input.display_name.trim()
+                || bio != input.bio.trim()
+                || avatar != input.avatar_url
+            {
+                return Err(SocialError::Conflict(
+                    "brand handle already exists; use its owner-authorized update route",
+                ));
+            }
+            id
+        } else {
+            let id = Uuid::new_v4();
+            sqlx::query("INSERT INTO social_identities(profile_id,account_id,handle,kind,display_name,bio,avatar_url) VALUES ($1,$2,$3,'project',$4,$5,$6)")
+                .bind(id).bind(owner).bind(&handle).bind(input.display_name.trim()).bind(input.bio.trim()).bind(&input.avatar_url).execute(&mut *tx).await?;
+            sqlx::query(
+                "INSERT INTO profile_ownership(profile_id,owner_account_id) VALUES ($1,$2)",
+            )
+            .bind(id)
+            .bind(owner)
+            .execute(&mut *tx)
+            .await?;
+            sqlx::query("INSERT INTO profile_actors(profile_id,actor_account_id) VALUES ($1,$2)")
+                .bind(id)
+                .bind(owner)
+                .execute(&mut *tx)
+                .await?;
+            id
+        };
+        tx.commit().await?;
+        self.app_account_by_id(id).await
+    }
+
+    pub async fn update_brand_profile(
+        &self,
+        owner: Uuid,
+        id: Uuid,
+        input: &BrandProfileInput,
+    ) -> Result<AppAccount, SocialError> {
+        let handle = input.validate()?;
+        let changed = sqlx::query("UPDATE social_identities SET handle=$3,display_name=$4,bio=$5,avatar_url=$6 WHERE profile_id=$1 AND account_id=$2 AND kind='project' AND EXISTS(SELECT 1 FROM durable_accounts WHERE id=$2 AND kind='human' AND NOT temporary)")
+            .bind(id).bind(owner).bind(handle).bind(input.display_name.trim()).bind(input.bio.trim()).bind(&input.avatar_url).execute(&self.pool).await?;
+        if changed.rows_affected() != 1 {
+            return Err(SocialError::Forbidden);
+        }
+        self.app_account_by_id(id).await
     }
 
     pub async fn set_brand_affiliate(
@@ -2966,6 +3073,11 @@ fn parse_visibility(value: &str) -> Result<PostVisibility, SocialError> {
     }
 }
 fn app_account_from_row(row: sqlx::postgres::PgRow) -> Result<AppAccount, SocialError> {
+    let kind = parse_kind(&row.try_get::<String, _>("kind")?)?;
+    let mut avatar_url: String = row.try_get("avatar_url")?;
+    if kind == IdentityKind::Project && avatar_url == "https://tardy.news/favicon.svg" {
+        avatar_url.clear();
+    }
     let verification_tier: Option<String> = row.try_get("verification_tier")?;
     let brand_profile_id: Option<Uuid> = row.try_get("brand_profile_id")?;
     let brand_handle: Option<String> = row.try_get("brand_handle")?;
@@ -2973,10 +3085,10 @@ fn app_account_from_row(row: sqlx::postgres::PgRow) -> Result<AppAccount, Social
     let brand_label: Option<String> = row.try_get("brand_label")?;
     Ok(AppAccount {
         id: row.try_get("profile_id")?,
-        kind: parse_kind(&row.try_get::<String, _>("kind")?)?,
+        kind,
         handle: row.try_get("handle")?,
         display_name: row.try_get("display_name")?,
-        avatar_url: row.try_get("avatar_url")?,
+        avatar_url,
         bio: row.try_get("bio")?,
         verified: verification_tier.is_some(),
         verification_tier,
@@ -2996,6 +3108,7 @@ fn app_account_from_row(row: sqlx::postgres::PgRow) -> Result<AppAccount, Social
 fn app_post_from_row(row: sqlx::postgres::PgRow) -> Result<AppFeedPost, SocialError> {
     let link: Option<String> = row.try_get("canonical_url")?;
     Ok(AppFeedPost {
+        share_path: crate::share_preview::public_path(row.try_get("id")?),
         id: row.try_get("id")?,
         author_id: row.try_get("author_profile_id")?,
         format: post_format(&row)?,

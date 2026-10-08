@@ -22,7 +22,8 @@
     }
     el('share').hidden = false;
     el('share').onclick = async () => {
-      const url = id ? `${location.origin}/viewer.html?id=${encodeURIComponent(id)}` : `${location.origin}/viewer.html?demo=1`;
+      const richPath = id && post.share_path === `/t/${id}`;
+      const url = richPath ? `${api}${post.share_path}` : id ? `${location.origin}/viewer.html?id=${encodeURIComponent(id)}` : `${location.origin}/viewer.html?demo=1`;
       try { if (navigator.share) await navigator.share({ title: 'Tardy', url }); else { await navigator.clipboard.writeText(url); el('status').textContent = 'Link copied.'; } }
       catch (error) { if (error.name !== 'AbortError') el('status').textContent = 'Could not share. Copy the address from your browser.'; }
     };

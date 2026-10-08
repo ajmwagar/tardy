@@ -269,6 +269,7 @@ private struct ReelStage: View {
                     VStack(spacing: 15) {
                         ActionButton(icon: post.viewerHasLiked ? "heart.fill" : "heart", count: post.likeCount, active: post.viewerHasLiked) { Task { await model.toggleLike() } }
                         ActionButton(icon: "bubble.left.fill", count: post.commentCount, active: false) {}
+                        PostShareButton(post: post)
                         ActionButton(icon: post.viewerHasSaved ? "bookmark.fill" : "bookmark", count: nil, active: post.viewerHasSaved) { Task { await model.toggleSaved() } }
                     }
                 }.padding()
@@ -441,6 +442,17 @@ private struct ActionButton: View {
     }
 }
 
+private struct PostShareButton: View {
+    @Environment(AppModel.self) private var model
+    let post: TardyPost
+    var body: some View {
+        ShareLink(item: post.shareURL(apiBaseURL: model.serverEnvironment.baseURL)) {
+            Label("Share", systemImage: "square.and.arrow.up")
+        }
+        .help("Share this Tardy to Messages, Mail, AirDrop or another app")
+    }
+}
+
 private struct PostInspector: View {
     @Environment(AppModel.self) private var model
     let post: TardyPost
@@ -448,6 +460,11 @@ private struct PostInspector: View {
     var body: some View {
         @Bindable var model = model
         VStack(spacing: 0) {
+            HStack {
+                Text("Tardy").font(.headline)
+                Spacer()
+                PostShareButton(post: post)
+            }.padding(16)
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     if let author = model.accounts[post.authorId] {

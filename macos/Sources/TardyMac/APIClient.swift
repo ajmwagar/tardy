@@ -54,6 +54,10 @@ actor TardyAPI {
         try await request("/v1/feed/reels?limit=50")
     }
 
+    func post(id: UUID) async throws -> TardyPost {
+        try await request("/v1/posts/\(id.uuidString)")
+    }
+
     func profile(id: UUID) async throws -> Account {
         try await request("/v1/profiles/by-id/\(id.uuidString)")
     }

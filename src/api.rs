@@ -23,9 +23,10 @@ use crate::push::{
 use crate::ranking::FeedRanker;
 use crate::search::{SearchDocument, SearchError, SearchService};
 use crate::social::{
-    AppAccount, AppEngagementAction, AppFeedPost, AppSearchResult, Comment, Conversation,
-    ConversationDraft, ConversationMessage, ConversationSummary, IdentityKind, PgSocialStore,
-    PostMedia, PostVisibility, SetBrandAffiliate, SharedLink, SocialError, TardyPost,
+    AppAccount, AppEngagementAction, AppFeedPost, AppSearchResult, BrandProfileInput, Comment,
+    Conversation, ConversationDraft, ConversationMessage, ConversationSummary, IdentityKind,
+    PgSocialStore, PostMedia, PostVisibility, SetBrandAffiliate, SharedLink, SocialError,
+    TardyPost,
 };
 use crate::store::{MemoryStore, NewLive, NewProfile, NewReel, Store, StoreError};
 use crate::subscriptions::{
@@ -325,6 +326,8 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/v1/agents/{id}/avatar/generate",
             post(generate_agent_avatar),
         )
+        .route("/v1/brands", post(create_brand_profile))
+        .route("/v1/brands/{id}", patch(update_brand_profile))
         .route(
             "/v1/brands/{brand_id}/affiliates/{profile_id}",
             put(set_brand_affiliate).delete(clear_brand_affiliate),
@@ -368,6 +371,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/saved-posts/{id}", put(save_post).delete(unsave_post))
         .route("/v1/posts/{id}", get(get_app_post))
         .route("/v1/public/posts/{id}", get(get_public_post))
+        .route("/t/{id}", get(public_share_page))
+        .route("/t/{id}/poster", get(public_share_poster))
         .route("/v1/posts/{id}/like", put(like_post).delete(unlike_post))
         .route("/v1/posts/{id}/alarm", put(alarm_post).delete(unalarm_post))
         .route(
@@ -785,6 +790,69 @@ async fn get_public_post(
     localize_posts(&state, std::slice::from_mut(&mut post));
     resolve_post_assets(&state, std::slice::from_mut(&mut post)).await?;
     Ok(([(header::CACHE_CONTROL, "no-store")], Json(post)))
+}
+
+async fn public_share_page(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+) -> Result<Response, ApiError> {
+    let post = match social_store(&state)?.app_post(None, id).await {
+        Ok(post) => post,
+        Err(SocialError::NotFound | SocialError::Forbidden) => {
+            return Ok((
+                StatusCode::NOT_FOUND,
+                [(header::CACHE_CONTROL, "no-store")],
+                axum::response::Html(crate::share_preview::unavailable_page()),
+            )
+                .into_response());
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let author = social_store(&state)?
+        .app_account_by_id(post.author_id)
+        .await?;
+    let has_poster = preview_poster(&post).is_some();
+    let html = crate::share_preview::public_page(id, &post.caption, &author.handle, has_poster);
+    Ok((
+        [(header::CACHE_CONTROL, "no-store")],
+        axum::response::Html(html),
+    )
+        .into_response())
+}
+
+fn preview_poster(post: &AppFeedPost) -> Option<&str> {
+    post.media.iter().find_map(|item| {
+        if item["type"] == "image" {
+            return item["url"].as_str();
+        }
+        item["poster_url"]
+            .as_str()
+            .filter(|poster| Some(*poster) != item["url"].as_str())
+    })
+}
+
+async fn public_share_poster(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+) -> Result<Response, ApiError> {
+    // Recheck anonymous visibility on every fetch; never cache a private signed URL in HTML.
+    let mut post = social_store(&state)?.app_post(None, id).await?;
+    resolve_post_assets(&state, std::slice::from_mut(&mut post)).await?;
+    let poster =
+        preview_poster(&post).ok_or_else(|| ApiError::not_found("post has no preview image"))?;
+    let url =
+        reqwest::Url::parse(poster).map_err(|_| ApiError::not_found("invalid preview image"))?;
+    if !matches!(url.scheme(), "https" | "http")
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return Err(ApiError::not_found("invalid preview image"));
+    }
+    Ok((
+        [(header::CACHE_CONTROL, "no-store")],
+        axum::response::Redirect::temporary(url.as_str()),
+    )
+        .into_response())
 }
 
 /// Session restoration is an explicit route even before the provider exchange lands.
@@ -1798,6 +1866,36 @@ async fn account_view(state: &AppState, value: HumanProfile) -> Result<AccountVi
     })
 }
 
+async fn create_brand_profile(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(input): Json<BrandProfileInput>,
+) -> Result<(StatusCode, Json<AppAccount>), ApiError> {
+    let owner = authenticated_account(&state, &headers).await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(
+            social_store(&state)?
+                .create_brand_profile(owner, &input)
+                .await?,
+        ),
+    ))
+}
+
+async fn update_brand_profile(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(input): Json<BrandProfileInput>,
+) -> Result<Json<AppAccount>, ApiError> {
+    let owner = authenticated_account(&state, &headers).await?;
+    Ok(Json(
+        social_store(&state)?
+            .update_brand_profile(owner, id, &input)
+            .await?,
+    ))
+}
+
 async fn set_brand_affiliate(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -1888,6 +1986,9 @@ fn dicebear_avatar_url(kind: IdentityKind, seed: &str) -> String {
 
 fn localize_accounts(accounts: &mut [AppAccount]) {
     for account in accounts {
+        if account.kind == IdentityKind::Project && account.avatar_url.is_empty() {
+            continue;
+        }
         if account.avatar_url.is_empty() || account.avatar_url == "https://tardy.news/favicon.svg" {
             account.avatar_url = dicebear_avatar_url(account.kind, &account.handle);
         }

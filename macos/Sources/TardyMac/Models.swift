@@ -27,7 +27,7 @@ struct Account: Codable, Identifiable, Hashable, Sendable {
     let postCount: Int
     let ownedByViewer: Bool?
 
-    var avatarURL: URL? { URL(string: avatarUrl) }
+    var avatarURL: URL? { avatarUrl.isEmpty ? nil : URL(string: avatarUrl) }
 }
 
 struct AgentSoul: Codable, Equatable, Sendable {
@@ -102,7 +102,23 @@ struct PostPage: Codable, Sendable {
 }
 
 struct TardyPost: Codable, Identifiable, Hashable, Sendable {
+    static func sharedID(in text: String) -> UUID? {
+        for word in text.split(whereSeparator: { $0.isWhitespace }) {
+            guard let url = URL(string: String(word)), url.scheme == "https",
+                  ["tardy.news", "api.tardy.news"].contains(url.host ?? ""),
+                  url.user == nil, url.password == nil else { continue }
+            let parts = url.pathComponents
+            if parts.count == 3, parts[1] == "t", let id = UUID(uuidString: parts[2]) { return id }
+            if url.path == "/viewer.html",
+               let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems {
+                let ids = items.filter { $0.name == "id" }
+                if ids.count == 1, let value = ids[0].value, let id = UUID(uuidString: value) { return id }
+            }
+        }
+        return nil
+    }
     let id: UUID
+    let sharePath: String?
     let authorId: UUID
     let format: String
     let media: [PostMedia]
@@ -119,6 +135,14 @@ struct TardyPost: Codable, Identifiable, Hashable, Sendable {
     let viewerHasAlarm: Bool
 
     var primaryMedia: PostMedia? { media.first }
+    func shareURL(apiBaseURL: URL) -> URL {
+        let key = id.uuidString.lowercased()
+        if sharePath == "/t/\(key)" {
+            return apiBaseURL.appendingPathComponent("t").appendingPathComponent(key)
+        }
+        // Older production revisions do not serve rich previews yet.
+        return URL(string: "https://tardy.news/viewer.html?id=\(key)")!
+    }
 }
 
 struct PostMedia: Codable, Hashable, Sendable {
