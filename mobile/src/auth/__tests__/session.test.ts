@@ -38,6 +38,33 @@ function launch(device: Device, credential: AuthCredential | null = mockCredenti
 
 const unauthenticated = expect.objectContaining({ name: 'TardyApiError', code: 'unauthenticated' });
 
+test('repeated sign-in taps share one authorization and exchange until completion', async () => {
+  const { auth, api, identity, onSignedIn } = launch(newDevice());
+  await auth.bootstrap();
+  let release!: (credential: AuthCredential | null) => void;
+  jest.mocked(identity.authorize).mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+  const exchange = jest.spyOn(api, 'signIn');
+  const first = auth.signIn('apple');
+  const second = auth.signIn('github');
+  expect(second).toBe(first);
+  expect(identity.authorize).toHaveBeenCalledTimes(1);
+  release(mockCredential.github('jamesmerrill'));
+  await Promise.all([first, second]);
+  expect(exchange).toHaveBeenCalledTimes(1);
+  expect(onSignedIn).toHaveBeenCalledTimes(1);
+});
+
+test('failed sign-in releases the single-flight guard for retry', async () => {
+  const { auth, identity } = launch(newDevice());
+  await auth.bootstrap();
+  jest.mocked(identity.authorize).mockRejectedValueOnce(new Error('network timeout'));
+  await auth.signIn('apple');
+  expect(auth.getState()).toMatchObject({ status: 'signed_out', signingIn: false });
+  await auth.signIn('github');
+  expect(identity.authorize).toHaveBeenCalledTimes(2);
+  expect(auth.getState().status).toBe('onboarding');
+});
+
 test('explicit provider linking preserves the current profile and persists its returned session', async () => {
   const device = newDevice();
   const { api, auth, identity } = launch(device);

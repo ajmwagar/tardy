@@ -23,8 +23,10 @@ import Testing
 @Test @MainActor func appleAuthorizationRejectsStaleAndCancelledRequests() {
     let transaction = AppleAuthorizationTransaction()
     let old = transaction.begin()
-    _ = transaction.begin()
-    #expect(transaction.consume(state: old.state) == nil)
+    let repeated = transaction.begin()
+    #expect(repeated.state == old.state)
+    #expect(repeated.hashedNonce == old.hashedNonce)
+    #expect(transaction.consume(state: old.state) != nil)
     let cancelled = transaction.begin()
     transaction.cancel()
     #expect(transaction.consume(state: cancelled.state) == nil)

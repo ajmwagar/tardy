@@ -92,7 +92,17 @@ export function createAuth(deps: AuthDeps) {
    * Shared by every sign-in method: obtain a credential (null = the user cancelled),
    * exchange it, enter. Failures land on the sign-in screen with the reason.
    */
-  async function attempt(getCredential: () => Promise<AuthCredential | null>): Promise<void> {
+  let signingIn: Promise<void> | null = null;
+  function attempt(getCredential: () => Promise<AuthCredential | null>): Promise<void> {
+    if (signingIn) return signingIn;
+    const pending = performAttempt(getCredential);
+    signingIn = pending;
+    const clear = () => { if (signingIn === pending) signingIn = null; };
+    void pending.then(clear, clear);
+    return pending;
+  }
+
+  async function performAttempt(getCredential: () => Promise<AuthCredential | null>): Promise<void> {
     if (state.status !== 'signed_out') throw new Error(`Can't sign in from ${state.status}`);
     if (state.signingIn) return;
     set({ status: 'signed_out', signingIn: true, error: null });
