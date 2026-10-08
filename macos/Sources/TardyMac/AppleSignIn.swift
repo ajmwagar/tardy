@@ -13,6 +13,9 @@ struct AppleSessionRequest: Encodable, Sendable {
 struct AppleSignInButton: View {
     @Environment(AppModel.self) private var model
     @State private var nonce = ""
+    private var isProvisioned: Bool {
+        Bundle.main.object(forInfoDictionaryKey: "TardyAppleSignInConfigured") as? Bool == true
+    }
     var body: some View {
         SignInWithAppleButton(.signIn) { request in
             nonce = UUID().uuidString + UUID().uuidString
@@ -35,6 +38,8 @@ struct AppleSignInButton: View {
             }
         }
         .signInWithAppleButtonStyle(.white)
+        .disabled(!isProvisioned)
+        .help(isProvisioned ? "Sign in to your Tardy account" : "This Mac build needs its Apple sign-in provisioning profile.")
         .frame(width: 320, height: 44)
     }
 }
