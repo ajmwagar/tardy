@@ -58,3 +58,10 @@ routes. If an existing host is stuck after a completed coding turn, preserve its
 queue, recover only that turn's final answer into its durable completion journal,
 and restart one host. Do not replay a completed activation or read hidden reasoning.
 Completion is authoritative; inherited stderr pipes must not hold a reply hostage.
+
+For an operator queue snapshot, use `tardy-agent-host host-state` with
+`TARDY_AGENT_HOST_STATE` set to the actual journal. It checks the typed `queue`,
+dispatch, completion, and reply journals and rejects a missing queue. This is a
+snapshot, not a restart lease: never stop a host during a new activation. A paused
+unknown-outcome turn must be inspected before recovery. Preserve its journal,
+session and files; do not replay the old activation or claim it completed.

@@ -101,6 +101,13 @@ pub fn delivery_request_id(delivery: &str) -> String {
 }
 
 impl HostData {
+    /// A snapshot, not an activation lease. Never infer idleness from missing JSON fields.
+    pub fn is_idle(&self) -> bool {
+        self.queue.is_empty()
+            && self.pending_replies.is_empty()
+            && self.dispatched_deliveries.is_empty()
+            && self.completed_runs.is_empty()
+    }
     pub fn needs_dispatch_recovery(&self, delivery: &str) -> bool {
         self.dispatched_deliveries.contains(delivery)
             && !self.completed_runs.contains_key(delivery)
@@ -1393,6 +1400,46 @@ pub fn activation_prompt(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn idle_snapshot_checks_the_real_queue_and_execution_journals() {
+        let mut data = HostData::default();
+        assert!(data.is_idle());
+        data.queue.push_back(QueuedEvent {
+            delivery_id: "poll:1".into(),
+            event: InboxEvent {
+                id: 1,
+                kind: "work_message".into(),
+                payload: serde_json::json!({}),
+            },
+        });
+        assert!(!data.is_idle());
+        data.queue.clear();
+        data.dispatched_deliveries.insert("poll:1".into());
+        assert!(!data.is_idle());
+        data.dispatched_deliveries.clear();
+        data.completed_runs.insert(
+            "poll:1".into(),
+            RuntimeResult {
+                session: "codex:test".into(),
+                reply: "done".into(),
+            },
+        );
+        assert!(!data.is_idle());
+        data.completed_runs.clear();
+        data.pending_replies.insert(
+            "poll:1".into(),
+            PendingReply {
+                request_id: None,
+                conversation_id: "test".into(),
+                body: "done".into(),
+                media: vec![],
+                legacy_dm: false,
+                context_cursor: None,
+                publish_tardy: false,
+            },
+        );
+        assert!(!data.is_idle());
+    }
     #[test]
     fn ambiguous_dispatch_is_not_reexecuted_but_completed_work_is_retryable() {
         let mut state = HostData::default();

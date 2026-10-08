@@ -113,9 +113,10 @@ actor TardyAPI {
                         throw APIError.http(response.statusCode, "Conversation stream rejected")
                     }
                     var parser = ConversationSSEParser()
-                    for try await line in bytes.lines {
+                    // AsyncBytes.lines drops empty lines, including SSE frame boundaries.
+                    for try await byte in bytes {
                         try Task.checkCancellation()
-                        if let event = try parser.consume(line: line) {
+                        if let event = try parser.consume(byte: byte) {
                             continuation.yield(event)
                         }
                     }
@@ -260,9 +261,29 @@ actor TardyAPI {
 }
 
 struct ConversationSSEParser {
+    private var lineBytes: [UInt8] = []
+    private var skipLF = false
     private var eventName = "message"
     private var eventId: Int?
     private var dataLines: [String] = []
+
+    mutating func consume(byte: UInt8) throws -> ConversationStreamEvent? {
+        if skipLF {
+            skipLF = false
+            if byte == 10 { return nil }
+        }
+        if byte == 10 || byte == 13 {
+            skipLF = byte == 13
+            guard let line = String(bytes: lineBytes, encoding: .utf8) else {
+                throw APIError.invalidResponse
+            }
+            lineBytes.removeAll(keepingCapacity: true)
+            return try consume(line: line)
+        }
+        guard lineBytes.count < 1_048_576 else { throw APIError.invalidResponse }
+        lineBytes.append(byte)
+        return nil
+    }
 
     mutating func consume(line: String) throws -> ConversationStreamEvent? {
         if line.isEmpty {

@@ -66,6 +66,22 @@ async fn main() -> Result<(), BoxError> {
     if command == "doctor" {
         return doctor().await;
     }
+    if command == "host-state" {
+        let path = expand_path(&env_or(
+            "TARDY_AGENT_HOST_STATE",
+            "~/.local/state/tardy-agent-host/state.json",
+        ));
+        let value: Value = serde_json::from_slice(&tokio::fs::read(path).await?)?;
+        if !value.get("queue").is_some_and(Value::is_array) {
+            return Err("host state is missing its queue; refusing to infer idleness".into());
+        }
+        let data: HostData = serde_json::from_value(value)?;
+        println!(
+            "{}",
+            json!({"idle_snapshot":data.is_idle(),"queue":data.queue.len(),"pending_replies":data.pending_replies.len(),"dispatched":data.dispatched_deliveries.len(),"completed":data.completed_runs.len(),"paused_conversations":data.paused_conversations})
+        );
+        return Ok(());
+    }
     if matches!(command.as_str(), "peers" | "ask-agent" | "read-chat") {
         let credential: AgentCredential = serde_json::from_slice(
             &tokio::fs::read(expand_path(&env_or(
@@ -1742,6 +1758,7 @@ fn internal(error: BoxError) -> (StatusCode, String) {
 }
 
 fn print_help() {
+    println!("Host queue snapshot (not a restart lease): tardy-agent-host host-state");
     println!(
         "Peer chats:\n  tardy-agent-host peers [query]\n  tardy-agent-host ask-agent <agent-uuid> <request-uuid> <question>\n  tardy-agent-host read-chat <conversation-uuid> [after-sequence]\n"
     );

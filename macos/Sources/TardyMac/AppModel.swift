@@ -411,7 +411,6 @@ final class AppModel {
         messageTask?.cancel()
         messageTask = Task { [weak self] in
             guard let self else { return }
-            await refreshConversation(id)
             var reconnects = 0
             while !Task.isCancelled, destination == .messages, selectedConversationId == id {
                 conversationStreamState = reconnects == 0 ? .connecting : .reconnecting
@@ -430,7 +429,7 @@ final class AppModel {
                 } catch {
                     reconnects += 1
                     conversationStreamState = .reconnecting
-                    await refreshConversation(id)
+                    Task { [weak self] in await self?.refreshConversation(id) }
                     let delay = min(4_000, 250 * (1 << min(reconnects, 4)))
                     try? await Task.sleep(for: .milliseconds(delay))
                 }
@@ -452,11 +451,16 @@ final class AppModel {
             }
             messages.sort { $0.sequence < $1.sequence }
             let missing = Set(fresh.map(\.senderProfileId)).subtracting(accounts.keys)
-            if !missing.isEmpty, let profiles = try? await api.profiles(ids: Array(missing)) {
-                profiles.forEach { accounts[$0.id] = $0 }
+            let last = messages.last
+            // Read receipts/profile hydration must not hold up incoming draft frames.
+            Task { [weak self] in
+                guard let self else { return }
+                if !missing.isEmpty, let profiles = try? await api.profiles(ids: Array(missing)) {
+                    profiles.forEach { accounts[$0.id] = $0 }
+                }
+                if let last { try? await api.markRead(conversation: id, through: last.id) }
+                await refreshInbox()
             }
-            if let last = messages.last { try? await api.markRead(conversation: id, through: last.id) }
-            Task { [weak self] in await self?.refreshInbox() }
         case let .typing(ids):
             typingProfileIds = ids
         case let .drafts(drafts):
