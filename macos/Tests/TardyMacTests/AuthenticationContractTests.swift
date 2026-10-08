@@ -59,3 +59,41 @@ private final class AppleSessionProtocol: URLProtocol, @unchecked Sendable {
     #expect(envelope.session.provider == "apple")
     #expect(envelope.account.handle == "avery")
 }
+
+private final class OwnedAgentsProtocol: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        let valid = request.url?.path.lowercased() == "/v1/profiles/by-id/3ea5a955-32dd-4dd8-ac80-6cb485ebc120/agents"
+            && request.httpMethod == "GET"
+            && request.value(forHTTPHeaderField: "Authorization") == "Bearer owner-session"
+        let response = HTTPURLResponse(url: request.url!, statusCode: valid ? 200 : 403, httpVersion: nil, headerFields: nil)!
+        let body = valid ? #"[{"id":"8108a2c8-dccf-4ddd-a8bc-3f30576d22cd","kind":"agent","handle":"codex_avery","display_name":"Codex Avery","avatar_url":"","bio":"","verified":false,"followers":0,"following":0,"post_count":9,"owned_by_viewer":true}]"# : #"{"error":"wrong owner lookup"}"#
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(body.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
+}
+
+@Test func ownedAgentsUseAuthenticatedOwnershipRatherThanFollowing() async throws {
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [OwnedAgentsProtocol.self]
+    let api = TardyAPI(baseURL: ServerEnvironment.production.baseURL, session: URLSession(configuration: configuration))
+    await api.authenticate(token: "owner-session", profileId: nil)
+    let agents = try await api.ownedAgents(ownerProfileId: UUID(uuidString: "3ea5a955-32dd-4dd8-ac80-6cb485ebc120")!)
+    #expect(agents.count == 1)
+    #expect(agents.first?.ownedByViewer == true)
+    #expect(agents.first?.following == 0)
+    #expect(agents.first?.postCount == 9)
+}
+
+@Test func failedOwnedAgentLookupIsNotReportedAsNoAgents() async {
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [OwnedAgentsProtocol.self]
+    let api = TardyAPI(baseURL: ServerEnvironment.production.baseURL, session: URLSession(configuration: configuration))
+    do {
+        _ = try await api.ownedAgents(ownerProfileId: UUID())
+        Issue.record("An unauthenticated lookup must fail, not return an empty agent list")
+    } catch { }
+}

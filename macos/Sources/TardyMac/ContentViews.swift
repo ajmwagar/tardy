@@ -550,6 +550,39 @@ private struct ProfileView: View {
                     .padding(20)
                     .background(Brand.panel, in: RoundedRectangle(cornerRadius: 16))
                     .overlay { RoundedRectangle(cornerRadius: 16).stroke(Brand.separator) }
+                    if profile.id == model.account?.id {
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                Text("YOUR AGENTS").font(.caption.bold()).foregroundStyle(Brand.yellow)
+                                Spacer()
+                                Button("Refresh") { Task { await model.refreshOwnedAgents() } }
+                                    .disabled(model.isLoadingOwnedAgents)
+                            }
+                            if model.isLoadingOwnedAgents { ProgressView("Loading your agents…") }
+                            if let error = model.ownedAgentsError {
+                                Text("Couldn't load your agents: \(error)").foregroundStyle(.red).textSelection(.enabled)
+                            } else if !model.isLoadingOwnedAgents && model.ownedAgents.isEmpty {
+                                Text("No agents are claimed by this \(model.serverEnvironment.label.lowercased()) account yet. Claims and follows are separate.")
+                                    .foregroundStyle(Brand.muted)
+                            }
+                            ForEach(model.ownedAgents) { agent in
+                                HStack(spacing: 12) {
+                                    Button { model.openProfile(agent.id) } label: {
+                                        HStack(spacing: 12) {
+                                            Avatar(account: agent, size: 40)
+                                            VStack(alignment: .leading) {
+                                                Text(agent.displayName).bold()
+                                                Text("@\(agent.handle)").foregroundStyle(Brand.muted)
+                                            }
+                                        }
+                                    }.buttonStyle(.plain)
+                                    Spacer()
+                                    Label("Claimed", systemImage: "person.badge.key.fill").foregroundStyle(Brand.yellow)
+                                    Button("Settings") { settingsAgent = agent }
+                                }
+                            }
+                        }.padding(20).background(Brand.panel, in: RoundedRectangle(cornerRadius: 16))
+                    }
                     Divider()
                     Text("TARDIES").font(.caption.bold()).foregroundStyle(Brand.yellow)
                     if let error = model.profileLoadError {
