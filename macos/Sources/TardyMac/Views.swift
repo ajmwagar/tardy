@@ -40,6 +40,13 @@ struct ContentView: View {
         .background(Brand.background)
         .toolbar {
             ToolbarItem(placement: .automatic) {
+                if model.serverEnvironment == .devOverlay {
+                    Text("DEV OVERLAY · writes to prod")
+                        .font(.caption.bold()).foregroundStyle(Brand.yellow)
+                        .help("Production account, chats and writes. Only explicit overlay drafts stay local.")
+                }
+            }
+            ToolbarItem(placement: .automatic) {
                 Menu {
                     ForEach(ServerEnvironment.allCases) { server in
                         Button(server.label) { Task { await model.switchServer(to: server) } }

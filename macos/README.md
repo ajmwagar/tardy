@@ -30,6 +30,11 @@ The app icon is generated during bundling from `mobile/assets/images/icon.png`, 
 macOS identity on the same source artwork.
 # Local and production accounts
 
+An opt-in **Dev overlay · production writes** mode reuses your production account
+through the local PG17-backed developer gateway. Start the gateway first; see
+[production-backed development](../docs/production-backed-dev.md) for its routing
+contract and runbook. Isolated Local mode remains separate.
+
 Use the toolbar's **Local / Production** menu to switch servers. Sessions are
 stored in separate Keychain entries scoped to the API URL. Switching clears the
 visible feed and chat state, but preserves each environment's saved login.
