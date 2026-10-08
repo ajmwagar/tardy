@@ -11,6 +11,8 @@ final class AppModel {
     var conversations: [Conversation] = []
     var accounts: [UUID: Account] = [:]
     var ownedAgents: [Account] = []
+    var isLoadingOwnedAgents = false
+    var ownedAgentsError: String?
     var editingAgentSoul: AgentSoul?
     var editingAgentInstallations: [AgentInstallation] = []
     var isLoadingAgentSettings = false
@@ -133,6 +135,8 @@ final class AppModel {
         accounts = [:]
         conversations = []
         ownedAgents = []
+        ownedAgentsError = nil
+        isLoadingOwnedAgents = false
         messages = []
         reels = []
         profilePosts = []
@@ -329,11 +333,14 @@ final class AppModel {
             do {
                 async let profile = api.profile(id: id)
                 async let posts = api.posts(profile: id)
-                let (loadedProfile, page) = try await (profile, posts)
+                let loadedProfile = try await profile
                 try Task.checkCancellation()
                 selectedProfile = loadedProfile
-                profilePosts = page.items
                 accounts[loadedProfile.id] = loadedProfile
+                if account?.id == id { account = loadedProfile }
+                let page = try await posts
+                try Task.checkCancellation()
+                profilePosts = page.items
                 isLoadingProfile = false
                 prefetchPosters(in: page.items)
             } catch is CancellationError {
@@ -344,6 +351,26 @@ final class AppModel {
                 show(error)
             }
         }
+        if account?.id == id { Task { await refreshOwnedAgents() } }
+    }
+
+    func refreshOwnedAgents() async {
+        guard let owner = account?.id else { return }
+        let environment = serverEnvironment
+        let client = api
+        isLoadingOwnedAgents = true
+        ownedAgentsError = nil
+        do {
+            let agents = try await client.ownedAgents(ownerProfileId: owner)
+            guard account?.id == owner, serverEnvironment == environment else { return }
+            ownedAgents = agents
+            for agent in agents { accounts[agent.id] = agent }
+        } catch {
+            guard account?.id == owner, serverEnvironment == environment else { return }
+            ownedAgentsError = error.localizedDescription
+        }
+        guard account?.id == owner, serverEnvironment == environment else { return }
+        isLoadingOwnedAgents = false
     }
 
     func openPost(_ post: TardyPost) {
@@ -578,9 +605,7 @@ final class AppModel {
         // so a slow feed, inbox, or agent lookup never holds the whole window hostage.
         phase = .ready
         Task { [weak self] in
-            guard let self else { return }
-            do { ownedAgents = try await api.ownedAgents(ownerProfileId: envelope.account.id) }
-            catch { show(error) }
+            await self?.refreshOwnedAgents()
         }
         Task { [weak self] in await self?.refreshInbox() }
         Task { [weak self] in await self?.refreshReels() }
