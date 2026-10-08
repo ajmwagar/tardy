@@ -100,6 +100,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
     let state = Arc::new(state);
+    tokio::spawn(tardy::usage_metrics::collect(
+        pool.clone(),
+        state.metrics.clone(),
+    ));
     if state.social.is_some() {
         let cleanup_state = state.clone();
         tokio::spawn(async move {

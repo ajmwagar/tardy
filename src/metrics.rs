@@ -20,12 +20,34 @@ struct HttpLabels {
     status: String,
 }
 
+#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct UsageLabels {
+    kind: String,
+    window: String,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+pub struct UsageSnapshot {
+    pub kind: String,
+    pub window: String,
+    pub active_accounts: i64,
+    pub active_publishers: i64,
+    pub posts_created: i64,
+    pub engagements: i64,
+}
+
 pub struct Metrics {
     registry: Mutex<Registry>,
     requests: Family<HttpLabels, Counter>,
     durations: Family<HttpLabels, Histogram>,
     claims_issued: Counter,
     accounts_claimed: Counter,
+    active_accounts: Family<UsageLabels, Gauge>,
+    active_publishers: Family<UsageLabels, Gauge>,
+    posts_created: Family<UsageLabels, Gauge>,
+    engagements: Family<UsageLabels, Gauge>,
+    usage_last_success: Gauge,
+    usage_failures: Counter,
 }
 
 impl Metrics {
@@ -36,6 +58,12 @@ impl Metrics {
         });
         let claims_issued = Counter::default();
         let accounts_claimed = Counter::default();
+        let active_accounts = Family::<UsageLabels, Gauge>::default();
+        let active_publishers = Family::<UsageLabels, Gauge>::default();
+        let posts_created = Family::<UsageLabels, Gauge>::default();
+        let engagements = Family::<UsageLabels, Gauge>::default();
+        let usage_last_success = Gauge::default();
+        let usage_failures = Counter::default();
         let build = Gauge::<i64, AtomicI64>::default();
         build.set(1);
 
@@ -61,6 +89,32 @@ impl Metrics {
             accounts_claimed.clone(),
         );
         registry.register("tardy_build_info", "Static service build marker.", build);
+        registry.register("tardy_active_accounts", "Distinct durable accounts with a product action in a rolling window, by durable account kind.", active_accounts.clone());
+        registry.register(
+            "tardy_active_publishers",
+            "Distinct posting profiles in a rolling window, attributed to durable account kind.",
+            active_publishers.clone(),
+        );
+        registry.register(
+            "tardy_posts_created",
+            "Persisted posts created in a rolling window, including all visibility levels.",
+            posts_created.clone(),
+        );
+        registry.register(
+            "tardy_engagement_events",
+            "Persisted engagement events in a rolling window.",
+            engagements.clone(),
+        );
+        registry.register(
+            "tardy_usage_last_success_timestamp_seconds",
+            "Last successful durable usage snapshot; zero means no successful collection.",
+            usage_last_success.clone(),
+        );
+        registry.register(
+            "tardy_usage_collection_failures",
+            "Failed durable usage collections; prior gauges remain unchanged.",
+            usage_failures.clone(),
+        );
 
         Self {
             registry: Mutex::new(registry),
@@ -68,6 +122,12 @@ impl Metrics {
             durations,
             claims_issued,
             accounts_claimed,
+            active_accounts,
+            active_publishers,
+            posts_created,
+            engagements,
+            usage_last_success,
+            usage_failures,
         }
     }
 
@@ -77,6 +137,30 @@ impl Metrics {
 
     pub fn note_account_claimed(&self) {
         self.accounts_claimed.inc();
+    }
+
+    pub fn update_usage(&self, rows: Vec<UsageSnapshot>, timestamp: i64) {
+        for row in rows {
+            let labels = UsageLabels {
+                kind: row.kind,
+                window: row.window,
+            };
+            self.active_accounts
+                .get_or_create(&labels)
+                .set(row.active_accounts);
+            self.active_publishers
+                .get_or_create(&labels)
+                .set(row.active_publishers);
+            self.posts_created
+                .get_or_create(&labels)
+                .set(row.posts_created);
+            self.engagements.get_or_create(&labels).set(row.engagements);
+        }
+        self.usage_last_success.set(timestamp);
+    }
+
+    pub fn note_usage_failure(&self) {
+        self.usage_failures.inc();
     }
 
     pub fn encode(&self) -> Result<String, std::fmt::Error> {
@@ -157,5 +241,26 @@ mod tests {
         assert!(output.contains("tardy_build_info 1"));
         assert!(output.contains("tardy_agent_claim_codes_issued_total 1"));
         assert!(output.contains("tardy_agent_accounts_claimed_total 1"));
+    }
+
+    #[test]
+    fn usage_gauges_replace_snapshots_and_failures_preserve_them() {
+        let metrics = Metrics::new();
+        let row = |count| UsageSnapshot {
+            kind: "human".into(),
+            window: "24h".into(),
+            active_accounts: count,
+            active_publishers: 1,
+            posts_created: 2,
+            engagements: 3,
+        };
+        metrics.update_usage(vec![row(5)], 100);
+        metrics.update_usage(vec![row(4)], 200);
+        metrics.note_usage_failure();
+        let output = metrics.encode().unwrap();
+        assert!(output.contains("tardy_active_accounts{kind=\"human\",window=\"24h\"} 4"));
+        assert!(output.contains("tardy_usage_last_success_timestamp_seconds 200"));
+        assert!(output.contains("tardy_usage_collection_failures_total 1"));
+        assert!(!output.contains("account_id"));
     }
 }
