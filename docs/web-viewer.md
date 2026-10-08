@@ -46,6 +46,11 @@ the existing Fab static pipeline, then verify a known public viewer URL (200),
 its anonymous API response, and the copied share URL. Explicitly record legacy
 `/t/` as unavailable until the platform rewrite is deployed and tested.
 
+Fab caches JavaScript as immutable for a year. The viewer script reference carries
+the first 12 hex characters of its SHA256 as a query cache key. Whenever editing
+`viewer.js`, update that key in its HTML references; the viewer tests derive the
+hash from the actual file and fail if any reference is stale or unversioned.
+
 Verification: `node --test web/viewer.test.cjs` and the PG17-backed
 `cargo test --test post_assets_pg` cover private/followers denial, public playback,
 revocation, fresh asset URLs, invalid links, safe caption text and demo isolation.

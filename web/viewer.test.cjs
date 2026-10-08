@@ -3,6 +3,19 @@ const assert = require('node:assert/strict');
 const {readFileSync, readdirSync} = require('node:fs');
 const {runInNewContext} = require('node:vm');
 const source = readFileSync(`${__dirname}/public/viewer.js`, 'utf8');
+test('all viewer script references carry the matching content hash', () => {
+  const {createHash} = require('node:crypto');
+  const digest = createHash('sha256').update(source).digest('hex').slice(0,12);
+  let references = 0;
+  for (const file of readdirSync(`${__dirname}/public`).filter(file => file.endsWith('.html'))) {
+    const html = readFileSync(`${__dirname}/public/${file}`, 'utf8');
+    for (const match of html.matchAll(/<script[^>]*src="(\/viewer\.js[^\"]*)"/g)) {
+      references += 1;
+      assert.equal(match[1],`/viewer.js?v=${digest}`,`${file}: cache key must match script content`);
+    }
+  }
+  assert.ok(references > 0,'viewer script must be loaded');
+});
 test('onboarding block copies as shell commands rather than terminal output', () => {
   const html = readFileSync(`${__dirname}/public/index.html`, 'utf8');
   const block = html.match(/<pre>([\s\S]*?)<\/pre>/)[1].replace(/<[^>]+>/g, '');
