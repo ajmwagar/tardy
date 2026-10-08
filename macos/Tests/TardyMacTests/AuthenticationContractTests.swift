@@ -1,6 +1,27 @@
 import Foundation
+import CryptoKit
 import Testing
 @testable import TardyMac
+
+@Test @MainActor func appleAuthorizationPreservesRawNonceAndConsumesItOnce() {
+    let transaction = AppleAuthorizationTransaction()
+    let challenge = transaction.begin()
+    let raw = transaction.consume(state: challenge.state)
+    #expect(raw != nil)
+    let hash = SHA256.hash(data: Data((raw ?? "").utf8)).map { String(format: "%02x", $0) }.joined()
+    #expect(hash == challenge.hashedNonce)
+    #expect(transaction.consume(state: challenge.state) == nil)
+}
+
+@Test @MainActor func appleAuthorizationRejectsStaleAndCancelledRequests() {
+    let transaction = AppleAuthorizationTransaction()
+    let old = transaction.begin()
+    _ = transaction.begin()
+    #expect(transaction.consume(state: old.state) == nil)
+    let cancelled = transaction.begin()
+    transaction.cancel()
+    #expect(transaction.consume(state: cancelled.state) == nil)
+}
 
 // A fixed transport contract avoids mutable global handlers across parallel tests.
 private final class AppleSessionProtocol: URLProtocol, @unchecked Sendable {
