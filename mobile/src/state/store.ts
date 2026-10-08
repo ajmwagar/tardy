@@ -100,7 +100,9 @@ export async function ensureAccounts(ids: Iterable<string | undefined>): Promise
   const missing = [...new Set(ids)].filter((id): id is string => !!id && !state.accounts.has(id));
   const fresh = missing.filter((id) => !inflight.has(id));
   if (fresh.length > 0) {
+    const generation = engagementGeneration;
     const request = api.accounts(fresh).then((accounts) => {
+      if (generation !== engagementGeneration) return;
       set((s) => {
         const next = new Map(s.accounts);
         accounts.forEach((a) => next.set(a.id, a));
@@ -108,7 +110,8 @@ export async function ensureAccounts(ids: Iterable<string | undefined>): Promise
       });
     });
     fresh.forEach((id) => inflight.set(id, request));
-    request.finally(() => fresh.forEach((id) => inflight.delete(id)));
+    const clear = () => fresh.forEach((id) => { if (inflight.get(id) === request) inflight.delete(id); });
+    void request.then(clear, clear);
   }
   await Promise.all(missing.map((id) => inflight.get(id)));
 }
@@ -159,9 +162,13 @@ export function ingestPosts(posts: Post[]) {
 }
 
 export async function loadFeedPage(page: Promise<{ items: Post[]; nextCursor: string | null }>) {
+  const generation = engagementGeneration;
   const result = await page;
-  await ensureAccounts(result.items.flatMap((p) => [p.authorId, p.projectId, ...(p.collaboratorIds ?? [])]));
+  if (generation !== engagementGeneration) throw new Error('Feed session changed while loading');
   ingestPosts(result.items);
+  void ensureAccounts(result.items.flatMap((p) => [p.authorId, p.projectId, ...(p.collaboratorIds ?? [])])).catch((error) => {
+    if (generation === engagementGeneration) reportError(`Author profiles could not load: ${error instanceof Error ? error.message : String(error)}`);
+  });
   return result;
 }
 
@@ -393,6 +400,7 @@ export function cacheAccounts(accounts: Account[]) {
 
 /** Drops everything that belonged to the signed-out viewer. */
 export function resetViewerState() {
+  inflight.clear();
   engagementGeneration += 1;
   retryAt = 0;
   retryDelay = 2000;

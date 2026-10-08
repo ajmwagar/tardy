@@ -2048,7 +2048,26 @@ fn localize_posts(state: &AppState, posts: &mut [AppFeedPost]) {
 /// Only invoked after the social store has checked post visibility. Resolve
 /// author-owned assets at read time rather than persisting temporary capabilities.
 async fn resolve_post_assets(state: &AppState, posts: &mut [AppFeedPost]) -> Result<(), ApiError> {
-    for post in posts {
+    // Cap fanout per request below the eight-connection pool size. The pool
+    // still mediates contention between requests. Mutating each original slot
+    // preserves feed ordering despite concurrent completion.
+    for chunk in posts.chunks_mut(4) {
+        let mut slots = chunk.iter_mut();
+        tokio::try_join!(
+            resolve_one_post_assets(state, slots.next()),
+            resolve_one_post_assets(state, slots.next()),
+            resolve_one_post_assets(state, slots.next()),
+            resolve_one_post_assets(state, slots.next()),
+        )?;
+    }
+    Ok(())
+}
+
+async fn resolve_one_post_assets(
+    state: &AppState,
+    post: Option<&mut AppFeedPost>,
+) -> Result<(), ApiError> {
+    if let Some(post) = post {
         for item in &mut post.media {
             for (id_field, url_field) in [("asset_id", "url"), ("poster_asset_id", "poster_url")] {
                 if item.get(id_field).is_none_or(serde_json::Value::is_null) {

@@ -80,6 +80,42 @@ async fn anonymous_previews_and_posters_recheck_public_visibility() {
             .with_pg_accounts(PgAccountStore::new(pool.clone()))
             .with_social_store(store.clone()),
     ));
+    // Cross the four-post resolver boundary and prove parallel resolution keeps
+    // the source order and media intact rather than returning completion order.
+    for index in 0..4 {
+        store
+            .publish_post_with_media(
+                actor,
+                Uuid::new_v4(),
+                &format!("Batch {index}"),
+                None,
+                PostVisibility::Public,
+                &post.media,
+            )
+            .await
+            .unwrap();
+    }
+    let expected = store.app_feed(None, 100).await.unwrap();
+    let feed = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/feed?limit=100")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(feed.status(), StatusCode::OK);
+    let feed: serde_json::Value =
+        serde_json::from_slice(&to_bytes(feed.into_body(), 1_000_000).await.unwrap()).unwrap();
+    let ids: Vec<Uuid> = feed["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| Uuid::parse_str(p["id"].as_str().unwrap()).unwrap())
+        .collect();
+    assert_eq!(ids, expected.iter().map(|p| p.id).collect::<Vec<_>>());
     let page = app
         .clone()
         .oneshot(

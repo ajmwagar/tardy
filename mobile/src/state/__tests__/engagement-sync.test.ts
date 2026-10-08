@@ -1,4 +1,5 @@
-import { api, flushEngagement, getState, logEngagement, resetViewerState } from '../store';
+import { POSTS } from '@/data/mock/fixtures';
+import { api, flushEngagement, getState, loadFeedPage, logEngagement, resetViewerState } from '../store';
 
 jest.mock('@/data/mock/faults', () => ({
   ...jest.requireActual('@/data/mock/faults'),
@@ -42,4 +43,16 @@ it('never restores a previous viewer’s failed batch after sign-out', async () 
   await jest.advanceTimersByTimeAsync(30000);
   expect(send).toHaveBeenCalledTimes(1);
   expect(getState().lastError).toBeNull();
+});
+
+it('shows feed posts before slow author hydration completes', async () => {
+  let finish!: () => void;
+  const hydrate = jest.spyOn(api, 'accounts').mockImplementationOnce(() => new Promise((resolve) => { finish = () => resolve([]); }));
+  const post = POSTS[0];
+  const result = await loadFeedPage(Promise.resolve({ items: [post], nextCursor: null }));
+  expect(result.items[0].id).toBe(post.id);
+  expect(getState().posts.has(post.id)).toBe(true);
+  expect(hydrate).toHaveBeenCalledTimes(1);
+  finish();
+  await Promise.resolve();
 });
