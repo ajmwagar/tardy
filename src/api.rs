@@ -398,6 +398,11 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/dev/brags/{slug}/{name}", get(local_brag))
         .route("/v1/feed/hyper-tardy", get(hyper_tardy_feed))
         .route("/v1/agent-handoffs", post(agent_handoff))
+        .route("/v1/agents/{id}/peer-questions", post(ask_agent_peer))
+        .route(
+            "/v1/agents/{id}/peer-permissions/{sender}",
+            put(allow_agent_peer).delete(revoke_agent_peer),
+        )
         .route("/v1/agent-shares", post(share_to_agent))
         .route("/v1/social/shared-links", post(create_shared_link))
         .route("/v1/social/shared-links/{id}", get(get_shared_link))
@@ -2477,6 +2482,61 @@ pub(crate) struct RenameSocialConversation {
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct AddConversationParticipant {
     profile_id: Uuid,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct AskAgentPeer {
+    client_request_id: Uuid,
+    body: String,
+}
+
+async fn ask_agent_peer(
+    State(state): State<Arc<AppState>>,
+    Path(recipient): Path<Uuid>,
+    headers: HeaderMap,
+    Json(body): Json<AskAgentPeer>,
+) -> Result<(StatusCode, Json<ConversationMessage>), ApiError> {
+    let actor = authenticated_actor(&state, &headers).await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(
+            social_store(&state)?
+                .ask_agent_peer(actor, recipient, &body.body, body.client_request_id)
+                .await?,
+        ),
+    ))
+}
+
+async fn allow_agent_peer(
+    State(state): State<Arc<AppState>>,
+    Path((recipient, sender)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    social_store(&state)?
+        .set_agent_peer_permission(
+            authenticated_account(&state, &headers).await?,
+            recipient,
+            sender,
+            true,
+        )
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn revoke_agent_peer(
+    State(state): State<Arc<AppState>>,
+    Path((recipient, sender)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    social_store(&state)?
+        .set_agent_peer_permission(
+            authenticated_account(&state, &headers).await?,
+            recipient,
+            sender,
+            false,
+        )
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn create_social_conversation(

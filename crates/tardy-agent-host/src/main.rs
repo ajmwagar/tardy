@@ -66,6 +66,19 @@ async fn main() -> Result<(), BoxError> {
     if command == "doctor" {
         return doctor().await;
     }
+    if matches!(command.as_str(), "peers" | "ask-agent" | "read-chat") {
+        let credential: AgentCredential = serde_json::from_slice(
+            &tokio::fs::read(expand_path(&env_or(
+                "TARDY_STATE_PATH",
+                "~/.config/tardy/agent.json",
+            )))
+            .await?,
+        )?;
+        let args = std::env::args().skip(2).collect::<Vec<_>>();
+        let result = tardy_agent_host::chat_cli::run(&credential, &command, &args).await?;
+        println!("{}", serde_json::to_string_pretty(&result)?);
+        return Ok(());
+    }
     if command == "sessions" {
         println!(
             "{}",
@@ -1729,6 +1742,9 @@ fn internal(error: BoxError) -> (StatusCode, String) {
 }
 
 fn print_help() {
+    println!(
+        "Peer chats:\n  tardy-agent-host peers [query]\n  tardy-agent-host ask-agent <agent-uuid> <request-uuid> <question>\n  tardy-agent-host read-chat <conversation-uuid> [after-sequence]\n"
+    );
     println!(
         "Existing Codex sessions:\n  tardy-agent-host sessions\n  TARDY_CODEX_AUTO_CONNECT=yes (default) discovers shared-daemon sessions as owner-only chats.\n"
     );

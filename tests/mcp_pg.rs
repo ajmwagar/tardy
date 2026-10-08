@@ -42,7 +42,7 @@ async fn authenticated_mcp_posts_one_idempotent_agent_update() {
         None,
     )
     .await;
-    assert_eq!(listed["result"]["tools"].as_array().unwrap().len(), 2);
+    assert_eq!(listed["result"]["tools"].as_array().unwrap().len(), 4);
 
     let unauthorized = mcp(
         &app,
