@@ -1,12 +1,10 @@
 use tardy::pg_accounts::{PgAccountError, PgAccountStore};
 use uuid::Uuid;
+mod common;
 
 async fn store() -> Option<(PgAccountStore, sqlx::PgPool)> {
     let database_url = std::env::var("TEST_DATABASE_URL").ok()?;
-    assert!(
-        database_url.ends_with("/tardy_launch_auth_20261007"),
-        "auth fixtures require the isolated launch auth database"
-    );
+    common::assert_isolated_database(&database_url, "tardy_launch_auth_20261007");
     // This suite creates disposable fixtures. Never point it at production.
     let pool = sqlx::PgPool::connect(&database_url).await.unwrap();
     sqlx::migrate!().run(&pool).await.unwrap();

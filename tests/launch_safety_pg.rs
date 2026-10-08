@@ -3,14 +3,12 @@ use tardy::{
     social::{IdentityKind, PgSocialStore, PostVisibility},
 };
 use uuid::Uuid;
+mod common;
 
 #[tokio::test]
 async fn deletion_revokes_owner_and_agent_and_reports_obey_visibility() {
     let url = std::env::var("TEST_DATABASE_URL").expect("isolated test database required");
-    assert!(
-        url.ends_with("/tardy_launch_safety_20261007"),
-        "never run against application data"
-    );
+    common::assert_isolated_database(&url, "tardy_launch_safety_20261007");
     let pool = sqlx::PgPool::connect(&url).await.unwrap();
     sqlx::migrate!().run(&pool).await.unwrap();
     let accounts = PgAccountStore::new(pool.clone());
